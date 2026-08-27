@@ -91,7 +91,7 @@ async function nodeTestInvocations(projectRoot) {
   await visit(projectRoot);
   return tests.sort().map((testFile) => [testFile]);
 }
-function runnerInvocation(projectRoot, packageJson) {
+export function runnerInvocation(projectRoot, packageJson) {
   const test = packageJson.scripts?.test ?? "";
   const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
   if (/vitest/i.test(test) || dependencies.vitest) {
@@ -102,7 +102,23 @@ function runnerInvocation(projectRoot, packageJson) {
   }
   return { runner: "node:test" };
 }
-export async function executeCoverage(projectRoot, files) {
+export async function executeTests(projectRoot, { timeout = 30_000 } = {}) {
+  let packageJson = {};
+  try { packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8")); } catch {}
+  const invocation = runnerInvocation(projectRoot, packageJson);
+  const commands = invocation.runner === "node:test" ? await nodeTestInvocations(projectRoot) : [invocation.args];
+  for (const args of commands) {
+    await execFileAsync(process.execPath, args, {
+      cwd: projectRoot,
+      env: process.env,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+      timeout,
+    });
+  }
+  return { runner: invocation.runner };
+}
+export async function executeCoverage(projectRoot, files, { timeout = 30_000 } = {}) {
   const coverageDirectory = await mkdtemp(path.join(tmpdir(), "agentic-core-v8-"));
   try {
     let packageJson = {};
@@ -112,7 +128,8 @@ export async function executeCoverage(projectRoot, files) {
     try {
       for (const args of commands) {
         await execFileAsync(process.execPath, args, { cwd: projectRoot,
-          env: { ...process.env, NODE_V8_COVERAGE: coverageDirectory }, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+          env: { ...process.env, NODE_V8_COVERAGE: coverageDirectory }, encoding: "utf8", maxBuffer: 10 * 1024 * 1024,
+          timeout });
       }
     } catch (error) {
       const detail = [error.stdout, error.stderr].filter(Boolean).join("\n").trim();
