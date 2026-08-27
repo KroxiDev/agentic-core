@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { initialize } from "../src/init.js";
-import { startOrchestration } from "../src/orchestration.js";
+import { listOrchestrations, resumeOrchestration, startOrchestration, submitHandoff } from "../src/orchestration.js";
 
 async function createProject(t) {
   const project = await mkdtemp(path.join(tmpdir(), "agentic core light "));
@@ -117,4 +117,198 @@ test("an oversized brief fails without writing truncated state", async (t) => {
     (error) => error.code === "context_budget_exceeded" && /1024/.test(error.message),
   );
   await assert.rejects(readdir(path.join(project, ".agentic-core", "runs")), { code: "ENOENT" });
+});
+
+function implementerHandoff(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    status: "completed",
+    summary: "Greeting implemented with test-first evidence",
+    payload: {
+      findings: [],
+      evidence: { red: "test failed", green: "test passed", refactor: "suite remained green" },
+      qualityTargets: ["src/greeting.js"],
+    },
+    ...overrides,
+  };
+}
+
+test("a valid Implementador hand-off creates a fresh read-only Tester", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
+  const started = await startOrchestration({
+    projectRoot: project, request: "Orquesta light add greeting", intention: intent(), changesExecutableBehavior: true,
+  });
+  const result = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: implementerHandoff() });
+  assert.equal(result.status, "continued");
+  assert.equal(result.role.name, "Tester");
+  assert.equal(result.role.sequence, 2);
+  assert.notEqual(result.role.instanceId, started.role.instanceId);
+  assert.equal(result.brief.permissions.write, false);
+  assert.deepEqual(result.brief.previousHandoff, implementerHandoff());
+});
+
+function testerChangesRequired(summary = "Greeting lacks the required assertion") {
+  return { schemaVersion: 1, status: "changes_required", summary, payload: { findings: [{
+    impact: "blocking", category: "tests", evidence: "test/greeting.test.js does not assert configured output",
+  }] } };
+}
+
+test("Tester changes_required creates a new Implementador and consumes one global cycle", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
+  const started = await startOrchestration({
+    projectRoot: project, request: "Orquesta light add greeting", intention: intent(), changesExecutableBehavior: true,
+  });
+  const tester = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: implementerHandoff() });
+  const result = await submitHandoff({
+    projectRoot: project, runId: started.runId, handoff: testerChangesRequired(),
+  });
+  assert.equal(result.status, "continued");
+  assert.equal(result.role.name, "Implementador");
+  assert.equal(result.role.sequence, 3);
+  assert.notEqual(result.role.instanceId, tester.role.instanceId);
+  assert.equal(result.brief.reworkCount, 1);
+  assert.deepEqual(result.brief.skills, ["agentic-tdd"]);
+  const state = JSON.parse(await readFile(path.join(
+    project, ".agentic-core", "runs", started.runId, "state.json"), "utf8"));
+  assert.equal(state.reworkCount, 1);
+});
+
+test("an invalid hand-off gets one fresh-role protocol retry without consuming rework", async (t) => {
+  const project = await createProject(t);
+  const started = await startOrchestration({
+    projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+  });
+  const retry = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: "not-json" });
+  assert.equal(retry.status, "protocol_retry");
+  assert.equal(retry.role.name, "Implementador");
+  assert.notEqual(retry.role.instanceId, started.role.instanceId);
+  assert.match(retry.brief.protocolErrors[0], /JSON object/);
+  assert.equal(retry.reworkCount, 0);
+  const failed = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: {} });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.reworkCount, 0);
+  const state = JSON.parse(await readFile(path.join(
+    project, ".agentic-core", "runs", started.runId, "state.json"), "utf8"));
+  assert.equal(state.status, "failed");
+});
+
+test("Tester completion validates evidence and cleans the successful run", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
+  const started = await startOrchestration({
+    projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+  });
+  await submitHandoff({ projectRoot: project, runId: started.runId, handoff: implementerHandoff() });
+  const runRoot = path.join(project, ".agentic-core", "runs", started.runId);
+  const state = JSON.parse(await readFile(path.join(runRoot, "state.json"), "utf8"));
+  const report = { $schema: "https://kroxidev.dev/agentic-core/quality-report.schema.json",
+    schemaVersion: 1, tool: "crap", status: "approved", hashes: { inputs: state.baseline.hashes,
+      configuration: createHash("sha256").update(JSON.stringify({ crapThreshold: 7 })).digest("hex"),
+    } };
+  const reportContent = `${JSON.stringify(report)}\n`;
+  await mkdir(path.join(runRoot, "artifacts"));
+  await writeFile(path.join(runRoot, "artifacts", "crap.json"), reportContent);
+  const handoff = { schemaVersion: 1, status: "completed", summary: "All independent checks passed", payload: {
+    findings: [],
+    criteria: [{ criterion: "The CLI prints the configured greeting", status: "passed", evidence: "observed output" }],
+    tests: { status: "passed", evidence: "node --test" },
+    crap: { path: "artifacts/crap.json", sha256: createHash("sha256").update(reportContent).digest("hex") },
+    goldenRules: { status: "passed", evidence: "reviewed canonical policy" },
+  } };
+  const result = await submitHandoff({ projectRoot: project, runId: started.runId, handoff });
+  assert.equal(result.status, "completed");
+  assert.equal(result.reworkCount, 0);
+  assert.deepEqual(result.handoff, handoff);
+  await assert.rejects(readFile(path.join(runRoot, "state.json")), { code: "ENOENT" });
+});
+
+test("resume lists choices without auto-selection and returns a divergent run to a fresh Tester", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
+  const first = await startOrchestration({
+    projectRoot: project, request: "Orquesta light first greeting", intention: intent(),
+  });
+  const second = await startOrchestration({
+    projectRoot: project, request: "Orquesta light second greeting", intention: intent(),
+  });
+  const selection = await resumeOrchestration({ projectRoot: project });
+  assert.equal(selection.status, "selection_required");
+  assert.deepEqual(selection.runs.map(({ id }) => id).sort(), [first.runId, second.runId].sort());
+  assert.equal(selection.runId, undefined);
+
+  const tester = await submitHandoff({ projectRoot: project, runId: first.runId, handoff: implementerHandoff() });
+  await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'changed';\n");
+  const resumed = await resumeOrchestration({ projectRoot: project, runId: first.runId });
+  assert.equal(resumed.status, "resumed");
+  assert.equal(resumed.staleReports, true);
+  assert.equal(resumed.role.name, "Tester");
+  assert.notEqual(resumed.role.instanceId, tester.role.instanceId);
+  assert.equal(resumed.reworkCount, 0);
+  const listed = await listOrchestrations(project);
+  assert.equal(listed.length, 2);
+});
+
+test("the third Tester changes_required blocks light after exactly two rework cycles", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
+  const started = await startOrchestration({
+    projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+  });
+  for (let cycle = 1; cycle <= 3; cycle += 1) {
+    await submitHandoff({ projectRoot: project, runId: started.runId, handoff: implementerHandoff() });
+    const result = await submitHandoff({
+      projectRoot: project, runId: started.runId, handoff: testerChangesRequired(`cycle ${cycle}`),
+    });
+    if (cycle < 3) {
+      assert.equal(result.status, "continued");
+      assert.equal(result.reworkCount ?? result.brief.reworkCount, cycle);
+    } else {
+      assert.equal(result.status, "blocked");
+      assert.equal(result.reworkCount, 3);
+    }
+  }
+});
+
+test("questions, missing context and mode requests create fresh roles without consuming rework", async (t) => {
+  const project = await createProject(t);
+  const started = await startOrchestration({
+    projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+  });
+  let previous = started.role.instanceId;
+  for (const handoff of [
+    { schemaVersion: 1, status: "needs_input", summary: "Need a value",
+      payload: { findings: [], question: "Which greeting?" } },
+    { schemaVersion: 1, status: "context_missing", summary: "Missing fixture",
+      payload: { findings: [], missing: ["test/fixture.json"] } },
+    { schemaVersion: 1, status: "needs_mode_change", summary: "Risk requires planning",
+      payload: { findings: [], requestedMode: "normal", reason: "Cross-cutting change" } },
+  ]) {
+    const result = await submitHandoff({ projectRoot: project, runId: started.runId, handoff });
+    assert.equal(result.status, handoff.status);
+    assert.equal(result.reworkCount, 0);
+    assert.notEqual(result.role.instanceId, previous);
+    previous = result.role.instanceId;
+  }
+});
+
+test("a role can terminate as failed or blocked without consuming rework", async (t) => {
+  for (const status of ["failed", "blocked"]) {
+    const project = await createProject(t);
+    const started = await startOrchestration({
+      projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+    });
+    const result = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: {
+      schemaVersion: 1, status, summary: `Role ended as ${status}`,
+      payload: { findings: [{ impact: "blocking", category: "required_validation", evidence: "tool unavailable" }] },
+    } });
+    assert.equal(result.status, status);
+    assert.equal(result.reworkCount, 0);
+  }
 });
