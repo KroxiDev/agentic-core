@@ -19,6 +19,9 @@ const expectedInventory = [
   "src/init.js",
   "src/maintenance-cli.js",
   "src/quality-cli.js",
+  "src/quality/ast.js",
+  "src/quality/coverage.js",
+  "src/quality/engine.js",
   "src/transaction.js",
   "src/version.js",
 ];
