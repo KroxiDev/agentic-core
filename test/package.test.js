@@ -18,6 +18,7 @@ const expectedInventory = [
   "package.json",
   "src/init.js",
   "src/maintenance-cli.js",
+  "src/orchestration.js",
   "src/quality-cli.js",
   "src/quality/ast.js",
   "src/quality/coverage.js",
