@@ -57,13 +57,51 @@ test("exercises both outcomes", () => {
 `);
   return root;
 }
-async function run(args, cwd) {
+async function run(args, cwd, env = process.env) {
   try {
-    const result = await execFileAsync(process.execPath, [qualityCli, ...args], { cwd, encoding: "utf8" });
+    const result = await execFileAsync(process.execPath, [qualityCli, ...args], { cwd, env, encoding: "utf8" });
     return { ...result, code: 0 };
   } catch (error) {
     return { stdout: error.stdout, stderr: error.stderr, code: error.code };
   }
+}
+
+async function pythonFixture(t, testSource) {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic python quality "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "src"));
+  await mkdir(path.join(root, "tests"));
+  await writeFile(path.join(root, "src", "subject.py"), `
+def exercised(value):
+    if value > 0:
+        return "positive"
+    return "other"
+
+def boundary(value):
+    if value == 1: value += 1
+    if value == 2: value += 1
+    if value == 3: value += 1
+    if value == 4: value += 1
+    if value == 5: value += 1
+    if value == 6: value += 1
+    return value
+
+def uncovered(left, right):
+    if left and right:
+        return left
+    return right
+`);
+  await writeFile(path.join(root, "tests", "test_subject.py"), testSource ?? `
+import unittest
+from src.subject import boundary, exercised
+
+class SubjectTest(unittest.TestCase):
+    def test_exercises_both_outcomes(self):
+        self.assertEqual(exercised(1), "positive")
+        self.assertEqual(exercised(0), "other")
+        self.assertEqual(boundary(0), 0)
+`);
+  return root;
 }
 
 test("TypeScript AST analysis matches JavaScript decisions and excludes type-only declarations", () => {
@@ -150,4 +188,68 @@ test("--run reads persisted quality targets and limits analysis to declared symb
   const report = JSON.parse(result.stdout);
   assert.equal(report.status, "approved");
   assert.deepEqual(report.details.map(({ symbol }) => symbol), ["exercised"]);
+});
+
+test("Python AST and unittest coverage preserve the common CRAP report contract", async (t) => {
+  const root = await pythonFixture(t);
+  const result = await run(["crap", "--target", "src/subject.py"], root);
+  if (/Python 3\.10/i.test(result.stderr)) return t.skip(result.stderr);
+  assert.equal(result.code, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.language, "python");
+  assert.match(report.backend, /^(?:coverage\.py|stdlib-trace)$/);
+  assert.equal(report.runner, "unittest");
+  assert.ok(report.hashes.inputs["src/subject.py"]);
+  const boundary = report.details.find(({ symbol }) => symbol === "boundary");
+  assert.equal(boundary.complexity, 7);
+  assert.equal(boundary.crap, 7);
+  assert.equal(boundary.status, "approved");
+  const uncovered = report.details.find(({ symbol }) => symbol === "uncovered");
+  assert.equal(uncovered.complexity, 3);
+  assert.equal(uncovered.coverage.percentage, 0);
+  assert.equal(uncovered.status, "failed");
+});
+
+test("Python falls back to the standard-library tracer without installing dependencies", async (t) => {
+  const root = await pythonFixture(t);
+  const env = { ...process.env, AGENTIC_CORE_PYTHON_BACKEND: "trace" };
+  const result = await run(["scan", "--target", "src/subject.py"], root, env);
+  if (/Python 3\.10/i.test(result.stderr)) return t.skip(result.stderr);
+  assert.equal(result.code, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.backend, "stdlib-trace");
+  assert.equal(report.runner, "unittest");
+});
+
+test("pytest is selected when the project explicitly uses it", async (t) => {
+  const root = await pythonFixture(t, `
+import pytest
+from src.subject import exercised
+
+def test_exercised():
+    assert exercised(1) == "positive"
+    assert exercised(0) == "other"
+`);
+  const result = await run(["scan", "--target", "src/subject.py"], root);
+  if (/Python 3\.10/i.test(result.stderr) || /No module named pytest/i.test(result.stderr)) return t.skip(result.stderr);
+  assert.equal(result.code, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.runner, "pytest");
+  assert.equal(report.status, "failed");
+  assert.deepEqual(report.summary.unsupportedFiles, []);
+});
+
+test("missing Python is explicit and does not affect JavaScript quality", async (t) => {
+  const pythonRoot = await pythonFixture(t);
+  const env = { ...process.env, AGENTIC_CORE_PYTHON: path.join(pythonRoot, "missing-python") };
+  const unsupported = await run(["scan", "--target", "src/subject.py"], pythonRoot, env);
+  assert.equal(unsupported.code, 2, unsupported.stderr || unsupported.stdout);
+  const report = JSON.parse(unsupported.stdout);
+  assert.equal(report.status, "unsupported_environment");
+  assert.equal(report.backend, "unavailable");
+  assert.deepEqual(report.summary.unsupportedFiles, ["src/subject.py"]);
+
+  const javascriptRoot = await fixture(t);
+  const javascript = await run(["scan", "--target", "src/subject.js"], javascriptRoot, env);
+  assert.notEqual(javascript.code, 2, javascript.stderr || javascript.stdout);
 });

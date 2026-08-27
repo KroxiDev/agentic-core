@@ -1,0 +1,124 @@
+import { execFile } from "node:child_process";
+import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+const helper = fileURLToPath(new URL("python-helper.py", import.meta.url));
+const executionOptions = (projectRoot, timeout, env = process.env) => ({
+  cwd: projectRoot, env, encoding: "utf8", maxBuffer: 10 * 1024 * 1024, timeout, windowsHide: true,
+});
+function normalized(filePath) { return path.resolve(filePath).toLowerCase(); }
+async function succeeds(executable, args, options) {
+  try { await execFileAsync(executable, args, options); return true; } catch { return false; }
+}
+
+export async function findPython(projectRoot, { timeout = 10_000 } = {}) {
+  const configured = process.env.AGENTIC_CORE_PYTHON;
+  const candidates = configured ? [[configured]]
+    : process.platform === "win32" ? [["py", "-3"], ["python"], ["python3"]] : [["python3"], ["python"]];
+  for (const [executable, ...prefix] of candidates) {
+    try {
+      const { stdout } = await execFileAsync(executable, [...prefix, "-c",
+        "import json,sys; print(json.dumps(list(sys.version_info[:3])))"], executionOptions(projectRoot, timeout));
+      const version = JSON.parse(stdout.trim());
+      if (version[0] > 3 || (version[0] === 3 && version[1] >= 10)) return { executable, prefix, version };
+    } catch {}
+  }
+  return undefined;
+}
+
+export async function analyzePythonSource(runtime, projectRoot, filePath, { timeout = 10_000 } = {}) {
+  const { stdout } = await execFileAsync(runtime.executable,
+    [...runtime.prefix, helper, "analyze", filePath], executionOptions(projectRoot, timeout));
+  return JSON.parse(stdout);
+}
+
+async function hasFile(projectRoot, relativePath) {
+  try { await access(path.join(projectRoot, relativePath)); return true; } catch { return false; }
+}
+async function pythonTests(projectRoot) {
+  const found = [];
+  async function visit(directory) {
+    let entries;
+    try { entries = await readdir(directory, { withFileTypes: true }); } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if ([".git", ".agentic-core", ".venv", "venv", "node_modules", "__pycache__"].includes(entry.name)) continue;
+      const child = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(child);
+      else if (entry.isFile() && /^(?:test.*|.*_test)\.py$/i.test(entry.name)) found.push(child);
+    }
+  }
+  await visit(projectRoot);
+  return found;
+}
+async function chooseRunner(runtime, projectRoot, timeout) {
+  const tests = await pythonTests(projectRoot);
+  const explicitPytest = await hasFile(projectRoot, "pytest.ini") || await hasFile(projectRoot, "conftest.py")
+    || (await Promise.all(tests.map(async (file) => /(?:^|\n)\s*(?:import pytest|from pytest\s+import)\b/.test(await readFile(file, "utf8"))))).some(Boolean);
+  if (explicitPytest && await succeeds(runtime.executable, [...runtime.prefix, "-c", "import pytest"], executionOptions(projectRoot, timeout))) {
+    return "pytest";
+  }
+  return "unittest";
+}
+async function coverageInvocation(runtime, projectRoot, dataFile, runner) {
+  const unittestRoot = await hasFile(projectRoot, "tests") ? "tests" : ".";
+  const runnerArgs = runner === "pytest" ? ["pytest", "-q"] : ["unittest", "discover", "-s", unittestRoot, "-p", "test*.py"];
+  return [...runtime.prefix, "-m", "coverage", "run", `--data-file=${dataFile}`, "-m", ...runnerArgs];
+}
+function testFailure(error) {
+  const detail = [error.stdout, error.stderr].filter(Boolean).join("\n").trim();
+  return new Error(`Test command failed${detail ? `:\n${detail}` : ""}`);
+}
+function resultFromTrace(document, files) {
+  const attributable = new Set((document.attributable ?? []).map(normalized));
+  const coveredByFile = new Map();
+  for (const file of files) {
+    const key = normalized(file.path);
+    const entry = Object.entries(document.covered ?? {}).find(([candidate]) => normalized(candidate) === key);
+    if (entry) coveredByFile.set(key, new Set(entry[1]));
+  }
+  return { attributable, coveredByFile };
+}
+function resultFromCoverage(document, files, projectRoot) {
+  const attributable = new Set();
+  const coveredByFile = new Map();
+  for (const [reportedPath, coverage] of Object.entries(document.files ?? {})) {
+    const key = normalized(path.isAbsolute(reportedPath) ? reportedPath : path.resolve(projectRoot, reportedPath));
+    if (!files.some((file) => normalized(file.path) === key)) continue;
+    attributable.add(key);
+    coveredByFile.set(key, new Set(coverage.executed_lines ?? []));
+  }
+  return { attributable, coveredByFile };
+}
+
+export async function executePythonCoverage(runtime, projectRoot, files, { timeout = 30_000 } = {}) {
+  const temporary = await mkdtemp(path.join(tmpdir(), "agentic-core-python-"));
+  const dataFile = path.join(temporary, ".coverage");
+  const outputFile = path.join(temporary, "coverage.json");
+  try {
+    const runner = await chooseRunner(runtime, projectRoot, timeout);
+    const hasCoverage = process.env.AGENTIC_CORE_PYTHON_BACKEND !== "trace"
+      && await succeeds(runtime.executable, [...runtime.prefix, "-c", "import coverage"], executionOptions(projectRoot, timeout));
+    if (hasCoverage) {
+      try {
+        await execFileAsync(runtime.executable, await coverageInvocation(runtime, projectRoot, dataFile, runner), executionOptions(projectRoot, timeout));
+        await execFileAsync(runtime.executable, [...runtime.prefix, "-m", "coverage", "json",
+          `--data-file=${dataFile}`, "--fail-under=0", "-o", outputFile], executionOptions(projectRoot, timeout));
+      } catch (error) { throw testFailure(error); }
+      return { ...resultFromCoverage(JSON.parse(await readFile(outputFile, "utf8")), files, projectRoot),
+        backend: "coverage.py", runner };
+    }
+    try {
+      await execFileAsync(runtime.executable, [...runtime.prefix, helper, "trace", "--output", outputFile,
+        "--runner", runner, "--targets", JSON.stringify(files.map(({ path: filePath }) => filePath))],
+      executionOptions(projectRoot, timeout));
+    } catch (error) { throw testFailure(error); }
+    return { ...resultFromTrace(JSON.parse(await readFile(outputFile, "utf8")), files), backend: "stdlib-trace", runner };
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+}

@@ -23,6 +23,8 @@ const expectedInventory = [
   "src/quality/coverage.js",
   "src/quality/engine.js",
   "src/quality/mutation.js",
+  "src/quality/python-helper.py",
+  "src/quality/python.js",
   "src/transaction.js",
   "src/version.js",
 ];
