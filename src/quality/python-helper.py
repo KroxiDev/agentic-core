@@ -1,10 +1,13 @@
 import argparse
 import ast
+import hashlib
 import json
 import os
 import runpy
 import sys
+import tokenize
 import unittest
+from io import StringIO
 
 
 FUNCTION_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -114,6 +117,145 @@ def analyze(file_path):
     return symbols
 
 
+TOKEN_MUTATIONS = {
+    "True": ("False", "boolean"),
+    "False": ("True", "boolean"),
+    "None": ("0", "null"),
+    "==": ("!=", "equality"),
+    "!=": ("==", "equality"),
+    ">": (">=", "comparison"),
+    ">=": (">", "comparison"),
+    "<": ("<=", "comparison"),
+    "<=": ("<", "comparison"),
+    "and": ("or", "logical"),
+    "or": ("and", "logical"),
+    "+": ("-", "arithmetic"),
+    "-": ("+", "arithmetic"),
+    "*": ("/", "arithmetic"),
+    "/": ("*", "arithmetic"),
+    "//": ("*", "arithmetic"),
+    "%": ("*", "arithmetic"),
+    "**": ("*", "arithmetic"),
+}
+
+
+def line_offsets(source):
+    offsets = [0]
+    for index, character in enumerate(source):
+        if character == "\n":
+            offsets.append(index + 1)
+    return offsets
+
+
+def absolute_offset(offsets, position):
+    line, column = position
+    return offsets[line - 1] + column
+
+
+def utf16_offset(source, offset):
+    return len(source[:offset].encode("utf-16-le")) // 2
+
+
+def enclosing_function(functions, line):
+    candidates = [node for node in functions if node.lineno <= line <= node.end_lineno]
+    return min(candidates, key=lambda node: (node.end_lineno - node.lineno, node.col_offset), default=None)
+
+
+def unary_token_positions(tree):
+    return {(node.lineno, node.col_offset) for node in ast.walk(tree) if isinstance(node, ast.UnaryOp)}
+
+
+def constant_mutation(token):
+    if token.type == tokenize.NUMBER:
+        try:
+            return ("1" if float(token.string.replace("_", "")) == 0 else "0", "constant")
+        except ValueError:
+            return None
+    if token.type == tokenize.STRING:
+        try:
+            value = ast.literal_eval(token.string)
+        except (SyntaxError, ValueError):
+            return None
+        if isinstance(value, (str, bytes)) and len(value) > 0:
+            return (repr(type(value)()), "constant")
+    return None
+
+
+def mutation_candidates(source, tree):
+    tokens = list(tokenize.generate_tokens(StringIO(source).readline))
+    unary_positions = unary_token_positions(tree)
+    offsets = line_offsets(source)
+    candidates = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        replacement = TOKEN_MUTATIONS.get(token.string) or constant_mutation(token)
+        end = token.end
+        original = token.string
+        if token.string == "is":
+            following = tokens[index + 1] if index + 1 < len(tokens) else None
+            if following and following.string == "not":
+                replacement = ("is", "identity")
+                end = following.end
+                original = source[absolute_offset(offsets, token.start):absolute_offset(offsets, end)]
+                index += 1
+            else:
+                replacement = ("is not", "identity")
+        elif token.string == "not":
+            previous = tokens[index - 1].string if index > 0 else None
+            following = tokens[index + 1] if index + 1 < len(tokens) else None
+            if following and following.string == "in":
+                replacement = ("in", "comparison")
+                end = following.end
+                original = source[absolute_offset(offsets, token.start):absolute_offset(offsets, end)]
+                index += 1
+            elif previous != "is":
+                replacement = ("", "unary")
+        elif token.string == "in":
+            previous = tokens[index - 1].string if index > 0 else None
+            if previous != "not":
+                replacement = ("not in", "comparison")
+        elif token.string in ("+", "-") and token.start in unary_positions:
+            replacement = ("-" if token.string == "+" else "+", "unary")
+        if replacement:
+            candidates.append((token.start, end, original, replacement[0], replacement[1]))
+        index += 1
+    return candidates
+
+
+def generate_mutants(file_path, logical_path, selected_symbols=None):
+    with open(file_path, encoding="utf-8") as source_file:
+        source = source_file.read()
+    tree = ast.parse(source, filename=file_path)
+    functions = [node for node in ast.walk(tree) if isinstance(node, FUNCTION_TYPES)]
+    offsets = line_offsets(source)
+    selected = set(selected_symbols or [])
+    mutants = []
+    for start_position, end_position, original, replacement, category in mutation_candidates(source, tree):
+        symbol = enclosing_function(functions, start_position[0])
+        if symbol is None or (selected and symbol.name not in selected):
+            continue
+        start = absolute_offset(offsets, start_position)
+        end = absolute_offset(offsets, end_position)
+        mutated = source[:start] + replacement + source[end:]
+        try:
+            ast.parse(mutated, filename=file_path)
+        except SyntaxError:
+            continue
+        identity = f"{logical_path}:{start_position[0]}:{start_position[1]}:{end_position[0]}:{end_position[1]}:{replacement}"
+        mutants.append({
+            "id": hashlib.sha256(identity.encode()).hexdigest()[:16],
+            "symbol": symbol.name,
+            "category": category,
+            "mutation": f"{original} -> {replacement}",
+            "location": {"line": start_position[0], "column": start_position[1] + 1},
+            "start": utf16_offset(source, start),
+            "end": utf16_offset(source, end),
+            "replacement": replacement,
+        })
+    return mutants
+
+
 def run_tests(runner):
     project_root = os.getcwd()
     if project_root not in sys.path:
@@ -171,6 +313,10 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
     analyze_parser = subparsers.add_parser("analyze")
     analyze_parser.add_argument("file")
+    mutants_parser = subparsers.add_parser("mutants")
+    mutants_parser.add_argument("file")
+    mutants_parser.add_argument("--logical-path", required=True)
+    mutants_parser.add_argument("--symbols", default="[]")
     trace_parser = subparsers.add_parser("trace")
     trace_parser.add_argument("--output", required=True)
     trace_parser.add_argument("--runner", choices=("pytest", "unittest"), required=True)
@@ -178,6 +324,9 @@ def main():
     args = parser.parse_args()
     if args.command == "analyze":
         json.dump(analyze(args.file), sys.stdout)
+        return 0
+    if args.command == "mutants":
+        json.dump(generate_mutants(args.file, args.logical_path, json.loads(args.symbols)), sys.stdout)
         return 0
     return trace_tests(args.output, args.runner, json.loads(args.targets))
 

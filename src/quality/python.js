@@ -36,6 +36,15 @@ export async function analyzePythonSource(runtime, projectRoot, filePath, { time
   return JSON.parse(stdout);
 }
 
+export async function generatePythonMutants(runtime, projectRoot, filePath, logicalPath, selectedSymbols,
+  { timeout = 10_000 } = {}) {
+  const { stdout } = await execFileAsync(runtime.executable, [
+    ...runtime.prefix, helper, "mutants", filePath, "--logical-path", logicalPath,
+    "--symbols", JSON.stringify([...selectedSymbols ?? []]),
+  ], executionOptions(projectRoot, timeout));
+  return JSON.parse(stdout);
+}
+
 async function hasFile(projectRoot, relativePath) {
   try { await access(path.join(projectRoot, relativePath)); return true; } catch { return false; }
 }
@@ -57,12 +66,15 @@ async function pythonTests(projectRoot) {
   await visit(projectRoot);
   return found;
 }
-async function chooseRunner(runtime, projectRoot, timeout) {
+export async function choosePythonRunner(runtime, projectRoot, timeout = 10_000) {
   const tests = await pythonTests(projectRoot);
   const explicitPytest = await hasFile(projectRoot, "pytest.ini") || await hasFile(projectRoot, "conftest.py")
     || (await Promise.all(tests.map(async (file) => /(?:^|\n)\s*(?:import pytest|from pytest\s+import)\b/.test(await readFile(file, "utf8"))))).some(Boolean);
-  if (explicitPytest && await succeeds(runtime.executable, [...runtime.prefix, "-c", "import pytest"], executionOptions(projectRoot, timeout))) {
-    return "pytest";
+  if (explicitPytest) {
+    if (await succeeds(runtime.executable, [...runtime.prefix, "-c", "import pytest"], executionOptions(projectRoot, timeout))) return "pytest";
+    const error = new Error("Python pytest runner is unavailable: No module named pytest");
+    error.unsupportedEnvironment = true;
+    throw error;
   }
   return "unittest";
 }
@@ -102,7 +114,7 @@ export async function executePythonCoverage(runtime, projectRoot, files, { timeo
   const dataFile = path.join(temporary, ".coverage");
   const outputFile = path.join(temporary, "coverage.json");
   try {
-    const runner = await chooseRunner(runtime, projectRoot, timeout);
+    const runner = await choosePythonRunner(runtime, projectRoot, timeout);
     const hasCoverage = process.env.AGENTIC_CORE_PYTHON_BACKEND !== "trace"
       && await succeeds(runtime.executable, [...runtime.prefix, "-c", "import coverage"], executionOptions(projectRoot, timeout));
     if (hasCoverage) {
@@ -121,4 +133,13 @@ export async function executePythonCoverage(runtime, projectRoot, files, { timeo
     } catch (error) { throw testFailure(error); }
     return { ...resultFromTrace(JSON.parse(await readFile(outputFile, "utf8")), files), backend: "stdlib-trace", runner };
   } finally { await rm(temporary, { recursive: true, force: true }); }
+}
+
+export async function executePythonTests(runtime, projectRoot, { runner, timeout = 30_000 } = {}) {
+  const selectedRunner = runner ?? await choosePythonRunner(runtime, projectRoot, timeout);
+  const unittestRoot = await hasFile(projectRoot, "tests") ? "tests" : ".";
+  const args = selectedRunner === "pytest" ? [...runtime.prefix, "-m", "pytest", "-q"]
+    : [...runtime.prefix, "-m", "unittest", "discover", "-s", unittestRoot, "-p", "test*.py"];
+  await execFileAsync(runtime.executable, args, executionOptions(projectRoot, timeout));
+  return { runner: selectedRunner };
 }

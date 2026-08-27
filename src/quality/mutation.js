@@ -5,11 +5,20 @@ import path from "node:path";
 import ts from "typescript";
 import { analyzeSource } from "./ast.js";
 import { executeCoverage, executeTests } from "./coverage.js";
+import { executePythonCoverage, executePythonTests, findPython, generatePythonMutants } from "./python.js";
 
-const EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
-const IGNORED_DIRECTORIES = new Set(["node_modules", "coverage", "dist", "build", "generated", ".git", ".agentic-core"]);
+const EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".py"]);
+const IGNORED_DIRECTORIES = new Set(["node_modules", "coverage", "dist", "build", "generated", ".git", ".agentic-core",
+  ".venv", "venv", "__pycache__", ".pytest_cache"]);
 const TEST_FILE = /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$/i;
-const GENERATED_FILE = /(?:^|[.-])generated(?:[.-]|$)/i;
+const PYTHON_TEST_FILE = /^(?:test.*|.*_test)\.py$/i;
+const GENERATED_FILE = /(?:^|[._-])generated(?:[._-]|$)/i;
+const MANIFEST_FILE = /^(?:setup\.py)$/i;
+function excludedFile(filePath) {
+  const name = path.basename(filePath);
+  return TEST_FILE.test(name) || PYTHON_TEST_FILE.test(name) || GENERATED_FILE.test(name) || MANIFEST_FILE.test(name)
+    || filePath.endsWith(".d.ts");
+}
 const BINARY_MUTATIONS = new Map([
   [ts.SyntaxKind.EqualsEqualsToken, ["!="]],
   [ts.SyntaxKind.ExclamationEqualsToken, ["=="]],
@@ -129,8 +138,7 @@ export function generateMutants(filePath, source, selectedSymbols) {
 async function sourceFiles(targetPath) {
   const details = await lstat(targetPath);
   if (details.isFile()) {
-    return EXTENSIONS.has(path.extname(targetPath).toLowerCase()) && !TEST_FILE.test(path.basename(targetPath))
-      && !GENERATED_FILE.test(path.basename(targetPath)) && !targetPath.endsWith(".d.ts") ? [targetPath] : [];
+    return EXTENSIONS.has(path.extname(targetPath).toLowerCase()) && !excludedFile(targetPath) ? [targetPath] : [];
   }
   if (!details.isDirectory()) return [];
   const files = [];
@@ -138,8 +146,7 @@ async function sourceFiles(targetPath) {
     if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
     const child = path.join(targetPath, entry.name);
     if (entry.isDirectory()) files.push(...await sourceFiles(child));
-    else if (entry.isFile() && EXTENSIONS.has(path.extname(entry.name).toLowerCase()) && !TEST_FILE.test(entry.name)
-      && !GENERATED_FILE.test(entry.name) && !entry.name.endsWith(".d.ts")) files.push(child);
+    else if (entry.isFile() && EXTENSIONS.has(path.extname(entry.name).toLowerCase()) && !excludedFile(child)) files.push(child);
   }
   return files;
 }
@@ -162,7 +169,8 @@ async function copySnapshot(projectRoot, destination) {
     filter: (source) => {
       const relative = path.relative(projectRoot, source);
       if (!relative) return true;
-      return !relative.split(path.sep).some((part) => ["node_modules", ".git", ".agentic-core", "coverage"].includes(part));
+      return !relative.split(path.sep).some((part) => ["node_modules", ".git", ".agentic-core", "coverage", ".venv", "venv",
+        "__pycache__", ".pytest_cache"].includes(part));
     },
   });
   const dependencies = path.join(projectRoot, "node_modules");
@@ -194,41 +202,57 @@ function equivalentEvidence(equivalents, file, mutant) {
     && typeof item.staticProof === "string" && item.staticProof.trim());
 }
 
+function terminalReport({ started, config, files, targets, status, language, backend, error }) {
+  return {
+    $schema: "https://kroxidev.dev/agentic-core/quality-report.schema.json",
+    schemaVersion: 1,
+    tool: "mutation",
+    status,
+    language,
+    backend,
+    runner: null,
+    hashes: {
+      inputs: Object.fromEntries(files.map((file) => [file.file, file.hash])),
+      configuration: sha256(JSON.stringify(config)),
+    },
+    targets: targets.map((target) => path.normalize(target).split(path.sep).join("/")),
+    summary: { mutants: 0, killed: 0, killedByTimeout: 0, survived: 0, uncovered: 0, equivalent: 0 },
+    details: [],
+    ...(error ? { error } : {}),
+    durationMs: Number((Number(process.hrtime.bigint() - started) / 1_000_000).toFixed(3)),
+  };
+}
+
 export async function analyzeMutation({ projectRoot, targets, selection, equivalents = [] }) {
   const started = process.hrtime.bigint();
   const config = await configuration(projectRoot);
   const paths = [...new Set((await Promise.all(targets.map((target) =>
     sourceFiles(path.resolve(projectRoot, target))))).flat())].sort();
+  const languages = new Set(paths.map((filePath) => path.extname(filePath).toLowerCase() === ".py"
+    ? "python" : "javascript-typescript"));
+  const language = languages.size > 1 ? "mixed" : languages.values().next().value ?? "javascript-typescript";
+  const runtime = language === "python" ? await findPython(projectRoot) : undefined;
   const files = await Promise.all(paths.map(async (filePath) => {
     const source = await readFile(filePath, "utf8");
     const file = logicalPath(projectRoot, filePath);
     return { path: filePath, file, source, hash: sha256(source),
-      mutants: generateMutants(file, source, selection?.get(file)) };
+      mutants: language === "python" && runtime
+        ? await generatePythonMutants(runtime, projectRoot, filePath, file, selection?.get(file))
+        : language === "javascript-typescript" ? generateMutants(file, source, selection?.get(file)) : [] };
   }));
+  if (language === "mixed") return terminalReport({ started, config, files, targets, status: "unsupported_language",
+    language, backend: "unavailable", error: "Mutation targets must use a single supported language" });
+  if (language === "python" && !runtime) return terminalReport({ started, config, files, targets, status: "unsupported_environment",
+    language, backend: "unavailable", error: "Python 3.10 or newer is unavailable" });
   let coverage;
   try {
-    coverage = await executeCoverage(projectRoot, files, {
-      timeout: testTimeout("AGENTIC_CORE_TEST_BASELINE_TIMEOUT_MS", 30_000),
-    });
+    const timeout = testTimeout("AGENTIC_CORE_TEST_BASELINE_TIMEOUT_MS", 30_000);
+    coverage = language === "python" ? await executePythonCoverage(runtime, projectRoot, files, { timeout })
+      : await executeCoverage(projectRoot, files, { timeout });
   } catch (error) {
-    return {
-      $schema: "https://kroxidev.dev/agentic-core/quality-report.schema.json",
-      schemaVersion: 1,
-      tool: "mutation",
-      status: "baseline_failed",
-      language: "javascript-typescript",
-      backend: "typescript-v8",
-      runner: null,
-      hashes: {
-        inputs: Object.fromEntries(files.map((file) => [file.file, file.hash])),
-        configuration: sha256(JSON.stringify(config)),
-      },
-      targets: targets.map((target) => path.normalize(target).split(path.sep).join("/")),
-      summary: { mutants: 0, killed: 0, killedByTimeout: 0, survived: 0, uncovered: 0, equivalent: 0 },
-      details: [],
-      error: error.message,
-      durationMs: Number((Number(process.hrtime.bigint() - started) / 1_000_000).toFixed(3)),
-    };
+    return terminalReport({ started, config, files, targets,
+      status: error?.unsupportedEnvironment ? "unsupported_environment" : "baseline_failed",
+      language, backend: language === "python" ? "python-ast" : "typescript-v8", error: error.message });
   }
   const allDetails = [];
   let restorationFailure;
@@ -268,7 +292,8 @@ export async function analyzeMutation({ projectRoot, targets, selection, equival
         const mutantTimeout = testTimeout("AGENTIC_CORE_TEST_MUTANT_TIMEOUT_MS", 10_000);
         const testStarted = Date.now();
         try {
-          await executeTests(snapshot, { timeout: mutantTimeout });
+          if (language === "python") await executePythonTests(runtime, snapshot, { runner: coverage.runner, timeout: mutantTimeout });
+          else await executeTests(snapshot, { timeout: mutantTimeout });
           status = "survived";
         } catch (error) {
           status = error?.killed || error?.signal === "SIGTERM" || error?.code === "ETIMEDOUT"
@@ -319,8 +344,8 @@ export async function analyzeMutation({ projectRoot, targets, selection, equival
     schemaVersion: 1,
     tool: "mutation",
     status,
-    language: "javascript-typescript",
-    backend: "typescript-v8",
+    language,
+    backend: language === "python" ? `python-ast-${coverage.backend}` : "typescript-v8",
     runner: coverage.runner,
     hashes: {
       inputs: Object.fromEntries(files.map((file) => [file.file, file.hash])),
