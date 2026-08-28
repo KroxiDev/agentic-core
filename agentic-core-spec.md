@@ -179,8 +179,8 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 16. El Documentador se creará siempre en `normal` y `full`, solo modificará documentación y nunca podrá solicitar retrabajo, bloquear la ejecución ni cambiar el modo.
 17. Un fallo persistente del Documentador producirá éxito con advertencias, después de un reintento, sin invalidar la implementación aceptada.
 18. El contador de retrabajo será global por ejecución y modo. Solo `changes_required` consumirá un ciclo; varios blockers de un mismo hand-off contarán como un ciclo.
-19. Solo se permitirán escaladas `light` → `normal`, `light` → `full` y `normal` → `full`, siempre con aprobación explícita del usuario.
-20. Una escalada reiniciará el presupuesto del nuevo modo y conservará fuentes, artefactos, plan, blockers y reportes cuyos hashes sigan vigentes.
+19. Solo se permitirán escaladas `light` → `normal`, `light` → `full` y `normal` → `full`. El hand-off `needs_mode_change` dejará la escalada pendiente y únicamente `approveModeChange` con `approved: true` podrá iniciarla.
+20. Una escalada iniciará el primer rol del grafo destino, reiniciará solo el presupuesto del nuevo modo y conservará el mismo run, fuentes, archivos, tests, intención, plan, blockers y reportes cuyos hashes sigan vigentes.
 21. El coordinador será un reducer determinista y efímero, no un daemon ni un agente. Sus responsabilidades serán crear ejecuciones, preparar briefs, validar hand-offs, derivar transiciones, persistir estado mínimo, reanudar y limpiar.
 22. El coordinador no revisará código, ejecutará pruebas, calculará calidad, corregirá reportes, interpretará prosa para decidir rutas, mantendrá telemetría ni gestionará branches, commits o merges.
 23. Habrá como máximo un subagente activo por ejecución. Los roles se ejecutarán secuencialmente sobre el mismo working tree y cada hand-off creará un agente nuevo.
@@ -193,7 +193,7 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 30. Cada modo tendrá instrucciones propias y aisladas. Una comprobación de conformidad verificará que un brief no incluya roles ni marcadores de otros modos.
 31. La definición ejecutable de los grafos será la autoridad del orden. Los nombres numerados de roles deberán coincidir exactamente con ese orden.
 32. El hand-off será un único objeto JSON sin Markdown ni texto adicional, con versión de schema, estado, resumen y payload tipado.
-33. Los estados admitidos serán `completed`, `changes_required`, `needs_input`, `needs_mode_change`, `context_missing`, `failed` y `blocked`.
+33. Los estados admitidos serán `completed`, `completed_with_warnings`, `changes_required`, `needs_input`, `needs_mode_change`, `context_missing`, `failed` y `blocked`. `completed_with_warnings` será exclusivamente un resultado del coordinador tras el segundo fallo no bloqueante del Documentador, nunca un estado enviado por un rol.
 34. Los findings tendrán impacto `blocking` o `advisory` y categorías cerradas para especificación, tests, C.R.A.P., mutación, Golden Rules, validación requerida y documentación.
 35. `changes_required` exigirá al menos un finding bloqueante; `completed` lo prohibirá. La documentación solo podrá originar findings advisory.
 36. El contrato prohibirá decisiones de próximo rol, razonamiento interno, prompts completos y datos de coordinación que ya pertenezcan al estado.

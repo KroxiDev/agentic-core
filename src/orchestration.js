@@ -34,6 +34,13 @@ const NORMAL_ROLES = new Set(["Planificador", "Implementador", "Verificador", "D
 const FULL_ROLES = new Set([
   "Explorador", "Planificador", "Implementador", "Refactor", "Tester", "Evaluador", "Documentador",
 ]);
+const ROLE_HANDOFF_STATUSES = new Set([
+  "completed", "changes_required", "needs_input", "needs_mode_change", "context_missing", "failed", "blocked",
+]);
+const PROHIBITED_HANDOFF_KEYS = new Set([
+  "nextrole", "nextagent", "reasoning", "internalreasoning", "prompt", "fullprompt",
+  "coordination", "coordinationdata", "coordinatorstate",
+]);
 
 export class OrchestrationError extends Error {
   constructor(code, message) {
@@ -202,6 +209,27 @@ export async function startOrchestration({ projectRoot: projectDirectory, reques
     status: "started", mode: "light", runId, role: structuredClone(brief.role),
     summary: `${runId}: light -> Implementador`, brief,
   };
+}
+function validateCommonHandoffContract(handoff) {
+  if (!plainObject(handoff) || !ROLE_HANDOFF_STATUSES.has(handoff.status)) {
+    throw new OrchestrationError("handoff_invalid", "hand-off status is not allowed for a role");
+  }
+  const visit = (value, location) => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, `${location}[${index}]`));
+      return;
+    }
+    if (!plainObject(value)) return;
+    for (const [key, child] of Object.entries(value)) {
+      const normalized = key.replace(/[^a-z0-9]/giu, "").toLowerCase();
+      if (PROHIBITED_HANDOFF_KEYS.has(normalized)) {
+        throw new OrchestrationError("handoff_invalid",
+          `prohibited coordination field at ${location}.${key}`);
+      }
+      visit(child, `${location}.${key}`);
+    }
+  };
+  visit(handoff, "handoff");
 }
 
 function normalSources(state) {
@@ -1010,7 +1038,7 @@ async function handleFullControlHandoff(projectRoot, runRoot, state, runId, hand
     });
   const result = await persistFullRole(projectRoot, runRoot, state, role, brief, [{
     role: state.currentRole.name, status: handoff.status, summary: handoff.summary, at: new Date().toISOString(),
-  }], [], { lastHandoff: structuredClone(handoff) });
+  }], [], controlStateUpdates(state, handoff));
   return { ...result, status: handoff.status };
 }
 
@@ -1072,6 +1100,7 @@ async function advanceHandoff({ projectRoot: projectDirectory, runId, handoff })
   const projectRoot = path.resolve(projectDirectory);
   const { runRoot, state } = await readRun(projectRoot, runId);
   if (state.status !== "running") throw new OrchestrationError("run_not_resumable", `Run is ${state.status}`);
+  validateCommonHandoffContract(handoff);
   if (state.mode === "full") return advanceFullHandoff(projectRoot, runRoot, state, runId, handoff);
   if (state.mode === "normal") return advanceNormalHandoff(projectRoot, runRoot, state, runId, handoff);
   if (TERMINAL_STATUSES.has(handoff?.status)) return handleTerminalHandoff(projectRoot, runRoot, state, runId, handoff);
@@ -1168,7 +1197,7 @@ async function submitTesterHandoff(projectRoot, runRoot, state, runId, handoff) 
     { path: path.join(runRoot, "briefs", `${String(role.sequence).padStart(3, "0")}-implementador.json`), content },
   ]);
   return { status: "continued", mode: "light", runId, role: structuredClone(role),
-    summary: `${runId}: Tester -> Implementador`, brief };
+    reworkCount, summary: `${runId}: Tester -> Implementador`, brief };
 }
 
 async function handleNormalControlHandoff(projectRoot, runRoot, state, runId, handoff) {
@@ -1183,7 +1212,7 @@ async function handleNormalControlHandoff(projectRoot, runRoot, state, runId, ha
     { skills: state.currentRole.name === "Implementador" && state.changesExecutableBehavior ? ["agentic-tdd"] : [] });
   return persistNormalRole(projectRoot, runRoot, state, role, brief, [
     { role: state.currentRole.name, status: handoff.status, summary: handoff.summary, at: new Date().toISOString() },
-  ], [], { lastHandoff: structuredClone(handoff) });
+  ], [], controlStateUpdates(state, handoff));
 }
 async function handleNormalTerminalHandoff(projectRoot, runRoot, state, runId, handoff) {
   const errors = [];
@@ -1292,6 +1321,73 @@ export async function submitHandoff(options) {
     if (error?.code !== "handoff_invalid") throw error;
     return retryInvalidHandoff(projectRoot, options.runId, error);
   }
+}
+
+const MODE_ESCALATIONS = new Set(["light:normal", "light:full", "normal:full"]);
+
+export async function approveModeChange({
+  projectRoot: projectDirectory, runId, targetMode, approved,
+}) {
+  if (approved !== true) {
+    throw new OrchestrationError("approval_required", "Mode escalation requires explicit user approval");
+  }
+  const projectRoot = path.resolve(projectDirectory);
+  const { runRoot, state } = await readRun(projectRoot, runId);
+  assertPersistedState(state, runId);
+  if (state.status !== "running") throw new OrchestrationError("run_not_resumable", `Run is ${state.status}`);
+  const request = state.pendingModeChange ?? state.lastHandoff;
+  if (request?.status !== "needs_mode_change" || request.payload?.requestedMode !== targetMode) {
+    throw new OrchestrationError("mode_change_not_pending", "The approved target does not match a pending mode change");
+  }
+  if (!MODE_ESCALATIONS.has(`${state.mode}:${targetMode}`)) {
+    throw new OrchestrationError("mode_change_invalid", `${state.mode} cannot escalate to ${targetMode}`);
+  }
+  await validateRunSources(projectRoot, runRoot, state);
+  const intention = JSON.parse(await readFile(path.join(runRoot, "intention.json"), "utf8"));
+  const sequence = state.currentRole.sequence + 1;
+  const role = targetMode === "normal"
+    ? normalRole(sequence, "Planificador")
+    : fullRole(sequence, "Explorador");
+  let nextState = {
+    ...state, mode: targetMode, currentRole: role, reworkCount: 0,
+    protocolRetryUsed: false, documentationRetryUsed: false, pendingModeChange: null,
+    planHash: state.planHash ?? null,
+    ...(targetMode === "normal" ? { normalGraphVersion: 2 } : { fullGraphVersion: 1 }),
+    transitions: [...state.transitions, {
+      role: role.name, status: "started", summary: `${state.mode} -> ${targetMode}`,
+      at: new Date().toISOString(),
+    }],
+  };
+  if (state.baseline?.hashes && state.qualityTargets) {
+    const current = await baselineFor(projectRoot, state.qualityTargets);
+    if (JSON.stringify(current.hashes) !== JSON.stringify(state.baseline.hashes)) {
+      nextState = { ...nextState, baseline: current,
+        reports: (state.reports ?? []).map((report) => ({ ...report, status: "stale" })) };
+    }
+  }
+  const escalation = {
+    from: state.mode, to: targetMode, approved: true,
+    preservedHandoff: state.preservedHandoff ? structuredClone(state.preservedHandoff) : null,
+  };
+  const currentPlan = nextState.planHash ? await normalPlan(runRoot) : null;
+  const brief = targetMode === "normal"
+    ? buildNormalBrief(nextState, runId, role,
+      "Read the original request and produce a flat, traceable plan without weakening any criterion.",
+      currentPlan, request, {
+        intention, escalation,
+        skills: state.planningNeedsHowDecision ? ["agentic-grilling"] : [],
+      })
+    : buildFullBrief(nextState, runId, role,
+      "Identify only the concrete sector, symbols and dependencies needed, without proposing a solution.",
+      currentPlan, request, { intention, escalation });
+  const content = ensureBriefSize(brief, state.configurationSnapshot.orchestration.briefMaxBytes);
+  await writeTransaction(projectRoot, [
+    { path: path.join(runRoot, "state.json"), content: Buffer.from(json(nextState)) },
+    { path: path.join(runRoot, "briefs", `${String(role.sequence).padStart(3, "0")}-${role.name.toLowerCase()}.json`),
+      content },
+  ]);
+  return { status: "escalated", mode: targetMode, runId, role: structuredClone(role),
+    reworkCount: 0, brief };
 }
 
 async function completedTesterHandoff(projectRoot, runRoot, state, runId, handoff) {
@@ -1526,6 +1622,15 @@ function validateControlHandoff(handoff, maximumBytes) {
   if (errors.length) throw new OrchestrationError("handoff_invalid", errors.join("; "));
 }
 
+function controlStateUpdates(state, handoff) {
+  const updates = { lastHandoff: structuredClone(handoff) };
+  if (handoff.status === "needs_mode_change") {
+    updates.pendingModeChange = structuredClone(handoff);
+    updates.preservedHandoff = state.lastHandoff ? structuredClone(state.lastHandoff) : null;
+  }
+  return updates;
+}
+
 async function handleControlHandoff(projectRoot, runRoot, state, runId, handoff) {
   validateControlHandoff(handoff, state.configurationSnapshot.orchestration.handoffMaxBytes);
   const role = { sequence: state.currentRole.sequence + 1, name: state.currentRole.name, instanceId: randomUUID() };
@@ -1539,7 +1644,7 @@ async function handleControlHandoff(projectRoot, runRoot, state, runId, handoff)
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
     throw new OrchestrationError("context_budget_exceeded", "Control-event brief exceeds configured limit");
   }
-  const nextState = { ...state, currentRole: role, lastHandoff: structuredClone(handoff), protocolRetryUsed: false,
+  const nextState = { ...state, currentRole: role, ...controlStateUpdates(state, handoff), protocolRetryUsed: false,
     transitions: [...state.transitions, { role: state.currentRole.name, status: handoff.status,
       summary: handoff.summary, at: new Date().toISOString() }] };
   await writeTransaction(projectRoot, [
