@@ -75,7 +75,7 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 51. Como usuario de `full`, quiero que un Evaluador compare solicitud, criterios, plan, cambios y evidencia, para obtener aceptación final independiente.
 52. Como usuario de `full`, quiero que el Evaluador ejecute Mutation Testing diferencial, para detectar pruebas insuficientes en el comportamiento cambiado.
 53. Como usuario de `full`, quiero que el Evaluador repita C.R.A.P. solo si el reporte quedó obsoleto, para evitar trabajo redundante.
-54. Como usuario de `full`, quiero un máximo de cuatro ciclos de retrabajo, para permitir profundidad sin bucles ilimitados.
+54. Como usuario de `full`, quiero un máximo de dos ciclos globales de retrabajo, para permitir profundidad sin bucles ilimitados.
 55. Como usuario, quiero que varios blockers de un mismo hand-off consuman un solo ciclo, para contabilizar retrabajo por iteración real.
 56. Como usuario, quiero que el contador de retrabajo sea global dentro del modo, para que una fase aprobada no reinicie el presupuesto.
 57. Como usuario, quiero que agotar el presupuesto termine la ejecución como bloqueada, para recibir un resultado inequívoco.
@@ -173,7 +173,7 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 10. CodeGraph y Engram se recomendarán cuando estén disponibles y sean útiles, pero no formarán parte de preflight, contratos, estado, instalación, aceptación ni recuperación.
 11. El modo `light` seguirá el flujo Implementador → Tester, con retorno a un Implementador nuevo tras el primer `changes_required`; el segundo terminará como `blocked`.
 12. El modo `normal` seguirá el flujo Planificador → Implementador → Verificador → Documentador. Un cambio real del HOW volverá a un Planificador nuevo, una corrección localizada a un Implementador nuevo y el tercer `changes_required` terminará como `blocked`.
-13. El modo `full` seguirá el flujo Explorador → Planificador → Implementador → Refactor → Tester → Evaluador → Documentador. Los defectos de Refactor volverán a un Implementador nuevo y los de Tester o Evaluador a un Planificador nuevo; habrá un máximo de cuatro ciclos.
+13. El modo `full` seguirá el flujo Explorador → Planificador → Implementador → Refactor → Tester → Evaluador → Documentador. Un blocker material y localizado de Refactor volverá a un Implementador nuevo; Tester y Evaluador volverán a un Planificador nuevo cuando cambie el HOW y a un Implementador nuevo para una corrección localizada. El tercer `changes_required` válido terminará como `blocked`.
 14. Todos los roles, salvo las capacidades explícitas del Verificador en `normal`, del Tester en `full` y del Documentador, serán de solo lectura o escritura según su responsabilidad declarada. Ningún revisor podrá modificar producción.
 15. El Verificador de `normal` podrá crear o mejorar tests únicamente cuando producción ya cumpla el comportamiento y falte evidencia; nunca cambiará silenciosamente tests contradictorios y repetirá en su propio recorrido los checks invalidados.
 16. El Documentador se creará siempre en `normal` y `full`, solo modificará documentación y nunca podrá solicitar retrabajo, bloquear la ejecución ni cambiar el modo.
@@ -219,7 +219,7 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 56. El análisis asociado a una ejecución será diferencial; un objetivo explícito evaluará todos sus mutantes. Exactamente una de ambas fuentes será obligatoria.
 57. Un gate de mutación aprobará solo cuando no existan mutantes sobrevivientes ni no cubiertos. Un mutante que exceda su timeout contará como muerto por timeout.
 58. Un baseline fallido o agotado invalidará la ejecución completa de mutación.
-59. El Evaluador en `full` podrá clasificar equivalentes solo con archivo lógico, símbolo, mutación, ubicación, razón y prueba estática localizada. No habrá exclusiones globales.
+59. El Evaluador en `full` podrá clasificar equivalentes solo con archivo lógico, identidad estable del símbolo, mutación exacta, ubicación, razón y prueba estática localizada. No habrá exclusiones globales.
 60. La mutación usará hasta cuatro workers configurables. Ejecutará baseline y cobertura una vez, procesará objetivos de forma secuencial y hasta cuatro mutantes del objetivo actual en paralelo.
 61. Cada worker operará sobre un snapshot reutilizable y aislado. El working tree real nunca se mutará; cada restauración se comprobará por hash.
 62. Si falla la limpieza, el producto preservará la evidencia y devolverá `restoration_failure`. Dependencias existentes podrán reutilizarse mediante referencias controladas sin copiarlas innecesariamente.
@@ -256,7 +256,7 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 6. El repositorio parte vacío y no existe prior art interno. La primera suite establecerá el patrón canónico de subprocess, fixtures temporales, snapshots verificables y aserciones de filesystem.
 7. Los contratos probarán schemas sparse, campos prohibidos, combinaciones de estado y findings, payloads, límites de tamaño y protocol retry.
 8. Los grafos probarán todas las transiciones válidas e inválidas de `light`, `normal` y `full`, incluido el requisito de crear agentes nuevos.
-9. Los presupuestos probarán exactamente uno, dos y cuatro ciclos, el conteo por hand-off, los eventos que no consumen ciclos y el estado terminal al agotarlos.
+9. Los presupuestos probarán exactamente un ciclo en `light` y dos en `normal` y `full`, el conteo por hand-off, los eventos que no consumen ciclos y el estado terminal al agotarlos.
 10. Los tests del Documentador demostrarán que no puede solicitar retrabajo, bloquear ni cambiar modo, y que un fallo persistente termina con advertencias.
 11. Los tests de contexto verificarán inmutabilidad de la solicitud, representación de razón ausente, autoridad de criterios, hashes, selección de cápsulas y rechazo de briefs mayores de 16 KiB sin truncamiento.
 12. Los tests de aislamiento inspeccionarán el brief producido para cada rol y demostrarán ausencia de instrucciones, roles y marcadores pertenecientes a otros modos.

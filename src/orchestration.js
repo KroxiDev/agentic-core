@@ -20,12 +20,20 @@ const NORMAL_CONTRACT = {
   output: "Return one JSON hand-off that conforms to the normal-mode contract for this role.",
   boundaries: ["Do not weaken acceptance criteria.", "Do not select the next role.", "Report only actionable blockers."],
 };
+const FULL_CONTRACT = {
+  input: "Use only the original request, current plan, actionable hand-off and canonical source references as authority.",
+  output: "Return one JSON hand-off that conforms to the isolated full-mode contract for this role.",
+  boundaries: ["Do not weaken acceptance criteria.", "Do not select the next role.", "Report only material blockers."],
+};
 const REVIEW_POLICY = {
   blocking: "Block only material defects tied to concrete authority, changed scope or a direct dependency, reproducible evidence, material impact and a minimal in-scope fix.",
   scope: "Do not expand criteria, modules, surfaces or neighboring dependencies without evidence that they are directly necessary.",
   advisory: "Future extensibility, unsupported inputs, hypothetical paths, unchanged debt, style, alternatives, unmeasured optimizations and out-of-scope concerns are advisory.",
 };
 const NORMAL_ROLES = new Set(["Planificador", "Implementador", "Verificador", "Documentador"]);
+const FULL_ROLES = new Set([
+  "Explorador", "Planificador", "Implementador", "Refactor", "Tester", "Evaluador", "Documentador",
+]);
 
 export class OrchestrationError extends Error {
   constructor(code, message) {
@@ -144,6 +152,8 @@ export async function startOrchestration({ projectRoot: projectDirectory, reques
   changesExecutableBehavior = false, planningNeedsHowDecision = false }) {
   const parsed = parseRequest(request);
   if (!parsed.activated) return { status: "direct", mode: "direct", request: parsed.task };
+  if (parsed.mode === "full") return startFullOrchestration({ projectDirectory, request, intention,
+    changesExecutableBehavior, planningNeedsHowDecision });
   if (parsed.mode === "normal") return startNormalOrchestration({ projectDirectory, request, intention,
     changesExecutableBehavior, planningNeedsHowDecision });
   if (parsed.mode !== "light") throw new OrchestrationError("mode_not_implemented", `Mode ${parsed.mode} is not implemented yet`);
@@ -199,6 +209,14 @@ function normalSources(state) {
   if (state.planHash) sources.push({ kind: "current_plan", path: "plan.json", sha256: state.planHash });
   return sources;
 }
+function fullSources(state) {
+  const sources = [{ kind: "original_request", path: "sources/request.txt", sha256: state.sourceHashes.originalRequest }];
+  if (state.explorationHash) {
+    sources.push({ kind: "exploration", path: "exploration.json", sha256: state.explorationHash });
+  }
+  if (state.planHash) sources.push({ kind: "current_plan", path: "plan.json", sha256: state.planHash });
+  return sources;
+}
 function normalPermissions(role) {
   if (role === "Implementador") return { read: true, write: ["production", "tests"] };
   if (role === "Verificador") return { read: true, write: ["tests_when_production_is_correct"] };
@@ -207,6 +225,16 @@ function normalPermissions(role) {
 }
 function normalRole(sequence, name) {
   if (!NORMAL_ROLES.has(name)) throw new OrchestrationError("role_mismatch", `Unknown normal role: ${name}`);
+  return { sequence, name, instanceId: randomUUID() };
+}
+function fullPermissions(role) {
+  if (role === "Implementador") return { read: true, write: ["production", "tests"] };
+  if (role === "Tester") return { read: true, write: ["tests_when_production_is_correct"] };
+  if (role === "Documentador") return { read: true, write: ["documentation"] };
+  return { read: true, write: [] };
+}
+function fullRole(sequence, name) {
+  if (!FULL_ROLES.has(name)) throw new OrchestrationError("role_mismatch", `Unknown full role: ${name}`);
   return { sequence, name, instanceId: randomUUID() };
 }
 function ensureBriefSize(brief, maximumBytes) {
@@ -253,6 +281,49 @@ function validateNormalPlan(plan, originalCriteria) {
   }
   if (errors.length) throw new OrchestrationError("handoff_invalid", errors.join("; "));
   return structuredClone(plan);
+}
+
+async function startFullOrchestration({ projectDirectory, request, intention,
+  changesExecutableBehavior, planningNeedsHowDecision }) {
+  const projectRoot = path.resolve(projectDirectory);
+  const productRoot = path.join(projectRoot, ".agentic-core");
+  const [config, goldenRules] = await installedSources(productRoot);
+  const configurationSnapshot = validateConfiguration(config);
+  const requestContent = Buffer.from(request);
+  const requestSource = { kind: "original_request", path: "sources/request.txt", sha256: sha256(requestContent) };
+  const normalized = normalizeIntention(intention, requestSource, "full");
+  if (normalized.clarification) return { status: "needs_input", mode: "full", question: normalized.clarification };
+  const runId = randomUUID();
+  const runRoot = path.join(productRoot, "runs", runId);
+  await assertNewRun(runRoot);
+  const policySource = { kind: "golden_rules", path: "../../golden-rules.md", sha256: sha256(goldenRules) };
+  const role = { sequence: 1, name: "Explorador", instanceId: randomUUID() };
+  const brief = {
+    schemaVersion: 1, runId, mode: "full", role,
+    mission: "Identify only the concrete sector, symbols and dependencies needed, without proposing a solution or sequencing work.",
+    contract: FULL_CONTRACT, intention: normalized.intention, sources: [requestSource], policy: policySource,
+    reviewPolicy: REVIEW_POLICY, configuration: configurationSnapshot,
+    permissions: { read: true, write: [] },
+  };
+  const briefContent = ensureBriefSize(brief, configurationSnapshot.orchestration.briefMaxBytes);
+  const preImplementation = await preImplementationInventory(projectRoot);
+  const state = {
+    schemaVersion: 1, fullGraphVersion: 1, id: runId, mode: "full", status: "running", currentRole: role, reworkCount: 0,
+    sourceHashes: { originalRequest: requestSource.sha256, goldenRules: policySource.sha256 },
+    preImplementation, configurationSnapshot, planHash: null, baseline: null, lastHandoff: null,
+    changesExecutableBehavior: Boolean(changesExecutableBehavior),
+    planningNeedsHowDecision: Boolean(planningNeedsHowDecision),
+    protocolRetryUsed: false, documentationRetryUsed: false,
+    transitions: [{ role: "Explorador", status: "started", summary: "full -> Explorador", at: new Date().toISOString() }],
+  };
+  await writeTransaction(projectRoot, [
+    { path: path.join(runRoot, "sources", "request.txt"), content: requestContent },
+    { path: path.join(runRoot, "intention.json"), content: Buffer.from(json(normalized.intention)) },
+    { path: path.join(runRoot, "state.json"), content: Buffer.from(json(state)) },
+    { path: path.join(runRoot, "briefs", "001-explorador.json"), content: briefContent },
+  ]);
+  return { status: "started", mode: "full", runId, role: structuredClone(role),
+    summary: `${runId}: full -> Explorador`, brief };
 }
 
 async function startNormalOrchestration({ projectDirectory, request, intention, changesExecutableBehavior,
@@ -421,6 +492,29 @@ async function normalPlan(runRoot) {
     throw error;
   }
 }
+function buildFullBrief(state, runId, role, mission, plan, previousHandoff, extra = {}) {
+  return {
+    schemaVersion: 1, runId, mode: "full", role, mission, contract: FULL_CONTRACT,
+    plan, previousHandoff: previousHandoff ? structuredClone(previousHandoff) : null,
+    sources: fullSources(state),
+    policy: { kind: "golden_rules", path: "../../golden-rules.md", sha256: state.sourceHashes.goldenRules },
+    reviewPolicy: REVIEW_POLICY, configuration: state.configurationSnapshot,
+    permissions: fullPermissions(role.name), ...extra,
+  };
+}
+async function persistFullRole(projectRoot, runRoot, state, role, brief, transitions, updates = [], stateUpdates = {}) {
+  const content = ensureBriefSize(brief, state.configurationSnapshot.orchestration.briefMaxBytes);
+  const nextState = { ...state, currentRole: role, protocolRetryUsed: false, ...stateUpdates,
+    transitions: [...state.transitions, ...transitions] };
+  await writeTransaction(projectRoot, [
+    ...updates,
+    { path: path.join(runRoot, "state.json"), content: Buffer.from(json(nextState)) },
+    { path: path.join(runRoot, "briefs", `${String(role.sequence).padStart(3, "0")}-${role.name.toLowerCase()}.json`),
+      content },
+  ]);
+  return { status: "continued", mode: "full", runId: state.id, role: structuredClone(role),
+    reworkCount: nextState.reworkCount, summary: transitions.at(-1).summary, brief };
+}
 function buildNormalBrief(state, runId, role, mission, plan, previousHandoff, extra = {}) {
   return {
     schemaVersion: 1, runId, mode: "normal", role, mission, contract: NORMAL_CONTRACT,
@@ -508,9 +602,14 @@ async function readQualityGate(runRoot, reference, tool, baseline, configuration
   let report;
   try { report = JSON.parse(content.toString("utf8")); }
   catch { throw new OrchestrationError("handoff_invalid", `${tool} artifact is corrupt`); }
+  const expectedInputs = tool === "mutation"
+    ? Object.fromEntries((baseline.inputInventory ?? [])
+      .filter((entry) => entry.kind === "target_code")
+      .map((entry) => [entry.path, entry.sha256]))
+    : baseline.hashes;
   if (report.$schema !== "https://kroxidev.dev/agentic-core/quality-report.schema.json" || report.schemaVersion !== 1
     || report.tool !== tool || !["approved", "not_applicable"].includes(report.status)
-    || JSON.stringify(report.hashes?.inputs) !== JSON.stringify(baseline.hashes)
+    || JSON.stringify(report.hashes?.inputs) !== JSON.stringify(expectedInputs)
     || report.hashes?.configuration !== configurationHash) {
     throw new OrchestrationError("handoff_invalid", `${tool} report schema, gate status or hashes are stale`);
   }
@@ -620,10 +719,360 @@ async function advanceNormalHandoff(projectRoot, runRoot, state, runId, handoff)
   return submitNormalVerifier(projectRoot, runRoot, state, runId, handoff);
 }
 
+async function submitFullExplorer(projectRoot, runRoot, state, runId, handoff) {
+  validateCompletedHandoff(handoff, "Explorador", state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const exploration = handoff.payload.exploration;
+  const validList = (value) => Array.isArray(value) && value.length > 0 && value.every(requiredText);
+  if (!plainObject(exploration) || !validList(exploration.sector)
+    || !validList(exploration.symbols) || !validList(exploration.dependencies)) {
+    throw new OrchestrationError("handoff_invalid",
+      "Explorador must identify concrete sector, symbols and dependencies");
+  }
+  const explorationContent = Buffer.from(json(exploration));
+  const explorationHash = sha256(explorationContent);
+  const role = fullRole(state.currentRole.sequence + 1, "Planificador");
+  const stateWithExploration = { ...state, explorationHash };
+  const brief = buildFullBrief(stateWithExploration, runId, role,
+    "Read the original request and produce a flat, traceable plan within the explored scope without weakening criteria.",
+    null, handoff, {
+      exploration: structuredClone(exploration),
+      skills: state.planningNeedsHowDecision ? ["agentic-grilling"] : [],
+    });
+  return persistFullRole(projectRoot, runRoot, state, role, brief, [
+    { role: "Explorador", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
+    { role: "Planificador", status: "started", summary: "Explorador -> Planificador", at: new Date().toISOString() },
+  ], [{ path: path.join(runRoot, "exploration.json"), content: explorationContent }],
+  { explorationHash, lastHandoff: structuredClone(handoff) });
+}
+
+async function submitFullPlanner(projectRoot, runRoot, state, runId, handoff) {
+  if (handoff?.status === "changes_required") {
+    validateChangesRequired(handoff, "Planificador",
+      state.configurationSnapshot.orchestration.handoffMaxBytes);
+    if (handoff.payload.explorationInsufficient !== true
+      || !Array.isArray(handoff.payload.missingScope)
+      || handoff.payload.missingScope.length === 0
+      || handoff.payload.missingScope.some((item) => !requiredText(item))) {
+      throw new OrchestrationError("handoff_invalid",
+        "Planificador may reopen exploration only with material evidence and concrete missing scope");
+    }
+    const role = fullRole(state.currentRole.sequence + 1, "Explorador");
+    const brief = buildFullBrief(state, runId, role,
+      "Extend only the demonstrated missing sector, symbols and dependencies without proposing a solution.",
+      null, handoff, { missingScope: [...handoff.payload.missingScope] });
+    return persistFullRole(projectRoot, runRoot, state, role, brief, [
+      { role: "Planificador", status: "context_missing", summary: handoff.summary, at: new Date().toISOString() },
+      { role: "Explorador", status: "started", summary: "Planificador -> Explorador", at: new Date().toISOString() },
+    ], [], { lastHandoff: structuredClone(handoff) });
+  }
+  validateCompletedHandoff(handoff, "Planificador", state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const intention = JSON.parse(await readFile(path.join(runRoot, "intention.json"), "utf8"));
+  const replanning = state.planHash !== null;
+  let nextPlan;
+  if (replanning) {
+    if (!plainObject(handoff.payload.delta) || !plainObject(handoff.payload.delta.replacementPlan)
+      || !requiredText(handoff.payload.delta.reason)) {
+      throw new OrchestrationError("handoff_invalid", "replanning requires a reasoned delta with replacementPlan");
+    }
+    nextPlan = validateNormalPlan(handoff.payload.delta.replacementPlan, intention.criteria);
+  } else {
+    nextPlan = validateNormalPlan(handoff.payload.plan, intention.criteria);
+  }
+  const planContent = Buffer.from(json(nextPlan));
+  const planHash = sha256(planContent);
+  const role = fullRole(state.currentRole.sequence + 1, "Implementador");
+  const stateWithPlan = { ...state, planHash };
+  const brief = buildFullBrief(stateWithPlan, runId, role,
+    "Implement the current plan with test-first evidence and address only material blockers.",
+    nextPlan, handoff, { skills: state.changesExecutableBehavior ? ["agentic-tdd"] : [] });
+  return persistFullRole(projectRoot, runRoot, state, role, brief, [
+    { role: "Planificador", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
+    { role: "Implementador", status: "started", summary: "Planificador -> Implementador", at: new Date().toISOString() },
+  ], [{ path: path.join(runRoot, "plan.json"), content: planContent }],
+  { planHash, baseline: null, lastHandoff: structuredClone(handoff) });
+}
+
+async function submitFullImplementer(projectRoot, runRoot, state, runId, handoff) {
+  validateImplementerHandoff(handoff, state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const qualityBaselineReport = preChangeBaseline(handoff.payload.qualityBaselineReport, state);
+  const baseline = await baselineFor(projectRoot, handoff.payload.qualityTargets);
+  const currentPlan = await normalPlan(runRoot);
+  const role = fullRole(state.currentRole.sequence + 1, "Refactor");
+  const brief = buildFullBrief(state, runId, role,
+    "Review structure, Golden Rules and differential C.R.A.P. over production as read-only; report only material localized blockers.",
+    currentPlan, handoff, {
+      quality: { targets: [...handoff.payload.qualityTargets], baseline },
+      baselineReport: qualityBaselineReport ?? { status: "not_attributable" },
+    });
+  return persistFullRole(projectRoot, runRoot, state, role, brief, [
+    { role: "Implementador", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
+    { role: "Refactor", status: "started", summary: "Implementador -> Refactor", at: new Date().toISOString() },
+  ], [], {
+    baseline, qualityBaselineReport, qualityTargets: [...handoff.payload.qualityTargets],
+    lastHandoff: structuredClone(handoff),
+  });
+}
+
+async function requestFullChanges(projectRoot, runRoot, state, runId, handoff, nextRole, mission, extra = {}) {
+  validateChangesRequired(handoff, state.currentRole.name,
+    state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const reworkCount = state.reworkCount + 1;
+  if (reworkCount > 2) {
+    const blocked = { ...state, status: "blocked", reworkCount, lastHandoff: structuredClone(handoff),
+      transitions: [...state.transitions, {
+        role: state.currentRole.name, status: "blocked", summary: handoff.summary, at: new Date().toISOString(),
+      }] };
+    await writeTransaction(projectRoot, [
+      { path: path.join(runRoot, "state.json"), content: Buffer.from(json(blocked)) },
+    ]);
+    return { status: "blocked", mode: "full", runId, reworkCount, summary: handoff.summary };
+  }
+  const currentPlan = await normalPlan(runRoot);
+  const role = fullRole(state.currentRole.sequence + 1, nextRole);
+  const brief = buildFullBrief(state, runId, role, mission, currentPlan, handoff, {
+    reworkCount,
+    ...(nextRole === "Implementador"
+      ? { skills: state.changesExecutableBehavior ? ["agentic-tdd"] : [] }
+      : {}),
+    ...extra,
+  });
+  return persistFullRole(projectRoot, runRoot, state, role, brief, [
+    { role: state.currentRole.name, status: "changes_required", summary: handoff.summary, at: new Date().toISOString() },
+    { role: nextRole, status: "started", summary: `${state.currentRole.name} -> ${nextRole}`,
+      at: new Date().toISOString() },
+  ], [], { reworkCount, baseline: null, lastHandoff: structuredClone(handoff) });
+}
+
+async function submitFullRefactor(projectRoot, runRoot, state, runId, handoff) {
+  if (handoff?.status === "changes_required") {
+    return requestFullChanges(projectRoot, runRoot, state, runId, handoff, "Implementador",
+      "Apply only the localized structural correction against the unchanged current plan.");
+  }
+  validateCompletedHandoff(handoff, "Refactor", state.configurationSnapshot.orchestration.handoffMaxBytes);
+  for (const check of ["structure", "goldenRules"]) {
+    if (handoff.payload[check]?.status !== "passed" || !requiredText(handoff.payload[check]?.evidence)) {
+      throw new OrchestrationError("handoff_invalid", "Refactor requires passed structure and Golden Rules evidence");
+    }
+  }
+  const crapHash = sha256(JSON.stringify({ crapThreshold: state.configurationSnapshot.quality.crapThreshold }));
+  await readQualityGate(runRoot, handoff.payload.crap, "crap", state.baseline, crapHash);
+  const currentPlan = await normalPlan(runRoot);
+  const role = fullRole(state.currentRole.sequence + 1, "Tester");
+  const brief = buildFullBrief(state, runId, role,
+    "Independently verify every criterion, tests and current Golden Rules; production is read-only.",
+    currentPlan, handoff, {
+      quality: { targets: [...state.qualityTargets], crap: handoff.payload.crap },
+      contradictionPolicy: "Edit tests only when production is correct; never silently change a contradictory test.",
+    });
+  return persistFullRole(projectRoot, runRoot, state, role, brief, [
+    { role: "Refactor", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
+    { role: "Tester", status: "started", summary: "Refactor -> Tester", at: new Date().toISOString() },
+  ], [], { lastHandoff: structuredClone(handoff), reports: [handoff.payload.crap] });
+}
+
+async function submitFullTester(projectRoot, runRoot, state, runId, handoff) {
+  if (handoff?.status === "changes_required") {
+    if (handoff.payload?.requiresHowChange === true) {
+      return requestFullChanges(projectRoot, runRoot, state, runId, handoff, "Planificador",
+        "Produce a reasoned plan delta for the required HOW change, preserving every original criterion.",
+        { deltaRequired: true, skills: handoff.payload.requiresHowDecision ? ["agentic-grilling"] : [] });
+    }
+    return requestFullChanges(projectRoot, runRoot, state, runId, handoff, "Implementador",
+      "Apply only the localized production correction against the unchanged current plan.");
+  }
+  const currentPlan = await normalPlan(runRoot);
+  validateCompletedHandoff(handoff, "Tester", state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const criteria = handoff.payload.criteria;
+  if (!Array.isArray(criteria) || currentPlan.criteria.some((expected) => !criteria.some((item) =>
+    item?.criterionId === expected.id && item.status === "passed" && requiredText(item.evidence)))) {
+    throw new OrchestrationError("handoff_invalid", "Tester requires passed evidence for every current-plan criterion");
+  }
+  for (const check of ["tests", "goldenRules"]) {
+    if (handoff.payload[check]?.status !== "passed" || !requiredText(handoff.payload[check]?.evidence)) {
+      throw new OrchestrationError("handoff_invalid", "Tester requires passed tests and Golden Rules evidence");
+    }
+  }
+  const changedQualityInputs = handoff.payload.changedTests === true || handoff.payload.changedConfiguration === true;
+  if (changedQualityInputs && (handoff.payload.productionCorrect !== true
+    || handoff.payload.testContradiction === true || handoff.payload.checksRepeated !== true)) {
+    throw new OrchestrationError("handoff_invalid",
+      "Tester changes require correct production, no contradictory test and repeated invalidated checks");
+  }
+  const baseline = changedQualityInputs ? await baselineFor(projectRoot, state.qualityTargets) : state.baseline;
+  const crapReport = state.reports?.[0];
+  const role = fullRole(state.currentRole.sequence + 1, "Evaluador");
+  const brief = buildFullBrief(state, runId, role,
+    "Compare the original request, intention, criteria, plan, changes and final evidence without adding scope; run differential Mutation Testing.",
+    currentPlan, handoff, {
+      quality: {
+        targets: [...state.qualityTargets],
+        crap: { repeat: changedQualityInputs, report: crapReport },
+        mutation: {
+          required: true,
+          scope: "new, modified or declared stable-symbol identities only",
+          equivalents: "Require logical file, stable symbol identity, exact mutation, location, reason and localized static proof.",
+        },
+        baseline,
+      },
+    });
+  return persistFullRole(projectRoot, runRoot, state, role, brief, [
+    { role: "Tester", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
+    { role: "Evaluador", status: "started", summary: "Tester -> Evaluador", at: new Date().toISOString() },
+  ], [], {
+    baseline, crapStale: changedQualityInputs, lastHandoff: structuredClone(handoff),
+    reports: changedQualityInputs ? [{ ...crapReport, status: "stale" }] : state.reports,
+  });
+}
+
+async function submitFullEvaluator(projectRoot, runRoot, state, runId, handoff) {
+  if (handoff?.status === "changes_required") {
+    const nextRole = handoff.payload?.requiresHowChange === true ? "Planificador" : "Implementador";
+    const mission = nextRole === "Planificador"
+      ? "Produce a reasoned plan delta for the material evaluation finding, preserving every original criterion."
+      : "Apply only the localized correction for the material evaluation finding.";
+    return requestFullChanges(projectRoot, runRoot, state, runId, handoff, nextRole, mission,
+      nextRole === "Planificador" ? { deltaRequired: true } : {});
+  }
+  validateCompletedHandoff(handoff, "Evaluador", state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const currentBaseline = await baselineFor(projectRoot, state.qualityTargets);
+  if (JSON.stringify(currentBaseline.hashes) !== JSON.stringify(state.baseline.hashes)) {
+    throw new OrchestrationError("handoff_invalid",
+      "quality inputs changed after testing; C.R.A.P. and Mutation Testing evidence is stale");
+  }
+  const comparison = handoff.payload.comparison;
+  for (const check of ["intention", "criteria", "plan", "changes", "finalEvidence"]) {
+    if (comparison?.[check]?.status !== "passed" || !requiredText(comparison[check].evidence)) {
+      throw new OrchestrationError("handoff_invalid", "Evaluador requires passed comparison evidence for every authority");
+    }
+  }
+  const mutationHash = sha256(JSON.stringify({
+    mutationWorkers: state.configurationSnapshot.quality.mutationWorkers,
+  }));
+  await readQualityGate(runRoot, handoff.payload.mutation, "mutation", state.baseline, mutationHash);
+  const reports = [...(state.reports ?? []), handoff.payload.mutation];
+  if (state.crapStale) {
+    const crapHash = sha256(JSON.stringify({ crapThreshold: state.configurationSnapshot.quality.crapThreshold }));
+    await readQualityGate(runRoot, handoff.payload.crap, "crap", state.baseline, crapHash);
+    reports.push(handoff.payload.crap);
+  }
+  const currentPlan = await normalPlan(runRoot);
+  const role = fullRole(state.currentRole.sequence + 1, "Documentador");
+  const brief = buildFullBrief(state, runId, role,
+    "Decide freshly whether documentation changes are needed; modify documentation only and never block or open retrabajo.",
+    currentPlan, handoff, { quality: { reports } });
+  return persistFullRole(projectRoot, runRoot, state, role, brief, [
+    { role: "Evaluador", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
+    { role: "Documentador", status: "started", summary: "Evaluador -> Documentador", at: new Date().toISOString() },
+  ], [], { lastHandoff: structuredClone(handoff), reports });
+}
+
+async function completeFullDocumentation(projectRoot, runRoot, state, runId, handoff) {
+  if (handoff?.status === "completed") {
+    validateCompletedHandoff(handoff, "Documentador", state.configurationSnapshot.orchestration.handoffMaxBytes);
+    if (handoff.payload.findings.some((finding) =>
+      finding?.impact !== "advisory" || finding?.category !== "documentation")) {
+      throw new OrchestrationError("handoff_invalid",
+        "Documentador findings may only be advisory documentation findings");
+    }
+    const result = { status: "completed", mode: "full", runId, reworkCount: state.reworkCount,
+      summary: handoff.summary, handoff: structuredClone(handoff) };
+    await rm(runRoot, { recursive: true });
+    return result;
+  }
+  if (!state.documentationRetryUsed) {
+    const currentPlan = await normalPlan(runRoot);
+    const role = fullRole(state.currentRole.sequence + 1, "Documentador");
+    const brief = buildFullBrief(state, runId, role,
+      "Retry the documentation-only mission once; report advisory evidence if it still cannot complete.",
+      currentPlan, plainObject(handoff) ? handoff : { status: "failed", summary: "Invalid documentation hand-off" });
+    return persistFullRole(projectRoot, runRoot, state, role, brief, [
+      { role: "Documentador", status: "retry", summary: handoff?.summary ?? "Invalid documentation hand-off",
+        at: new Date().toISOString() },
+    ], [], { documentationRetryUsed: true });
+  }
+  const result = { status: "completed_with_warnings", mode: "full", runId, reworkCount: state.reworkCount,
+    summary: handoff?.summary ?? "Documentation failed after one retry" };
+  await rm(runRoot, { recursive: true });
+  return result;
+}
+
+async function handleFullControlHandoff(projectRoot, runRoot, state, runId, handoff) {
+  validateControlHandoff(handoff, state.configurationSnapshot.orchestration.handoffMaxBytes);
+  if (handoff.status === "needs_mode_change") {
+    throw new OrchestrationError("handoff_invalid", "full mode cannot request a higher orchestration mode");
+  }
+  const currentPlan = state.planHash ? await normalPlan(runRoot) : null;
+  const role = fullRole(state.currentRole.sequence + 1, state.currentRole.name);
+  const brief = buildFullBrief(state, runId, role,
+    "Continue the same isolated full-mode responsibility after the control event is resolved.",
+    currentPlan, handoff, {
+      skills: role.name === "Implementador" && state.changesExecutableBehavior ? ["agentic-tdd"] : [],
+    });
+  const result = await persistFullRole(projectRoot, runRoot, state, role, brief, [{
+    role: state.currentRole.name, status: handoff.status, summary: handoff.summary, at: new Date().toISOString(),
+  }], [], { lastHandoff: structuredClone(handoff) });
+  return { ...result, status: handoff.status };
+}
+
+async function handleFullTerminalHandoff(projectRoot, runRoot, state, runId, handoff) {
+  const errors = [];
+  if (!plainObject(handoff) || handoff.schemaVersion !== 1 || !TERMINAL_STATUSES.has(handoff.status)
+    || !requiredText(handoff.summary) || !plainObject(handoff.payload)) {
+    errors.push("terminal hand-off has an invalid shape");
+  } else if (!Array.isArray(handoff.payload.findings) || !hasMaterialBlocker(handoff.payload.findings)) {
+    errors.push("terminal hand-off requires typed material blocking findings with evidence");
+  }
+  if (Buffer.byteLength(JSON.stringify(handoff)) > state.configurationSnapshot.orchestration.handoffMaxBytes) {
+    errors.push("hand-off exceeds configured limit");
+  }
+  if (errors.length) throw new OrchestrationError("handoff_invalid", errors.join("; "));
+  const terminal = { ...state, status: handoff.status, lastHandoff: structuredClone(handoff),
+    transitions: [...state.transitions, {
+      role: state.currentRole.name, status: handoff.status, summary: handoff.summary, at: new Date().toISOString(),
+    }] };
+  await writeTransaction(projectRoot, [
+    { path: path.join(runRoot, "state.json"), content: Buffer.from(json(terminal)) },
+  ]);
+  return { status: handoff.status, mode: "full", runId, reworkCount: state.reworkCount, summary: handoff.summary };
+}
+
+async function advanceFullHandoff(projectRoot, runRoot, state, runId, handoff) {
+  if (!FULL_ROLES.has(state.currentRole?.name)) throw new OrchestrationError("role_mismatch", "Unknown full role");
+  if (state.currentRole.name === "Documentador") {
+    return completeFullDocumentation(projectRoot, runRoot, state, runId, handoff);
+  }
+  if (CONTROL_STATUSES.has(handoff?.status)) {
+    return handleFullControlHandoff(projectRoot, runRoot, state, runId, handoff);
+  }
+  if (TERMINAL_STATUSES.has(handoff?.status)) {
+    return handleFullTerminalHandoff(projectRoot, runRoot, state, runId, handoff);
+  }
+  if (state.currentRole.name === "Explorador") {
+    return submitFullExplorer(projectRoot, runRoot, state, runId, handoff);
+  }
+  if (state.currentRole.name === "Planificador") {
+    return submitFullPlanner(projectRoot, runRoot, state, runId, handoff);
+  }
+  if (state.currentRole.name === "Implementador") {
+    return submitFullImplementer(projectRoot, runRoot, state, runId, handoff);
+  }
+  if (state.currentRole.name === "Refactor") {
+    return submitFullRefactor(projectRoot, runRoot, state, runId, handoff);
+  }
+  if (state.currentRole.name === "Tester") {
+    return submitFullTester(projectRoot, runRoot, state, runId, handoff);
+  }
+  if (state.currentRole.name === "Evaluador") {
+    return submitFullEvaluator(projectRoot, runRoot, state, runId, handoff);
+  }
+  throw new OrchestrationError("role_mismatch", "Full role is not implemented");
+}
+
 async function advanceHandoff({ projectRoot: projectDirectory, runId, handoff }) {
   const projectRoot = path.resolve(projectDirectory);
   const { runRoot, state } = await readRun(projectRoot, runId);
   if (state.status !== "running") throw new OrchestrationError("run_not_resumable", `Run is ${state.status}`);
+  if (state.mode === "full") return advanceFullHandoff(projectRoot, runRoot, state, runId, handoff);
   if (state.mode === "normal") return advanceNormalHandoff(projectRoot, runRoot, state, runId, handoff);
   if (TERMINAL_STATUSES.has(handoff?.status)) return handleTerminalHandoff(projectRoot, runRoot, state, runId, handoff);
   if (CONTROL_STATUSES.has(handoff?.status)) return handleControlHandoff(projectRoot, runRoot, state, runId, handoff);
@@ -777,8 +1226,32 @@ async function retryInvalidNormalHandoff(projectRoot, runRoot, state, runId, err
   return { ...result, status: "protocol_retry" };
 }
 
+async function retryInvalidFullHandoff(projectRoot, runRoot, state, runId, error) {
+  const protocolErrors = error.message.split("; ");
+  if (state.protocolRetryUsed) {
+    const failed = { ...state, status: "failed", transitions: [...state.transitions, {
+      role: state.currentRole.name, status: "failed", summary: "Protocol retry failed",
+      at: new Date().toISOString(),
+    }] };
+    await writeTransaction(projectRoot, [
+      { path: path.join(runRoot, "state.json"), content: Buffer.from(json(failed)) },
+    ]);
+    return { status: "failed", mode: "full", runId, reworkCount: state.reworkCount, protocolErrors };
+  }
+  const currentPlan = state.planHash ? await normalPlan(runRoot) : null;
+  const role = fullRole(state.currentRole.sequence + 1, state.currentRole.name);
+  const brief = buildFullBrief(state, runId, role,
+    "Return a valid hand-off for the same isolated full-mode role.", currentPlan, null, { protocolErrors });
+  const result = await persistFullRole(projectRoot, runRoot, state, role, brief, [{
+    role: state.currentRole.name, status: "protocol_retry", summary: protocolErrors.join("; "),
+    at: new Date().toISOString(),
+  }], [], { protocolRetryUsed: true });
+  return { ...result, status: "protocol_retry" };
+}
+
 async function retryInvalidHandoff(projectRoot, runId, error) {
   const { runRoot, state } = await readRun(projectRoot, runId);
+  if (state.mode === "full") return retryInvalidFullHandoff(projectRoot, runRoot, state, runId, error);
   if (state.mode === "normal") return retryInvalidNormalHandoff(projectRoot, runRoot, state, runId, error);
   const protocolErrors = error.message.split("; ");
   if (state.protocolRetryUsed) {
@@ -878,7 +1351,8 @@ async function completedTesterHandoff(projectRoot, runRoot, state, runId, handof
 }
 
 function assertPersistedState(state, runId) {
-  if (!plainObject(state) || state.schemaVersion !== 1 || state.id !== runId || !new Set(["light", "normal"]).has(state.mode)
+  if (!plainObject(state) || state.schemaVersion !== 1 || state.id !== runId
+    || !new Set(["light", "normal", "full"]).has(state.mode)
     || !plainObject(state.currentRole) || !Array.isArray(state.transitions) || !plainObject(state.sourceHashes)
     || !plainObject(state.configurationSnapshot)) {
     throw new OrchestrationError("state_invalid", `Run state is invalid: ${runId}`);
@@ -889,6 +1363,14 @@ function assertPersistedState(state, runId) {
   if (state.mode === "normal" && (!NORMAL_ROLES.has(state.currentRole.name)
     || !(state.planHash === null || /^[a-f0-9]{64}$/.test(state.planHash)))) {
     throw new OrchestrationError("state_invalid", `Normal run state is invalid: ${runId}`);
+  }
+  if (state.mode === "full" && state.fullGraphVersion !== 1) {
+    throw new OrchestrationError("state_incompatible", "Full run uses an incompatible orchestration graph version");
+  }
+  if (state.mode === "full" && (!FULL_ROLES.has(state.currentRole.name)
+    || !(state.planHash === null || /^[a-f0-9]{64}$/.test(state.planHash))
+    || !(state.explorationHash === undefined || /^[a-f0-9]{64}$/.test(state.explorationHash)))) {
+    throw new OrchestrationError("state_invalid", `Full run state is invalid: ${runId}`);
   }
   validateConfiguration(state.configurationSnapshot);
 }
@@ -927,9 +1409,15 @@ async function validateRunSources(projectRoot, runRoot, state) {
   if (sha256(request) !== state.sourceHashes.originalRequest || sha256(policy) !== state.sourceHashes.goldenRules) {
     throw new OrchestrationError("source_diverged", "Immutable run sources or canonical policy have diverged");
   }
-  if (state.mode === "normal" && state.planHash) {
+  if (new Set(["normal", "full"]).has(state.mode) && state.planHash) {
     const plan = await readFile(path.join(runRoot, "plan.json"));
     if (sha256(plan) !== state.planHash) throw new OrchestrationError("source_diverged", "Current plan has diverged");
+  }
+  if (state.mode === "full" && state.explorationHash) {
+    const exploration = await readFile(path.join(runRoot, "exploration.json"));
+    if (sha256(exploration) !== state.explorationHash) {
+      throw new OrchestrationError("source_diverged", "Current exploration has diverged");
+    }
   }
 }
 
@@ -943,6 +1431,26 @@ async function resumeDivergedNormal(projectRoot, runRoot, state, runId, baseline
     { role: "Verificador", status: "started", summary: "Divergence detected; all affected checks invalidated",
       at: new Date().toISOString() },
   ], [], { baseline, reports: (state.reports ?? []).map((report) => ({ ...report, status: "stale" })) });
+  return { ...result, status: "resumed", staleReports: true };
+}
+
+async function resumeDivergedFull(projectRoot, runRoot, state, runId, baseline) {
+  const currentPlan = await normalPlan(runRoot);
+  const role = fullRole(state.currentRole.sequence + 1, "Tester");
+  const brief = buildFullBrief(state, runId, role,
+    "Repeat independent criteria, tests and Golden Rules checks because quality inputs diverged.",
+    currentPlan, state.lastHandoff, {
+      divergence: { previous: state.baseline.hashes, current: baseline.hashes },
+      quality: { targets: [...state.qualityTargets], baseline },
+      contradictionPolicy: "Edit tests only when production is correct; never silently change a contradictory test.",
+    });
+  const result = await persistFullRole(projectRoot, runRoot, state, role, brief, [{
+    role: "Tester", status: "started", summary: "Divergence detected; full evidence invalidated",
+    at: new Date().toISOString(),
+  }], [], {
+    baseline, crapStale: true,
+    reports: (state.reports ?? []).map((report) => ({ ...report, status: "stale" })),
+  });
   return { ...result, status: "resumed", staleReports: true };
 }
 
@@ -987,6 +1495,7 @@ export async function resumeOrchestration({ projectRoot: projectDirectory, runId
     }
     if (JSON.stringify(current.hashes) !== JSON.stringify(state.baseline.hashes)) {
       if (state.mode === "normal") return resumeDivergedNormal(projectRoot, runRoot, state, runId, current);
+      if (state.mode === "full") return resumeDivergedFull(projectRoot, runRoot, state, runId, current);
       return resumeDivergedTester(projectRoot, runRoot, state, runId, current);
     }
   }
