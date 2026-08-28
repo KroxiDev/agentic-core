@@ -25,7 +25,7 @@ const REVIEW_POLICY = {
   scope: "Do not expand criteria, modules, surfaces or neighboring dependencies without evidence that they are directly necessary.",
   advisory: "Future extensibility, unsupported inputs, hypothetical paths, unchanged debt, style, alternatives, unmeasured optimizations and out-of-scope concerns are advisory.",
 };
-const NORMAL_ROLES = new Set(["Planificador", "Implementador", "Refactor", "Tester", "Documentador"]);
+const NORMAL_ROLES = new Set(["Planificador", "Implementador", "Verificador", "Documentador"]);
 
 export class OrchestrationError extends Error {
   constructor(code, message) {
@@ -201,7 +201,7 @@ function normalSources(state) {
 }
 function normalPermissions(role) {
   if (role === "Implementador") return { read: true, write: ["production", "tests"] };
-  if (role === "Tester") return { read: true, write: ["tests_when_production_is_correct"] };
+  if (role === "Verificador") return { read: true, write: ["tests_when_production_is_correct"] };
   if (role === "Documentador") return { read: true, write: ["documentation"] };
   return { read: true, write: [] };
 }
@@ -280,7 +280,7 @@ async function startNormalOrchestration({ projectDirectory, request, intention, 
   const briefContent = ensureBriefSize(brief, configurationSnapshot.orchestration.briefMaxBytes);
   const preImplementation = await preImplementationInventory(projectRoot);
   const state = {
-    schemaVersion: 1, id: runId, mode: "normal", status: "running", currentRole: role, reworkCount: 0,
+    schemaVersion: 1, normalGraphVersion: 2, id: runId, mode: "normal", status: "running", currentRole: role, reworkCount: 0,
     sourceHashes: { originalRequest: requestSource.sha256, goldenRules: policySource.sha256 },
     preImplementation,
     configurationSnapshot, planHash: null, baseline: null, lastHandoff: null,
@@ -476,15 +476,15 @@ async function submitNormalImplementer(projectRoot, runRoot, state, runId, hando
   const qualityBaselineReport = preChangeBaseline(handoff.payload.qualityBaselineReport, state);
   const baseline = await baselineFor(projectRoot, handoff.payload.qualityTargets);
   const plan = await normalPlan(runRoot);
-  const role = normalRole(state.currentRole.sequence + 1, "Refactor");
+  const role = normalRole(state.currentRole.sequence + 1, "Verificador");
   const brief = buildNormalBrief(state, runId, role,
-    "Read-only review of Golden Rules and structure; run differential C.R.A.P. and Mutation Testing gates.",
+    "Verify every criterion, run tests, review Golden Rules and structure, and run differential C.R.A.P.; production is read-only.",
     plan, handoff, { quality: { targets: [...handoff.payload.qualityTargets], baseline },
       baselineReport: qualityBaselineReport ?? { status: "not_attributable" },
-      permissions: { read: true, write: [] } });
+      contradictionPolicy: "Edit tests only when production is correct; never silently change a contradictory test." });
   return persistNormalRole(projectRoot, runRoot, state, role, brief, [
     { role: "Implementador", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
-    { role: "Refactor", status: "started", summary: "Implementador -> Refactor", at: new Date().toISOString() },
+    { role: "Verificador", status: "started", summary: "Implementador -> Verificador", at: new Date().toISOString() },
   ], [], {
     baseline,
     qualityBaselineReport,
@@ -517,7 +517,7 @@ async function readQualityGate(runRoot, reference, tool, baseline, configuration
 }
 async function requestNormalChanges(projectRoot, runRoot, state, runId, handoff, nextRole, mission, extra = {}) {
   const reworkCount = state.reworkCount + 1;
-  if (reworkCount > 3) {
+  if (reworkCount > 2) {
     const blocked = { ...state, status: "blocked", reworkCount, lastHandoff: structuredClone(handoff),
       transitions: [...state.transitions, { role: state.currentRole.name, status: "blocked", summary: handoff.summary,
         at: new Date().toISOString() }] };
@@ -534,80 +534,52 @@ async function requestNormalChanges(projectRoot, runRoot, state, runId, handoff,
     { role: nextRole, status: "started", summary: `${state.currentRole.name} -> ${nextRole}`, at: new Date().toISOString() },
   ], [], { reworkCount, lastHandoff: structuredClone(handoff) });
 }
-async function submitNormalRefactor(projectRoot, runRoot, state, runId, handoff) {
-  if (handoff?.status === "changes_required") {
-    validateChangesRequired(handoff, "Refactor", state.configurationSnapshot.orchestration.handoffMaxBytes);
-    return requestNormalChanges(projectRoot, runRoot, state, runId, handoff, "Implementador",
-      "Resolve only the actionable Refactor blockers against the unchanged current plan.");
-  }
-  validateCompletedHandoff(handoff, "Refactor", state.configurationSnapshot.orchestration.handoffMaxBytes);
-  const crapHash = sha256(JSON.stringify({ crapThreshold: state.configurationSnapshot.quality.crapThreshold }));
-  const mutationHash = sha256(JSON.stringify({ mutationWorkers: state.configurationSnapshot.quality.mutationWorkers }));
-  await readQualityGate(runRoot, handoff.payload.crap, "crap", state.baseline, crapHash);
-  await readQualityGate(runRoot, handoff.payload.mutation, "mutation", state.baseline, mutationHash);
-  const plan = await normalPlan(runRoot);
-  const role = normalRole(state.currentRole.sequence + 1, "Tester");
-  const brief = buildNormalBrief(state, runId, role,
-    "Verify every current-plan criterion and all invalidated gates; edit tests only when production is already correct.",
-    plan, handoff, { quality: { crap: handoff.payload.crap, mutation: handoff.payload.mutation },
-      contradictionPolicy: "Never modify a contradictory test silently; report it with concrete evidence." });
-  return persistNormalRole(projectRoot, runRoot, state, role, brief, [
-    { role: "Refactor", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
-    { role: "Tester", status: "started", summary: "Refactor -> Tester", at: new Date().toISOString() },
-  ], [], { lastHandoff: structuredClone(handoff), reports: [handoff.payload.crap, handoff.payload.mutation] });
-}
-function validateNormalTesterCompleted(handoff, plan, maximumBytes) {
-  validateCompletedHandoff(handoff, "Tester", maximumBytes);
+function validateNormalVerifierCompleted(handoff, plan, maximumBytes) {
+  validateCompletedHandoff(handoff, "Verificador", maximumBytes);
   const criteria = handoff.payload.criteria;
   if (!Array.isArray(criteria) || plan.criteria.some((expected) => !criteria.some((item) =>
     item?.criterionId === expected.id && item.status === "passed" && requiredText(item.evidence)))) {
     throw new OrchestrationError("handoff_invalid", "every current-plan criterion requires passed evidence");
   }
-  if (handoff.payload.tests?.status !== "passed" || !requiredText(handoff.payload.tests?.evidence)
-    || handoff.payload.goldenRules?.status !== "passed" || !requiredText(handoff.payload.goldenRules?.evidence)) {
-    throw new OrchestrationError("handoff_invalid", "tests and Golden Rules require passed evidence");
+  const requiredChecks = ["tests", "goldenRules", "structure"];
+  if (requiredChecks.some((key) => handoff.payload[key]?.status !== "passed"
+    || !requiredText(handoff.payload[key]?.evidence))) {
+    throw new OrchestrationError("handoff_invalid", "tests, Golden Rules and structure require passed evidence");
+  }
+  if (handoff.payload.changedTests === true || handoff.payload.changedConfiguration === true) {
+    if (handoff.payload.productionCorrect !== true || handoff.payload.testContradiction === true
+      || handoff.payload.checksRepeated !== true) {
+      throw new OrchestrationError("handoff_invalid",
+        "Verificador test or configuration changes require correct production, no contradictory test and repeated invalidated checks");
+    }
   }
 }
-async function submitNormalTester(projectRoot, runRoot, state, runId, handoff) {
+
+async function submitNormalVerifier(projectRoot, runRoot, state, runId, handoff) {
   const plan = await normalPlan(runRoot);
   if (handoff?.status === "changes_required") {
-    validateChangesRequired(handoff, "Tester", state.configurationSnapshot.orchestration.handoffMaxBytes);
-    const findings = handoff.payload.findings;
-    const productionDefect = handoff.payload.productionDefect === true
-      || findings.some((finding) => finding.category === "specification" || finding.category === "golden_rules");
-    if (productionDefect) return requestNormalChanges(projectRoot, runRoot, state, runId, handoff, "Planificador",
-      "Produce a reasoned plan delta for the production defect, preserving every original criterion.",
-      { deltaRequired: true, skills: handoff.payload.requiresHowDecision ? ["agentic-grilling"] : [] });
-    return requestNormalChanges(projectRoot, runRoot, state, runId, handoff, "Implementador",
-      "Resolve the explicit test or validation blocker without silently changing a contradictory test.");
-  }
-  validateNormalTesterCompleted(handoff, plan, state.configurationSnapshot.orchestration.handoffMaxBytes);
-  if (handoff.payload.changedTests === true || handoff.payload.changedConfiguration === true) {
-    if (handoff.payload.productionCorrect !== true || handoff.payload.testContradiction === true) {
-      throw new OrchestrationError("handoff_invalid",
-        "Tester may change tests only after proving production is correct and may not silently change a contradiction");
+    validateChangesRequired(handoff, "Verificador", state.configurationSnapshot.orchestration.handoffMaxBytes);
+    if (handoff.payload.requiresHowChange === true) {
+      return requestNormalChanges(projectRoot, runRoot, state, runId, handoff, "Planificador",
+        "Produce a reasoned plan delta for the required HOW change, preserving every original criterion.",
+        { deltaRequired: true, skills: handoff.payload.requiresHowDecision ? ["agentic-grilling"] : [] });
     }
-    const baseline = await baselineFor(projectRoot, state.qualityTargets);
-    const role = normalRole(state.currentRole.sequence + 1, "Refactor");
-    const brief = buildNormalBrief(state, runId, role,
-      "Repeat every invalidated read-only quality gate because tests or configuration changed.",
-      plan, handoff, { invalidatedBy: handoff.payload.changedConfiguration ? "configuration" : "tests",
-        quality: { targets: [...state.qualityTargets], baseline } });
-    return persistNormalRole(projectRoot, runRoot, state, role, brief, [
-      { role: "Tester", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
-      { role: "Refactor", status: "started", summary: "Tester changes invalidated quality gates",
-        at: new Date().toISOString() },
-    ], [], { baseline, lastHandoff: structuredClone(handoff),
-      reports: (state.reports ?? []).map((report) => ({ ...report, status: "stale" })) });
+    return requestNormalChanges(projectRoot, runRoot, state, runId, handoff, "Implementador",
+      "Apply only the localized production correction against the unchanged current plan.");
   }
+  validateNormalVerifierCompleted(handoff, plan, state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const changedQualityInputs = handoff.payload.changedTests === true || handoff.payload.changedConfiguration === true;
+  const baseline = changedQualityInputs ? await baselineFor(projectRoot, state.qualityTargets) : state.baseline;
+  const crapHash = sha256(JSON.stringify({ crapThreshold: state.configurationSnapshot.quality.crapThreshold }));
+  await readQualityGate(runRoot, handoff.payload.crap, "crap", baseline, crapHash);
   const role = normalRole(state.currentRole.sequence + 1, "Documentador");
   const brief = buildNormalBrief(state, runId, role,
-    "Update only documentation suggested by the plan; documentation is advisory and cannot open retrabajo.",
-    plan, handoff);
+    "Decide freshly whether documentation changes are needed; modify documentation only and never block or open retrabajo.",
+    plan, handoff, { quality: { crap: handoff.payload.crap } });
   return persistNormalRole(projectRoot, runRoot, state, role, brief, [
-    { role: "Tester", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
-    { role: "Documentador", status: "started", summary: "Tester -> Documentador", at: new Date().toISOString() },
-  ], [], { lastHandoff: structuredClone(handoff) });
+    { role: "Verificador", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
+    { role: "Documentador", status: "started", summary: "Verificador -> Documentador", at: new Date().toISOString() },
+  ], [], { baseline, lastHandoff: structuredClone(handoff), reports: [handoff.payload.crap] });
 }
 async function completeNormalDocumentation(projectRoot, runRoot, state, runId, handoff) {
   if (handoff?.status === "completed") {
@@ -645,8 +617,7 @@ async function advanceNormalHandoff(projectRoot, runRoot, state, runId, handoff)
   if (TERMINAL_STATUSES.has(handoff?.status)) return handleNormalTerminalHandoff(projectRoot, runRoot, state, runId, handoff);
   if (state.currentRole.name === "Planificador") return submitNormalPlanner(projectRoot, runRoot, state, runId, handoff);
   if (state.currentRole.name === "Implementador") return submitNormalImplementer(projectRoot, runRoot, state, runId, handoff);
-  if (state.currentRole.name === "Refactor") return submitNormalRefactor(projectRoot, runRoot, state, runId, handoff);
-  return submitNormalTester(projectRoot, runRoot, state, runId, handoff);
+  return submitNormalVerifier(projectRoot, runRoot, state, runId, handoff);
 }
 
 async function advanceHandoff({ projectRoot: projectDirectory, runId, handoff }) {
@@ -717,7 +688,7 @@ async function submitTesterHandoff(projectRoot, runRoot, state, runId, handoff) 
   if (handoff?.status === "completed") return completedTesterHandoff(projectRoot, runRoot, state, runId, handoff);
   validateTesterChangesRequired(handoff, state.configurationSnapshot.orchestration.handoffMaxBytes);
   const reworkCount = state.reworkCount + 1;
-  if (reworkCount > 2) {
+  if (reworkCount > 1) {
     const blocked = { ...state, status: "blocked", reworkCount, lastHandoff: structuredClone(handoff),
       transitions: [...state.transitions, { role: "Tester", status: "blocked", summary: handoff.summary,
         at: new Date().toISOString() }] };
@@ -912,6 +883,9 @@ function assertPersistedState(state, runId) {
     || !plainObject(state.configurationSnapshot)) {
     throw new OrchestrationError("state_invalid", `Run state is invalid: ${runId}`);
   }
+  if (state.mode === "normal" && state.normalGraphVersion !== 2) {
+    throw new OrchestrationError("state_incompatible", "Normal run uses an incompatible orchestration graph version");
+  }
   if (state.mode === "normal" && (!NORMAL_ROLES.has(state.currentRole.name)
     || !(state.planHash === null || /^[a-f0-9]{64}$/.test(state.planHash)))) {
     throw new OrchestrationError("state_invalid", `Normal run state is invalid: ${runId}`);
@@ -961,12 +935,12 @@ async function validateRunSources(projectRoot, runRoot, state) {
 
 async function resumeDivergedNormal(projectRoot, runRoot, state, runId, baseline) {
   const plan = await normalPlan(runRoot);
-  const role = normalRole(state.currentRole.sequence + 1, "Refactor");
+  const role = normalRole(state.currentRole.sequence + 1, "Verificador");
   const brief = buildNormalBrief(state, runId, role,
-    "Re-run read-only Golden Rules, structure, C.R.A.P. and Mutation Testing because quality inputs diverged.",
+    "Repeat every invalidated Verificador check because quality inputs diverged, including tests, Golden Rules, structure and differential C.R.A.P.",
     plan, state.lastHandoff, { divergence: { previous: state.baseline.hashes, current: baseline.hashes } });
   const result = await persistNormalRole(projectRoot, runRoot, state, role, brief, [
-    { role: "Refactor", status: "started", summary: "Divergence detected; all affected gates invalidated",
+    { role: "Verificador", status: "started", summary: "Divergence detected; all affected checks invalidated",
       at: new Date().toISOString() },
   ], [], { baseline, reports: (state.reports ?? []).map((report) => ({ ...report, status: "stale" })) });
   return { ...result, status: "resumed", staleReports: true };

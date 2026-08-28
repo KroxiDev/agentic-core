@@ -55,19 +55,19 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 31. Como usuario de `light`, quiero que el Implementador aplique TDD al comportamiento ejecutable, para obtener evidencia rojo-verde-refactor.
 32. Como usuario de `light`, quiero que un Tester de solo lectura verifique criterios independientes, para separar implementación y aceptación.
 33. Como usuario de `light`, quiero que el Tester ejecute pruebas, C.R.A.P. y Golden Rules, para recibir una validación objetiva y acotada.
-34. Como usuario de `light`, quiero un máximo de dos ciclos de retrabajo, para limitar bucles improductivos.
+34. Como usuario de `light`, quiero un máximo de un ciclo de retrabajo, para limitar bucles improductivos.
 35. Como usuario de `normal`, quiero que un Planificador lea la solicitud original, para no planificar desde un resumen degradado.
 36. Como usuario de `normal`, quiero un plan secuencial, plano y acotado, para que la implementación tenga pasos verificables.
 37. Como usuario de `normal`, quiero que el Planificador use grilling solo ante decisiones reales del HOW, para evitar entrevistas innecesarias.
 38. Como usuario de `normal`, quiero que el Implementador trabaje solo sobre el plan vigente, para impedir expansión silenciosa del alcance.
-39. Como usuario de `normal`, quiero que Refactor revise estructura, Golden Rules, C.R.A.P. y mutación, para detectar defectos antes del testing final.
-40. Como usuario de `normal`, quiero que Refactor sea de solo lectura, para que revisión e implementación permanezcan separadas.
-41. Como usuario de `normal`, quiero que el Tester pueda mejorar únicamente tests cuando falta evidencia, para cerrar cobertura sin alterar producción correcta.
-42. Como usuario de `normal`, quiero que un incumplimiento de producción vuelva al Planificador, para replantear el HOW y no parchear sin diseño.
+39. Como usuario de `normal`, quiero que un Verificador revise criterios, tests, Golden Rules, estructura y C.R.A.P. diferencial, para obtener una aceptación única e independiente.
+40. Como usuario de `normal`, quiero que el Verificador sea de solo lectura sobre producción, para separar verificación e implementación.
+41. Como usuario de `normal`, quiero que el Verificador pueda mejorar únicamente tests cuando producción es correcta y falta evidencia, repitiendo en su recorrido los checks invalidados.
+42. Como usuario de `normal`, quiero que un cambio real del HOW vuelva a un Planificador nuevo y una corrección localizada a un Implementador nuevo.
 43. Como usuario de `normal`, quiero que una prueba contradictoria no se cambie silenciosamente, para visibilizar conflictos entre evidencia y especificación.
 44. Como usuario de `normal`, quiero que el Documentador se ejecute siempre, para evaluar si la documentación debe acompañar el cambio.
 45. Como usuario de `normal`, quiero que el Documentador no pueda bloquear ni abrir retrabajo, para que la documentación no invalide una implementación aceptada.
-46. Como usuario de `normal`, quiero un máximo de tres ciclos de retrabajo, para controlar el coste de la ejecución.
+46. Como usuario de `normal`, quiero un máximo de dos ciclos de retrabajo, para controlar el coste de la ejecución.
 47. Como usuario de `full`, quiero que un Explorador identifique archivos, símbolos y dependencias antes de planificar, para acotar correctamente el sector.
 48. Como usuario de `full`, quiero que el Explorador sea de solo lectura y no diseñe la solución, para mantener separadas exploración y planificación.
 49. Como usuario de `full`, quiero reabrir exploración solo cuando el sector inicial sea demostrablemente insuficiente, para evitar trabajo repetido.
@@ -171,11 +171,11 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 8. Las peticiones sin activador se ejecutarán directamente y solo estarán gobernadas por las Golden Rules.
 9. Las Golden Rules serán una única fuente canónica; roles, skills, adapters y documentación operativa solo podrán referenciarla.
 10. CodeGraph y Engram se recomendarán cuando estén disponibles y sean útiles, pero no formarán parte de preflight, contratos, estado, instalación, aceptación ni recuperación.
-11. El modo `light` seguirá el flujo Implementador → Tester, con retorno a un Implementador nuevo cuando el Tester solicite cambios y un máximo de dos ciclos.
-12. El modo `normal` seguirá el flujo Planificador → Implementador → Refactor → Tester → Documentador. Refactor devolverá cambios a un Implementador nuevo; Tester devolverá defectos de producción a un Planificador nuevo; habrá un máximo de tres ciclos.
+11. El modo `light` seguirá el flujo Implementador → Tester, con retorno a un Implementador nuevo tras el primer `changes_required`; el segundo terminará como `blocked`.
+12. El modo `normal` seguirá el flujo Planificador → Implementador → Verificador → Documentador. Un cambio real del HOW volverá a un Planificador nuevo, una corrección localizada a un Implementador nuevo y el tercer `changes_required` terminará como `blocked`.
 13. El modo `full` seguirá el flujo Explorador → Planificador → Implementador → Refactor → Tester → Evaluador → Documentador. Los defectos de Refactor volverán a un Implementador nuevo y los de Tester o Evaluador a un Planificador nuevo; habrá un máximo de cuatro ciclos.
-14. Todos los roles, salvo las capacidades explícitas del Tester normal/full y del Documentador, serán de solo lectura o escritura según su responsabilidad declarada. Ningún revisor podrá modificar producción.
-15. El Tester normal/full podrá crear o mejorar tests únicamente cuando producción ya cumpla el comportamiento y falte evidencia; cualquier cambio invalidará y repetirá los gates afectados.
+14. Todos los roles, salvo las capacidades explícitas del Verificador en `normal`, del Tester en `full` y del Documentador, serán de solo lectura o escritura según su responsabilidad declarada. Ningún revisor podrá modificar producción.
+15. El Verificador de `normal` podrá crear o mejorar tests únicamente cuando producción ya cumpla el comportamiento y falte evidencia; nunca cambiará silenciosamente tests contradictorios y repetirá en su propio recorrido los checks invalidados.
 16. El Documentador se creará siempre en `normal` y `full`, solo modificará documentación y nunca podrá solicitar retrabajo, bloquear la ejecución ni cambiar el modo.
 17. Un fallo persistente del Documentador producirá éxito con advertencias, después de un reintento, sin invalidar la implementación aceptada.
 18. El contador de retrabajo será global por ejecución y modo. Solo `changes_required` consumirá un ciclo; varios blockers de un mismo hand-off contarán como un ciclo.
@@ -219,7 +219,7 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 56. El análisis asociado a una ejecución será diferencial; un objetivo explícito evaluará todos sus mutantes. Exactamente una de ambas fuentes será obligatoria.
 57. Un gate de mutación aprobará solo cuando no existan mutantes sobrevivientes ni no cubiertos. Un mutante que exceda su timeout contará como muerto por timeout.
 58. Un baseline fallido o agotado invalidará la ejecución completa de mutación.
-59. Refactor en `normal` y Evaluador en `full` podrán clasificar equivalentes solo con archivo lógico, símbolo, mutación, ubicación, razón y prueba estática localizada. No habrá exclusiones globales.
+59. El Evaluador en `full` podrá clasificar equivalentes solo con archivo lógico, símbolo, mutación, ubicación, razón y prueba estática localizada. No habrá exclusiones globales.
 60. La mutación usará hasta cuatro workers configurables. Ejecutará baseline y cobertura una vez, procesará objetivos de forma secuencial y hasta cuatro mutantes del objetivo actual en paralelo.
 61. Cada worker operará sobre un snapshot reutilizable y aislado. El working tree real nunca se mutará; cada restauración se comprobará por hash.
 62. Si falla la limpieza, el producto preservará la evidencia y devolverá `restoration_failure`. Dependencias existentes podrán reutilizarse mediante referencias controladas sin copiarlas innecesariamente.
@@ -256,7 +256,7 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 6. El repositorio parte vacío y no existe prior art interno. La primera suite establecerá el patrón canónico de subprocess, fixtures temporales, snapshots verificables y aserciones de filesystem.
 7. Los contratos probarán schemas sparse, campos prohibidos, combinaciones de estado y findings, payloads, límites de tamaño y protocol retry.
 8. Los grafos probarán todas las transiciones válidas e inválidas de `light`, `normal` y `full`, incluido el requisito de crear agentes nuevos.
-9. Los presupuestos probarán exactamente dos, tres y cuatro ciclos, el conteo por hand-off, los eventos que no consumen ciclos y el estado terminal al agotarlos.
+9. Los presupuestos probarán exactamente uno, dos y cuatro ciclos, el conteo por hand-off, los eventos que no consumen ciclos y el estado terminal al agotarlos.
 10. Los tests del Documentador demostrarán que no puede solicitar retrabajo, bloquear ni cambiar modo, y que un fallo persistente termina con advertencias.
 11. Los tests de contexto verificarán inmutabilidad de la solicitud, representación de razón ausente, autoridad de criterios, hashes, selección de cápsulas y rechazo de briefs mayores de 16 KiB sin truncamiento.
 12. Los tests de aislamiento inspeccionarán el brief producido para cada rol y demostrarán ausencia de instrucciones, roles y marcadores pertenecientes a otros modos.
@@ -304,20 +304,31 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 - Distribuir adapters simulados que no creen agentes reales.
 - Permitir que `doctor` repare archivos ajenos o retire otra capa.
 
-## Correcci�n T08.1: materialidad y calidad diferencial
+## Corrección T08.1: materialidad y calidad diferencial
 
-- Un finding bloqueante requiere autoridad concreta, alcance cambiado o dependencia directa, evidencia reproducible o prueba est�tica localizada, impacto material y correcci�n m�nima dentro del alcance. Si falta una condici�n, se trata como advisory y no consume retrabajo.
-- Extensibilidad futura, inputs no soportados, escenarios hipot�ticos sin ruta demostrada, deuda preexistente no empeorada, estilo, dise�os alternativos, optimizaciones no medidas y asuntos fuera del alcance son siempre advisory.
-- C.R.A.P. usa el baseline inmutable anterior a la implementaci�n: s�mbolos nuevos y existentes con baseline no mayor que siete deben quedar en siete o menos; deuda heredada mayor que siete no puede empeorar.
-- Un baseline no atribuible produce una advertencia no bloqueante y nunca un cero inventado. La auditor�a independiente por `--target` conserva la comparaci�n absoluta configurada.
-- La identidad estable combina archivo l�gico, nombre cualificado, contenedor, tipo de declaraci�n y desambiguador determinista. Ubicaci�n y hash AST son versiones, no identidad.
-- La vigencia enumera c�digo objetivo, tests descubiertos, configuraci�n y comandos del runner, manifests y lockfiles. Cualquier cambio en esas entradas invalida el reporte.
-- Una selecci�n expl�cita sin s�mbolos resueltos es un error y no un resultado `not_applicable`.
+- Un finding bloqueante requiere autoridad concreta, alcance cambiado o dependencia directa, evidencia reproducible o prueba estática localizada, impacto material y corrección mínima dentro del alcance. Si falta una condición, se trata como advisory y no consume retrabajo.
+- Extensibilidad futura, inputs no soportados, escenarios hipotéticos sin ruta demostrada, deuda preexistente no empeorada, estilo, diseños alternativos, optimizaciones no medidas y asuntos fuera del alcance son siempre advisory.
+- C.R.A.P. usa el baseline inmutable anterior a la implementación: símbolos nuevos y existentes con baseline no mayor que siete deben quedar en siete o menos; deuda heredada mayor que siete no puede empeorar.
+- Un baseline no atribuible produce una advertencia no bloqueante y nunca un cero inventado. La auditoría independiente por `--target` conserva la comparación absoluta configurada.
+- La identidad estable combina archivo lógico, nombre cualificado, contenedor, tipo de declaración y desambiguador determinista. Ubicación y hash AST son versiones, no identidad.
+- La vigencia enumera código objetivo, tests descubiertos, configuración y comandos del runner, manifests y lockfiles. Cualquier cambio en esas entradas invalida el reporte.
+- Una selección explícita sin símbolos resueltos es un error y no un resultado `not_applicable`.
+
+## Corrección T08.2: grafos y gates de `light` y `normal`
+
+- `light` admite un ciclo global de retrabajo: el primer `changes_required` crea un Implementador nuevo y el segundo termina como `blocked`.
+- `normal` usa exclusivamente Planificador → Implementador → Verificador → Documentador y admite dos ciclos globales; el tercer `changes_required` termina como `blocked`.
+- El Verificador cubre todos los criterios, tests, Golden Rules, estructura y C.R.A.P. diferencial. No escribe producción; solo puede modificar tests cuando producción es correcta y falta evidencia.
+- Si el Verificador cambia tests o configuración, repite dentro de su propio recorrido todos los checks invalidados. Nunca cambia silenciosamente una prueba contradictoria.
+- Un cambio real del HOW crea un Planificador nuevo; una corrección localizada de producción crea un Implementador nuevo; un advisory no abre retrabajo.
+- El Documentador se crea siempre como agente nuevo tras el Verificador, decide de forma fresca si hacen falta cambios, solo modifica documentación y nunca bloquea ni abre retrabajo. Conserva un reintento y `completed_with_warnings`.
+- Mutation Testing no es gate, requisito de brief, hand-off ni transición en `direct`, `light` o `normal`. La CLI independiente `agentic-quality mutate` se conserva.
+- Los estados persistidos del grafo antiguo de `normal` son incompatibles y fallan explícitamente; no se migran de forma silenciosa.
 
 ## Notas adicionales
 
 - `agentic-core.md` y `golden-rules.md` son las fuentes de esta especificación. Las Golden Rules se tratan como contenido canónico del producto, no como instrucciones para el proceso de publicación.
 - El repositorio está concebido como un producto nuevo y sin compatibilidad heredada; las decisiones documentadas se consideran cerradas para `0.1.0`.
-- La implementación debe mantener vocabulario consistente: `direct`, `light`, `normal`, `full`, Planificador, Implementador, Refactor, Tester, Explorador, Evaluador, Documentador, brief, hand-off, retrabajo y reporte obsoleto.
+- La implementación debe mantener vocabulario consistente: `direct`, `light`, `normal`, `full`, Planificador, Implementador, Verificador, Refactor, Tester, Explorador, Evaluador, Documentador, brief, hand-off, retrabajo y reporte obsoleto.
 - La ausencia de prior art en el repositorio hace que esta primera suite y sus fixtures definan el patrón de testing futuro.
 - La publicación del paquete requiere que las validaciones automáticas y los seis recorridos manuales produzcan evidencia satisfactoria.
