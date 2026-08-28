@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 async function inspect(targetPath) {
   try {
     const details = await lstat(targetPath);
+    if (details.isDirectory()) return { kind: "directory" };
     if (!details.isFile()) return { kind: "other" };
     return { kind: "file", content: await readFile(targetPath) };
   } catch (error) {
@@ -59,7 +60,9 @@ export async function writeTransaction(projectDirectory, operations, { failAfter
   const snapshots = new Map();
   for (const operation of operations) {
     const snapshot = await inspect(operation.path);
-    if (snapshot.kind === "other") throw new Error(`Transaction target is not a file: ${operation.path}`);
+    if (snapshot.kind === "other" || (snapshot.kind === "directory" && operation.type !== "delete")) {
+      throw new Error(`Transaction target is not compatible with the operation: ${operation.path}`);
+    }
     snapshots.set(operation.path, snapshot);
   }
   const missingDirectories = await missingParentDirectories(projectRoot, operations);
@@ -68,15 +71,26 @@ export async function writeTransaction(projectDirectory, operations, { failAfter
 
   try {
     let backupIndex = 0;
-    for (const snapshot of snapshots.values()) {
+    for (const [targetPath, snapshot] of snapshots) {
       if (snapshot.kind === "file") {
-        await writeFile(path.join(backupRoot, `${backupIndex}.bin`), snapshot.content);
+        snapshot.backupPath = path.join(backupRoot, `${backupIndex}.bin`);
+        await writeFile(snapshot.backupPath, snapshot.content);
+        backupIndex += 1;
+      } else if (snapshot.kind === "directory") {
+        snapshot.backupPath = path.join(backupRoot, `${backupIndex}.dir`);
+        await cp(targetPath, snapshot.backupPath, { recursive: true, errorOnExist: true });
         backupIndex += 1;
       }
     }
 
     let writeCount = 0;
     for (const operation of operations) {
+      if (operation.type === "delete") {
+        await rm(operation.path, { recursive: true, force: true });
+        writeCount += 1;
+        if (failAfterWrite === writeCount) throw new Error("Simulated transaction failure");
+        continue;
+      }
       await mkdir(path.dirname(operation.path), { recursive: true });
       const temporaryPath = `${operation.path}.agentic-core-${randomUUID()}.tmp`;
       temporaryPaths.add(temporaryPath);
@@ -101,11 +115,13 @@ export async function writeTransaction(projectDirectory, operations, { failAfter
     for (const operation of [...operations].reverse()) {
       const snapshot = snapshots.get(operation.path);
       try {
+        await rm(operation.path, { recursive: true, force: true });
         if (snapshot.kind === "file") {
           await mkdir(path.dirname(operation.path), { recursive: true });
-          await writeFile(operation.path, snapshot.content);
-        } else {
-          await rm(operation.path, { force: true });
+          await cp(snapshot.backupPath, operation.path);
+        } else if (snapshot.kind === "directory") {
+          await mkdir(path.dirname(operation.path), { recursive: true });
+          await cp(snapshot.backupPath, operation.path, { recursive: true, errorOnExist: true });
         }
       } catch (restorationError) {
         restorationErrors.push(restorationError);

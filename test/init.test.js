@@ -226,3 +226,122 @@ test("a conflicting managed block is replaced only when explicitly authorized", 
   assert.equal((replaced.toString("utf8").match(/AGENTIC_CORE_START/g) ?? []).length, 1);
   assert.match(replaced.toString("utf8"), /load only `.agentic-core\/golden-rules\.md`/);
 });
+
+test("update preserves configuration, completes mandatory keys, and removes incompatible runs", async (t) => {
+  const project = await createProject(t);
+  await runCore(["init", project, "--yes"]);
+
+  const configPath = path.join(project, ".agentic-core", "config.json");
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  config.quality.crapThreshold = 5;
+  delete config.quality.mutationWorkers;
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  const runsPath = path.join(project, ".agentic-core", "runs");
+  await mkdir(runsPath);
+  await writeFile(path.join(runsPath, "stale.json"), "stale run\r\n");
+  const oldManifest = JSON.parse(await readFile(path.join(project, ".agentic-core", "ownership.json"), "utf8"));
+
+  const result = await runCore(["update", project, "--force"]);
+
+  assert.match(result.stdout, /Updated agentic-core 0\.1\.0/);
+  assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
+    ...config,
+    quality: { crapThreshold: 5, mutationWorkers: 4 },
+  });
+  await assert.rejects(stat(runsPath), { code: "ENOENT" });
+  const newManifest = JSON.parse(await readFile(path.join(project, ".agentic-core", "ownership.json"), "utf8"));
+  assert.equal(newManifest.installationId, oldManifest.installationId);
+  assert.notDeepEqual(newManifest.resources, oldManifest.resources);
+});
+
+test("update rejects uncertain or foreign ownership even with force", async (t) => {
+  for (const [name, manifest] of [
+    ["foreign", { schemaVersion: 1, product: "another-product" }],
+    ["uncertain", { schemaVersion: 1, product: "@kroxidev/agentic-core", resources: [] }],
+  ]) {
+    await t.test(name, async (subtest) => {
+      const project = await createProject(subtest);
+      const productRoot = path.join(project, ".agentic-core");
+      await mkdir(productRoot);
+      await writeFile(path.join(productRoot, "ownership.json"), `${JSON.stringify(manifest)}\r\n`);
+      await writeFile(path.join(productRoot, "foreign.txt"), "do not replace\r\n");
+      const before = await snapshotFiles(project);
+
+      await assert.rejects(runCore(["update", project, "--force"]), (error) => {
+        assert.equal(error.code, 1);
+        assert.match(error.stderr, /ownership manifest/i);
+        return true;
+      });
+      assertSameSnapshot(await snapshotFiles(project), before);
+    });
+  }
+});
+
+test("update enumerates divergences and force replaces only owned boundaries", async (t) => {
+  const project = await createProject(t);
+  await writeFile(path.join(project, "AGENTS.md"), "# Foreign prefix\r\n");
+  await runCore(["init", project, "--yes"]);
+  const productRoot = path.join(project, ".agentic-core");
+  await writeFile(path.join(productRoot, "golden-rules.md"), "locally changed rules\r\n");
+  const agentsPath = path.join(project, "AGENTS.md");
+  const agents = await readFile(agentsPath, "utf8");
+  await writeFile(agentsPath, `${agents.replace("## agentic-core", "## locally changed core")}\r\n# Foreign suffix`);
+  await writeFile(path.join(productRoot, "unknown.txt"), "foreign product data\r\n");
+  const beforeRejectedUpdate = await snapshotFiles(project);
+
+  await assert.rejects(runCore(["update", project]), (error) => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /\.agentic-core\/golden-rules\.md/);
+    assert.match(error.stderr, /AGENTS\.md/);
+    assert.match(error.stderr, /--force/);
+    return true;
+  });
+  assertSameSnapshot(await snapshotFiles(project), beforeRejectedUpdate);
+
+  await runCore(["update", project, "--force"]);
+  assert.equal(await readFile(path.join(productRoot, "unknown.txt"), "utf8"), "foreign product data\r\n");
+  const updatedAgents = await readFile(agentsPath, "utf8");
+  assert.match(updatedAgents, /^# Foreign prefix\r?\n/);
+  assert.match(updatedAgents, /# Foreign suffix$/);
+  assert.match(updatedAgents, /## agentic-core/);
+  assert.doesNotMatch(updatedAgents, /locally changed core/);
+});
+
+test("update without divergences does not require force", async (t) => {
+  const project = await createProject(t);
+  await runCore(["init", project, "--yes"]);
+  const result = await runCore(["update", project]);
+  assert.match(result.stdout, /Updated agentic-core 0\.1\.0/);
+});
+
+test("a failure after any update mutation restores the installation byte for byte", async (t) => {
+  for (const failAfterWrite of [1, 2, 3, 4, 5, 6, 7]) {
+    await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
+      const project = await createProject(subtest);
+      await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");
+      await runCore(["init", project, "--yes"]);
+      const productRoot = path.join(project, ".agentic-core");
+      const runsPath = path.join(productRoot, "runs", "nested");
+      await mkdir(runsPath, { recursive: true });
+      await writeFile(path.join(runsPath, "state.bin"), Buffer.from([0x00, 0x0d, 0x0a, 0xff]));
+      await writeFile(path.join(productRoot, "unknown.txt"), "foreign file\r\n");
+      const before = await snapshotFiles(project);
+
+      await assert.rejects(
+        runCore(["update", project], {
+          env: {
+            ...process.env,
+            NODE_ENV: "test",
+            AGENTIC_CORE_TEST_FAIL_AFTER_WRITE: String(failAfterWrite),
+          },
+        }),
+        (error) => {
+          assert.equal(error.code, 1);
+          assert.match(error.stderr, /simulated transaction failure/i);
+          return true;
+        },
+      );
+      assertSameSnapshot(await snapshotFiles(project), before);
+    });
+  }
+});

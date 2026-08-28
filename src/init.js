@@ -77,7 +77,9 @@ function logicalPath(...segments) {
 async function fileKind(filePath) {
   try {
     const details = await lstat(filePath);
-    return details.isFile() ? "file" : "other";
+    if (details.isFile()) return "file";
+    if (details.isDirectory()) return "directory";
+    return "other";
   } catch (error) {
     if (error?.code === "ENOENT") return "missing";
     throw error;
@@ -105,6 +107,78 @@ function replaceManagedBlock(existing, startMarker, endMarker) {
     Buffer.from(MANAGED_BLOCK),
     existing.subarray(endIndex + end.length),
   ]);
+}
+
+function managedBlock(existing, startMarker, endMarker) {
+  const start = Buffer.from(startMarker);
+  const end = Buffer.from(endMarker);
+  const startIndex = existing.indexOf(start);
+  const endIndex = existing.indexOf(end, startIndex + start.length);
+  const absent = startIndex < 0 && endIndex < 0;
+  if (absent) return { kind: "missing" };
+  const unambiguous = startIndex >= 0
+    && endIndex >= 0
+    && existing.lastIndexOf(start) === startIndex
+    && existing.lastIndexOf(end) === endIndex;
+  if (!unambiguous) return { kind: "ambiguous" };
+  return {
+    kind: "block",
+    content: existing.subarray(startIndex, endIndex + end.length),
+  };
+}
+
+function assertObject(value, label) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Cannot update: ${label} is invalid`);
+  }
+}
+
+function mergeConfig(value) {
+  assertObject(value, "configuration");
+  if (value.orchestration !== undefined) assertObject(value.orchestration, "orchestration configuration");
+  if (value.quality !== undefined) assertObject(value.quality, "quality configuration");
+  const merged = {
+    ...CONFIG,
+    ...value,
+    $schema: CONFIG.$schema,
+    schemaVersion: CONFIG_VERSION,
+    orchestration: { ...CONFIG.orchestration, ...value.orchestration },
+    quality: { ...CONFIG.quality, ...value.quality },
+  };
+  const { orchestration, quality } = merged;
+  if (orchestration.explicitActivationOnly !== true || orchestration.defaultMode !== "normal"
+    || !Number.isInteger(orchestration.briefMaxBytes) || orchestration.briefMaxBytes < 1 || orchestration.briefMaxBytes > 16_384
+    || !Number.isInteger(orchestration.handoffMaxBytes) || orchestration.handoffMaxBytes < 1 || orchestration.handoffMaxBytes > 32_768
+    || typeof quality.crapThreshold !== "number" || quality.crapThreshold < 0
+    || !Number.isInteger(quality.mutationWorkers) || quality.mutationWorkers < 1 || quality.mutationWorkers > 4) {
+    throw new Error("Cannot update: configuration does not satisfy the current schema");
+  }
+  return merged;
+}
+
+function validateOwnership(owner) {
+  assertObject(owner, "ownership manifest");
+  if (owner.schemaVersion !== 1 || owner.product !== PRODUCT || typeof owner.installationId !== "string"
+    || !Array.isArray(owner.resources) || !Array.isArray(owner.managedBlocks)) {
+    throw new Error("Cannot update: ownership manifest is not a recognized agentic-core installation");
+  }
+  const expectedResources = [
+    ".agentic-core/config.json",
+    ".agentic-core/config.schema.json",
+    ".agentic-core/golden-rules.md",
+  ];
+  const expectedBlocks = ["AGENTS.md", "CLAUDE.md"];
+  if (owner.resources.length !== expectedResources.length
+    || owner.managedBlocks.length !== expectedBlocks.length
+    || owner.resources.some((resource, index) => resource?.path !== expectedResources[index]
+      || !/^[0-9a-f]{64}$/.test(resource?.sha256))
+    || owner.managedBlocks.some((block, index) => block?.path !== expectedBlocks[index]
+      || block?.id !== "agentic-core"
+      || block?.startMarker !== "<!-- AGENTIC_CORE_START -->"
+      || block?.endMarker !== "<!-- AGENTIC_CORE_END -->"
+      || !/^[0-9a-f]{64}$/.test(block?.sha256))) {
+    throw new Error("Cannot update: ownership manifest does not prove the expected resource boundaries");
+  }
 }
 
 export async function initialize(projectDirectory, { replaceConflicts = false } = {}) {
@@ -165,7 +239,7 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
   for (const hostBlock of hostBlocks) {
     const targetPath = path.join(projectRoot, hostBlock.path);
     const kind = await fileKind(targetPath);
-    if (kind === "other") throw new Error(`Unsupported isolated conflict: ${hostBlock.path}`);
+    if (kind !== "missing" && kind !== "file") throw new Error(`Unsupported isolated conflict: ${hostBlock.path}`);
     const existing = kind === "file" ? await readFile(targetPath) : Buffer.alloc(0);
     if (existing.includes(Buffer.from(hostBlock.startMarker)) || existing.includes(Buffer.from(hostBlock.endMarker))) {
       if (!replaceConflicts) {
@@ -209,4 +283,104 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
   });
 
   return { projectRoot, version };
+}
+
+export async function updateInstallation(projectDirectory, { force = false } = {}) {
+  const projectRoot = path.resolve(projectDirectory);
+  const productRoot = path.join(projectRoot, ".agentic-core");
+  const ownershipPath = path.join(productRoot, "ownership.json");
+  if (await fileKind(ownershipPath) !== "file") {
+    throw new Error("Cannot update: no valid ownership manifest was found");
+  }
+
+  let owner;
+  try {
+    owner = JSON.parse(await readFile(ownershipPath, "utf8"));
+  } catch {
+    throw new Error("Cannot update: ownership manifest is invalid");
+  }
+  validateOwnership(owner);
+
+  const configPath = path.join(productRoot, "config.json");
+  if (await fileKind(configPath) !== "file") throw new Error("Cannot update: configuration is not a file");
+  let existingConfig;
+  try {
+    existingConfig = JSON.parse(await readFile(configPath, "utf8"));
+  } catch {
+    throw new Error("Cannot update: configuration is invalid");
+  }
+  const config = Buffer.from(json(mergeConfig(existingConfig)));
+  const version = await getVersion();
+  const resources = [
+    { path: ".agentic-core/config.json", content: config },
+    { path: ".agentic-core/config.schema.json", content: Buffer.from(json(CONFIG_SCHEMA)) },
+    { path: ".agentic-core/golden-rules.md", content: await readFile(new URL("../golden-rules.md", import.meta.url)) },
+  ];
+  const divergences = [];
+  for (let index = 0; index < resources.length; index += 1) {
+    const resource = resources[index];
+    const targetPath = path.join(projectRoot, ...resource.path.split("/"));
+    const kind = await fileKind(targetPath);
+    if (kind !== "file" || sha256(await readFile(targetPath)) !== owner.resources[index].sha256) {
+      divergences.push(resource.path);
+    }
+  }
+
+  const hostWrites = [];
+  for (const block of owner.managedBlocks) {
+    const targetPath = path.join(projectRoot, block.path);
+    const kind = await fileKind(targetPath);
+    if (kind !== "missing" && kind !== "file") throw new Error(`Cannot update: ${block.path} is not a file`);
+    const existing = kind === "file" ? await readFile(targetPath) : Buffer.alloc(0);
+    const found = managedBlock(existing, block.startMarker, block.endMarker);
+    if (found.kind === "ambiguous") {
+      throw new Error(`Cannot update: ownership boundary in ${block.path} is ambiguous`);
+    }
+    if (found.kind === "missing" || sha256(found.content) !== block.sha256) divergences.push(block.path);
+    hostWrites.push({
+      path: targetPath,
+      content: found.kind === "block"
+        ? replaceManagedBlock(existing, block.startMarker, block.endMarker)
+        : appendManagedBlock(existing),
+    });
+  }
+
+  if (divergences.length > 0 && !force) {
+    throw new Error(`Owned resources diverged: ${divergences.join(", ")}. Re-run with --force to authorize replacement.`);
+  }
+
+  const managedBlocks = owner.managedBlocks.map((block) => ({
+    ...block,
+    sha256: sha256(Buffer.from(MANAGED_BLOCK)),
+  }));
+  const manifest = {
+    schemaVersion: 1,
+    product: PRODUCT,
+    version,
+    installationId: owner.installationId,
+    configVersion: CONFIG_VERSION,
+    resources: resources.map((resource) => ({ path: resource.path, sha256: sha256(resource.content) })),
+    managedBlocks,
+  };
+  const runsPath = path.join(productRoot, "runs");
+  const runsKind = await fileKind(runsPath);
+  if (runsKind !== "missing" && runsKind !== "directory") {
+    throw new Error("Cannot update: persisted runs path is not a directory");
+  }
+  const operations = [
+    ...resources.map((resource) => ({
+      path: path.join(projectRoot, ...resource.path.split("/")),
+      content: resource.content,
+    })),
+    ...hostWrites,
+    ...(runsKind === "missing" ? [] : [{ path: runsPath, type: "delete" }]),
+    { path: ownershipPath, content: Buffer.from(json(manifest)) },
+  ];
+  const requestedFault = process.env.NODE_ENV === "test"
+    ? Number.parseInt(process.env.AGENTIC_CORE_TEST_FAIL_AFTER_WRITE ?? "", 10)
+    : Number.NaN;
+  await writeTransaction(projectRoot, operations, {
+    failAfterWrite: Number.isSafeInteger(requestedFault) && requestedFault > 0 ? requestedFault : undefined,
+  });
+  return { projectRoot, version, divergences };
 }
