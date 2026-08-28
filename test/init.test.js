@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { uninstallInstallation } from "../src/init.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -107,6 +108,12 @@ test("init installs the canonical direct-mode configuration and records ownershi
     assert.equal(resource.sha256, sha256(content));
   }
   assert.deepEqual(manifest.managedBlocks.map(({ path: blockPath }) => blockPath), ["AGENTS.md", "CLAUDE.md"]);
+  assert.deepEqual(manifest.ownedDirectories, [
+    ".agentic-core/runs",
+    ".agentic-core/reports",
+    ".agentic-core/workers",
+    ".agentic-core/transactions",
+  ]);
 });
 
 test("--yes does not replace an isolated conflict without explicit authorization", async (t) => {
@@ -329,6 +336,139 @@ test("a failure after any update mutation restores the installation byte for byt
 
       await assert.rejects(
         runCore(["update", project], {
+          env: {
+            ...process.env,
+            NODE_ENV: "test",
+            AGENTIC_CORE_TEST_FAIL_AFTER_WRITE: String(failAfterWrite),
+          },
+        }),
+        (error) => {
+          assert.equal(error.code, 1);
+          assert.match(error.stderr, /simulated transaction failure/i);
+          return true;
+        },
+      );
+      assertSameSnapshot(await snapshotFiles(project), before);
+    });
+  }
+});
+
+test("uninstall dry-run reports exact owned resources and blocks without changing the project", async (t) => {
+  const project = await createProject(t);
+  await runCore(["init", project, "--yes"]);
+  const before = await snapshotFiles(project);
+
+  const result = await runCore(["uninstall", project, "--dry-run"]);
+
+  assert.deepEqual(result.stdout.trim().split("\n"), [
+    "Would remove resource: .agentic-core/config.json",
+    "Would remove resource: .agentic-core/config.schema.json",
+    "Would remove resource: .agentic-core/golden-rules.md",
+    "Would remove managed block: AGENTS.md#agentic-core",
+    "Would remove managed block: CLAUDE.md#agentic-core",
+    "Would remove manifest: .agentic-core/ownership.json",
+  ]);
+  assertSameSnapshot(await snapshotFiles(project), before);
+});
+
+test("uninstall removes owned state and keeps unknown resources and text", async (t) => {
+  const project = await createProject(t);
+  await writeFile(path.join(project, "AGENTS.md"), "# Keep prefix\r\n");
+  await runCore(["init", project, "--yes"]);
+  const productRoot = path.join(project, ".agentic-core");
+  for (const directory of ["runs", "reports", "workers", "transactions"]) {
+    const ownedRoot = path.join(productRoot, directory, "nested");
+    await mkdir(ownedRoot, { recursive: true });
+    await writeFile(path.join(ownedRoot, "owned.bin"), Buffer.from([0x00, 0xff]));
+  }
+  await writeFile(path.join(productRoot, "unknown.txt"), "keep product-adjacent data\r\n");
+  await writeFile(path.join(project, "AGENTS.md"), `${await readFile(path.join(project, "AGENTS.md"), "utf8")}# Keep suffix`);
+  const unrelatedRoot = path.join(project, ".agents", "skills", "other-skill");
+  await mkdir(unrelatedRoot, { recursive: true });
+  await writeFile(path.join(unrelatedRoot, "SKILL.md"), "keep skill\r\n");
+
+  const result = await runCore(["uninstall", project]);
+
+  assert.match(result.stdout, /Removed owned directory: \.agentic-core\/runs/);
+  for (const ownedPath of ["config.json", "config.schema.json", "golden-rules.md", "ownership.json", "runs", "reports", "workers", "transactions"]) {
+    await assert.rejects(stat(path.join(productRoot, ownedPath)), { code: "ENOENT" });
+  }
+  assert.equal(await readFile(path.join(productRoot, "unknown.txt"), "utf8"), "keep product-adjacent data\r\n");
+  assert.equal(await readFile(path.join(unrelatedRoot, "SKILL.md"), "utf8"), "keep skill\r\n");
+  const agents = await readFile(path.join(project, "AGENTS.md"), "utf8");
+  assert.match(agents, /^# Keep prefix\r?\n/);
+  assert.match(agents, /# Keep suffix$/);
+  assert.doesNotMatch(agents, /AGENTIC_CORE_START/);
+});
+
+test("non-interactive uninstall preserves and reports divergent owned resources", async (t) => {
+  const project = await createProject(t);
+  await runCore(["init", project, "--yes"]);
+  const configPath = path.join(project, ".agentic-core", "config.json");
+  await writeFile(configPath, "locally edited configuration\r\n");
+
+  const result = await runCore(["uninstall", project]);
+
+  assert.match(result.stdout, /Preserved divergent resource: \.agentic-core\/config\.json/);
+  assert.equal(await readFile(configPath, "utf8"), "locally edited configuration\r\n");
+  await assert.rejects(stat(path.join(project, ".agentic-core", "ownership.json")), { code: "ENOENT" });
+});
+
+test("force and interactive confirmation remove only manifest-owned divergences", async (t) => {
+  await t.test("force", async (subtest) => {
+    const project = await createProject(subtest);
+    await runCore(["init", project, "--yes"]);
+    const configPath = path.join(project, ".agentic-core", "config.json");
+    await writeFile(configPath, "locally edited configuration\r\n");
+    await writeFile(path.join(project, ".agentic-core", "unknown.txt"), "keep unknown\r\n");
+    await runCore(["uninstall", project, "--force"]);
+    await assert.rejects(stat(configPath), { code: "ENOENT" });
+    assert.equal(await readFile(path.join(project, ".agentic-core", "unknown.txt"), "utf8"), "keep unknown\r\n");
+  });
+
+  await t.test("interactive confirmation seam", async (subtest) => {
+    const project = await createProject(subtest);
+    await runCore(["init", project, "--yes"]);
+    const configPath = path.join(project, ".agentic-core", "config.json");
+    await writeFile(configPath, "locally edited configuration\r\n");
+    const prompted = [];
+    await uninstallInstallation(project, {
+      confirmDivergence: async (item) => {
+        prompted.push(item);
+        return true;
+      },
+    });
+    assert.deepEqual(prompted, [{ kind: "resource", path: ".agentic-core/config.json" }]);
+    await assert.rejects(stat(configPath), { code: "ENOENT" });
+  });
+});
+
+test("uninstall never changes an installation owned by another product", async (t) => {
+  const project = await createProject(t);
+  const productRoot = path.join(project, ".agentic-core");
+  await mkdir(productRoot);
+  await writeFile(path.join(productRoot, "ownership.json"), '{"product":"another-product"}\r\n');
+  await writeFile(path.join(productRoot, "foreign.txt"), "keep all\r\n");
+  const before = await snapshotFiles(project);
+  await assert.rejects(runCore(["uninstall", project, "--force"]), /Command failed/);
+  assertSameSnapshot(await snapshotFiles(project), before);
+});
+
+test("a failure after any uninstall mutation restores the project byte for byte", async (t) => {
+  for (const failAfterWrite of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+    await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
+      const project = await createProject(subtest);
+      await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");
+      await runCore(["init", project, "--yes"]);
+      const productRoot = path.join(project, ".agentic-core");
+      for (const directory of ["runs", "reports", "workers", "transactions"]) {
+        const ownedRoot = path.join(productRoot, directory);
+        await mkdir(ownedRoot);
+        await writeFile(path.join(ownedRoot, "state.bin"), Buffer.from([0x00, 0x0d, 0x0a, 0xff]));
+      }
+      const before = await snapshotFiles(project);
+      await assert.rejects(
+        runCore(["uninstall", project], {
           env: {
             ...process.env,
             NODE_ENV: "test",

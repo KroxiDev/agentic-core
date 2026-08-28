@@ -1,11 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { writeTransaction } from "./transaction.js";
 import { getVersion } from "./version.js";
 
 const PRODUCT = "@kroxidev/agentic-core";
 const CONFIG_VERSION = 1;
+const OWNED_DIRECTORIES = [
+  ".agentic-core/runs",
+  ".agentic-core/reports",
+  ".agentic-core/workers",
+  ".agentic-core/transactions",
+];
 const MANAGED_BLOCK = `<!-- AGENTIC_CORE_START -->
 ## agentic-core
 
@@ -156,11 +162,14 @@ function mergeConfig(value) {
   return merged;
 }
 
-function validateOwnership(owner) {
-  assertObject(owner, "ownership manifest");
+function validateOwnership(owner, action = "update") {
+  if (owner === null || typeof owner !== "object" || Array.isArray(owner)) {
+    throw new Error(`Cannot ${action}: ownership manifest is invalid`);
+  }
   if (owner.schemaVersion !== 1 || owner.product !== PRODUCT || typeof owner.installationId !== "string"
-    || !Array.isArray(owner.resources) || !Array.isArray(owner.managedBlocks)) {
-    throw new Error("Cannot update: ownership manifest is not a recognized agentic-core installation");
+    || !Array.isArray(owner.resources) || !Array.isArray(owner.managedBlocks)
+    || !Array.isArray(owner.ownedDirectories)) {
+    throw new Error(`Cannot ${action}: ownership manifest is not a recognized agentic-core installation`);
   }
   const expectedResources = [
     ".agentic-core/config.json",
@@ -170,6 +179,8 @@ function validateOwnership(owner) {
   const expectedBlocks = ["AGENTS.md", "CLAUDE.md"];
   if (owner.resources.length !== expectedResources.length
     || owner.managedBlocks.length !== expectedBlocks.length
+    || owner.ownedDirectories.length !== OWNED_DIRECTORIES.length
+    || owner.ownedDirectories.some((directory, index) => directory !== OWNED_DIRECTORIES[index])
     || owner.resources.some((resource, index) => resource?.path !== expectedResources[index]
       || !/^[0-9a-f]{64}$/.test(resource?.sha256))
     || owner.managedBlocks.some((block, index) => block?.path !== expectedBlocks[index]
@@ -177,8 +188,19 @@ function validateOwnership(owner) {
       || block?.startMarker !== "<!-- AGENTIC_CORE_START -->"
       || block?.endMarker !== "<!-- AGENTIC_CORE_END -->"
       || !/^[0-9a-f]{64}$/.test(block?.sha256))) {
-    throw new Error("Cannot update: ownership manifest does not prove the expected resource boundaries");
+    throw new Error(`Cannot ${action}: ownership manifest does not prove the expected resource boundaries`);
   }
+}
+
+function removeManagedBlock(existing, startMarker, endMarker) {
+  const start = Buffer.from(startMarker);
+  const end = Buffer.from(endMarker);
+  const startIndex = existing.indexOf(start);
+  const endIndex = existing.indexOf(end, startIndex + start.length);
+  return Buffer.concat([
+    existing.subarray(0, startIndex),
+    existing.subarray(endIndex + end.length),
+  ]);
 }
 
 export async function initialize(projectDirectory, { replaceConflicts = false } = {}) {
@@ -266,6 +288,7 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
       sha256: sha256(content),
     })),
     managedBlocks: hostBlocks,
+    ownedDirectories: OWNED_DIRECTORIES,
   };
   const operations = [
     ...resources.map((resource) => ({
@@ -361,6 +384,7 @@ export async function updateInstallation(projectDirectory, { force = false } = {
     configVersion: CONFIG_VERSION,
     resources: resources.map((resource) => ({ path: resource.path, sha256: sha256(resource.content) })),
     managedBlocks,
+    ownedDirectories: OWNED_DIRECTORIES,
   };
   const runsPath = path.join(productRoot, "runs");
   const runsKind = await fileKind(runsPath);
@@ -383,4 +407,96 @@ export async function updateInstallation(projectDirectory, { force = false } = {
     failAfterWrite: Number.isSafeInteger(requestedFault) && requestedFault > 0 ? requestedFault : undefined,
   });
   return { projectRoot, version, divergences };
+}
+
+export async function uninstallInstallation(projectDirectory, {
+  dryRun = false,
+  force = false,
+  confirmDivergence = async () => false,
+} = {}) {
+  const projectRoot = path.resolve(projectDirectory);
+  const productRoot = path.join(projectRoot, ".agentic-core");
+  const ownershipPath = path.join(productRoot, "ownership.json");
+  if (await fileKind(ownershipPath) !== "file") {
+    throw new Error("Cannot uninstall: no valid ownership manifest was found");
+  }
+  let owner;
+  try {
+    owner = JSON.parse(await readFile(ownershipPath, "utf8"));
+  } catch {
+    throw new Error("Cannot uninstall: ownership manifest is invalid");
+  }
+  validateOwnership(owner, "uninstall");
+
+  const operations = [];
+  const actions = [];
+  const preserved = [];
+  const authorize = async (kind, ownedPath) => force || confirmDivergence({ kind, path: ownedPath });
+  for (const resource of owner.resources) {
+    const targetPath = path.join(projectRoot, ...resource.path.split("/"));
+    const kind = await fileKind(targetPath);
+    if (kind === "missing") continue;
+    const matches = kind === "file" && sha256(await readFile(targetPath)) === resource.sha256;
+    if (!matches && (kind !== "file" || !(await authorize("resource", resource.path)))) {
+      preserved.push(`divergent resource: ${resource.path}`);
+      continue;
+    }
+    operations.push({ path: targetPath, type: "delete" });
+    actions.push(`resource: ${resource.path}`);
+  }
+
+  for (const block of owner.managedBlocks) {
+    const targetPath = path.join(projectRoot, block.path);
+    const kind = await fileKind(targetPath);
+    if (kind === "missing") continue;
+    if (kind !== "file") {
+      preserved.push(`divergent managed block: ${block.path}#${block.id}`);
+      continue;
+    }
+    const existing = await readFile(targetPath);
+    const found = managedBlock(existing, block.startMarker, block.endMarker);
+    if (found.kind !== "block") {
+      preserved.push(`divergent managed block: ${block.path}#${block.id}`);
+      continue;
+    }
+    const matches = sha256(found.content) === block.sha256;
+    if (!matches && !(await authorize("managed block", `${block.path}#${block.id}`))) {
+      preserved.push(`divergent managed block: ${block.path}#${block.id}`);
+      continue;
+    }
+    operations.push({
+      path: targetPath,
+      content: removeManagedBlock(existing, block.startMarker, block.endMarker),
+    });
+    actions.push(`managed block: ${block.path}#${block.id}`);
+  }
+
+  for (const ownedDirectory of owner.ownedDirectories) {
+    const targetPath = path.join(projectRoot, ...ownedDirectory.split("/"));
+    const kind = await fileKind(targetPath);
+    if (kind === "missing") continue;
+    if (kind !== "directory") {
+      preserved.push(`unexpected path: ${ownedDirectory}`);
+      continue;
+    }
+    operations.push({ path: targetPath, type: "delete" });
+    actions.push(`owned directory: ${ownedDirectory}`);
+  }
+  operations.push({ path: ownershipPath, type: "delete" });
+  actions.push("manifest: .agentic-core/ownership.json");
+
+  if (!dryRun) {
+    const requestedFault = process.env.NODE_ENV === "test"
+      ? Number.parseInt(process.env.AGENTIC_CORE_TEST_FAIL_AFTER_WRITE ?? "", 10)
+      : Number.NaN;
+    await writeTransaction(projectRoot, operations, {
+      failAfterWrite: Number.isSafeInteger(requestedFault) && requestedFault > 0 ? requestedFault : undefined,
+    });
+    try {
+      await rmdir(productRoot);
+    } catch (error) {
+      if (error?.code !== "ENOTEMPTY" && error?.code !== "ENOENT") throw error;
+    }
+  }
+  return { projectRoot, dryRun, actions, preserved };
 }
