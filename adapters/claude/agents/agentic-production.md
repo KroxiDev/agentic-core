@@ -1,7 +1,7 @@
 ---
 name: agentic-production
 description: Production-and-test-writing agentic-core profile for the Implementador role.
-tools: Read, Grep, Glob, Edit, Write, Bash, Skill
+tools: Read, Grep, Glob, Edit, Write, Bash, PowerShell, Skill
 permissionMode: acceptEdits
 ---
 

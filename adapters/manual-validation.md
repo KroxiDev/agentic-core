@@ -13,6 +13,8 @@ Use a newly initialized fixture for every validation after the correction. Do no
 - [ ] Install the package from the commit under validation in a clean fixture project.
 - [ ] Record the package commit, host version, date, and session identifier.
 - [ ] Confirm the installed profile, canonical skill, Claude discovery shim, and ownership-manifest hashes match the package.
+- [ ] Record the fixture working directory, discovered native profiles, and the host's effective tool inventory before orchestration.
+- [ ] For Claude Code, retain a shell preflight transcript proving that every command-capable profile resolves at least one of `Bash` or `PowerShell`; do not patch the installed profile inside the fixture.
 - [ ] Use a brief whose permissions and skills exercise the selected role without changing unrelated files.
 
 ## Codex session

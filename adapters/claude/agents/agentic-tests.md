@@ -1,7 +1,7 @@
 ---
 name: agentic-tests
 description: Test-writing agentic-core profile for independent verification roles.
-tools: Read, Grep, Glob, Edit, Write, Bash
+tools: Read, Grep, Glob, Edit, Write, Bash, PowerShell
 permissionMode: acceptEdits
 ---
 

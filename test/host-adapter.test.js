@@ -168,9 +168,9 @@ test("the adapter accepts only the documented write responsibility for every rol
 test("native host profiles expose four distinct least-privilege capabilities", async () => {
   const repositoryRoot = path.resolve(import.meta.dirname, "..");
   const expectations = {
-    read: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Bash, Skill" },
-    production: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write, Bash" },
-    tests: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write, Bash" },
+    read: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Bash, PowerShell, Skill" },
+    production: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write, Bash, PowerShell" },
+    tests: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write, Bash, PowerShell" },
     docs: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write" },
   };
   for (const [profile, expected] of Object.entries(expectations)) {
@@ -192,9 +192,9 @@ test("native host profiles expose four distinct least-privilege capabilities", a
 test("native profile files use only officially supported host fields and tool names", async () => {
   const repositoryRoot = path.resolve(import.meta.dirname, "..");
   const toolsByProfile = {
-    read: ["Read", "Grep", "Glob", "Bash", "Skill"],
-    production: ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "Skill"],
-    tests: ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+    read: ["Read", "Grep", "Glob", "Bash", "PowerShell", "Skill"],
+    production: ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "PowerShell", "Skill"],
+    tests: ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "PowerShell"],
     docs: ["Read", "Grep", "Glob", "Edit", "Write"],
   };
   for (const [profile, expectedTools] of Object.entries(toolsByProfile)) {
@@ -213,6 +213,29 @@ test("native profile files use only officially supported host fields and tool na
     assert.deepEqual(tools, expectedTools);
     assert.match(frontmatter, /^permissionMode: acceptEdits$/m);
   }
+});
+
+test("Claude command-capable profiles allow both supported shell tool names", async () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, "..");
+  const toolsFor = async (profile) => {
+    const content = await readFile(
+      path.join(repositoryRoot, "adapters", "claude", "agents", `agentic-${profile}.md`),
+      "utf8",
+    );
+    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1];
+    assert.ok(frontmatter, `${profile} has frontmatter`);
+    return frontmatter.match(/^tools:\s*(.*)$/m)?.[1].split(",").map((tool) => tool.trim());
+  };
+
+  for (const profile of ["read", "production", "tests"]) {
+    const tools = await toolsFor(profile);
+    assert.ok(tools.includes("Bash"), `${profile} allows Bash`);
+    assert.ok(tools.includes("PowerShell"), `${profile} allows PowerShell`);
+  }
+
+  const docsTools = await toolsFor("docs");
+  assert.equal(docsTools.includes("Bash"), false);
+  assert.equal(docsTools.includes("PowerShell"), false);
 });
 
 test("production profiles authorize Implementador tests independently of optional TDD", async () => {

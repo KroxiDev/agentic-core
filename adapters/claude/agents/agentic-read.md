@@ -1,7 +1,7 @@
 ---
 name: agentic-read
 description: Read-oriented agentic-core profile with a closed operational quality-artifact exception.
-tools: Read, Grep, Glob, Bash, Skill
+tools: Read, Grep, Glob, Bash, PowerShell, Skill
 permissionMode: acceptEdits
 ---
 
