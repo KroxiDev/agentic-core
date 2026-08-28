@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -189,6 +190,36 @@ test("--run reads persisted quality targets and limits analysis to declared symb
   const report = JSON.parse(result.stdout);
   assert.equal(report.status, "approved");
   assert.deepEqual(report.details.map(({ symbol }) => symbol), ["exercised"]);
+});
+
+test("--output persists the complete run C.R.A.P. report and returns its verified reference", async (t) => {
+  const root = await fixture(t);
+  const runDirectory = path.join(root, ".agentic-core", "runs", "artifact-run");
+  await mkdir(runDirectory, { recursive: true });
+  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
+    quality: { targets: [{ path: "src/subject.js", symbols: ["exercised"] }] },
+  }));
+
+  const result = await run([
+    "crap", "--run", "artifact-run", "--output", "artifacts/crap.json",
+  ], root);
+  assert.equal(result.code, 0, result.stderr || result.stdout);
+  const reference = JSON.parse(result.stdout);
+  assert.deepEqual(Object.keys(reference), ["path", "sha256"]);
+  assert.equal(reference.path, "artifacts/crap.json");
+  assert.match(reference.sha256, /^[a-f0-9]{64}$/);
+  const content = await readFile(path.join(runDirectory, "artifacts", "crap.json"));
+  assert.equal(createHash("sha256").update(content).digest("hex"), reference.sha256);
+  const report = JSON.parse(content);
+  assert.equal(report.tool, "crap");
+  assert.equal(report.status, "approved");
+
+  const production = await readFile(path.join(root, "src", "subject.js"), "utf8");
+  const escaped = await run([
+    "crap", "--run", "artifact-run", "--output", "../../src/report.json",
+  ], root);
+  assert.equal(escaped.code, 4);
+  assert.equal(await readFile(path.join(root, "src", "subject.js"), "utf8"), production);
 });
 
 test("Python AST and unittest coverage preserve the common CRAP report contract", async (t) => {

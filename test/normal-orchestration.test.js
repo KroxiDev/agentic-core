@@ -117,7 +117,9 @@ test("normal follows the four-role graph and never requests mutation", async (t)
   const implementer = await submitHandoff({ projectRoot: root, runId: started.runId, handoff: plannerDone() });
   const verifier = await submitHandoff({ projectRoot: root, runId: started.runId, handoff: implementerDone() });
   assert.equal(verifier.role.name, "Verificador");
-  assert.deepEqual(verifier.brief.permissions.write, ["tests_when_production_is_correct"]);
+  assert.deepEqual(verifier.brief.permissions.write, ["tests_when_production_is_correct", "quality_artifacts"]);
+  assert.deepEqual(verifier.brief.qualityGate.command, { tool: "agentic-quality",
+    args: ["crap", "--run", started.runId, "--output", "artifacts/crap.json"] });
   const requestedWork = [started.brief, implementer.brief, verifier.brief].map(({ mission, quality }) => ({ mission, quality }));
   assert.doesNotMatch(JSON.stringify(requestedWork), /mutation/i);
   const documenter = await submitHandoff({ projectRoot: root, runId: started.runId,

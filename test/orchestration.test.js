@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { initialize } from "../src/init.js";
-import { listOrchestrations, resumeOrchestration, startOrchestration, submitHandoff } from "../src/orchestration.js";
+import { listOrchestrations, resumeOrchestration, startOrchestration,
+  submitHandoff, submitRawHandoff } from "../src/orchestration.js";
+
+const execFileAsync = promisify(execFile);
+const qualityCli = path.resolve(import.meta.dirname, "..", "bin", "agentic-quality.js");
 
 async function createProject(t) {
   const project = await mkdtemp(path.join(tmpdir(), "agentic core light "));
@@ -134,7 +140,7 @@ function implementerHandoff(overrides = {}) {
   };
 }
 
-test("a valid Implementador hand-off creates a fresh read-only Tester", async (t) => {
+test("a valid Implementador hand-off creates a fresh production-read-only Tester", async (t) => {
   const project = await createProject(t);
   await mkdir(path.join(project, "src"));
   await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
@@ -146,7 +152,7 @@ test("a valid Implementador hand-off creates a fresh read-only Tester", async (t
   assert.equal(result.role.name, "Tester");
   assert.equal(result.role.sequence, 2);
   assert.notEqual(result.role.instanceId, started.role.instanceId);
-  assert.deepEqual(result.brief.permissions, { read: true, write: [] });
+  assert.deepEqual(result.brief.permissions, { read: true, write: ["quality_artifacts"] });
   assert.deepEqual(result.brief.previousHandoff, implementerHandoff());
   const requestedWork = { mission: result.brief.mission, quality: result.brief.quality };
   assert.doesNotMatch(JSON.stringify(requestedWork), /mutation/i);
@@ -206,6 +212,158 @@ test("an invalid hand-off gets one fresh-role protocol retry without consuming r
   assert.equal(state.status, "failed");
 });
 
+test("raw native responses use one deterministic protocol retry and never extract inner JSON", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
+  const started = await startOrchestration({
+    projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+  });
+  const tester = await submitRawHandoff({
+    projectRoot: project,
+    runId: started.runId,
+    response: JSON.stringify(implementerHandoff()),
+  });
+  assert.equal(tester.status, "continued");
+  assert.deepEqual(tester.brief.handoffContract.completed, {
+    schemaVersion: 1,
+    status: "completed",
+    summary: "<non-empty text>",
+    payload: {
+      findings: [],
+      criteria: [{ criterion: "The CLI prints the configured greeting", status: "passed", evidence: "<non-empty text>" }],
+      tests: { status: "passed", evidence: "<non-empty text>" },
+      goldenRules: { status: "passed", evidence: "<non-empty text>" },
+      crap: { path: "artifacts/crap.json", sha256: "<64 lowercase hex characters>" },
+    },
+  });
+  assert.deepEqual(tester.brief.qualityGate.command, {
+    tool: "agentic-quality",
+    args: ["crap", "--run", started.runId, "--output", "artifacts/crap.json"],
+  });
+
+  const inner = JSON.stringify({ schemaVersion: 1, status: "completed", summary: "looks valid", payload: {} });
+  const retry = await submitRawHandoff({
+    projectRoot: project, runId: started.runId, response: `Narrative wrapper\n${inner}`,
+  });
+  assert.equal(retry.status, "protocol_retry");
+  assert.equal(retry.role.name, "Tester");
+  assert.match(retry.brief.protocolErrors.join(" "), /only one raw JSON value/i);
+  assert.deepEqual(retry.brief.handoffContract, tester.brief.handoffContract);
+  assert.deepEqual(retry.brief.qualityGate, tester.brief.qualityGate);
+
+  const failed = await submitRawHandoff({
+    projectRoot: project, runId: started.runId, response: `${inner}\n`,
+  });
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.reworkCount, 0);
+});
+
+test("Tester rejects non-string Golden Rules evidence and inline C.R.A.P. shapes", async (t) => {
+  const invalidPayloads = [
+    { goldenRules: { status: "passed", evidence: { note: "reviewed" } } },
+    { crap: [{ path: "artifacts/crap.json", sha256: "0".repeat(64) }] },
+    { crap: { tool: "crap", status: "approved", score: 1 } },
+  ];
+  for (const override of invalidPayloads) {
+    const project = await createProject(t);
+    await mkdir(path.join(project, "src"));
+    await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
+    const started = await startOrchestration({
+      projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+    });
+    await submitHandoff({ projectRoot: project, runId: started.runId, handoff: implementerHandoff() });
+    const payload = {
+      findings: [],
+      criteria: [{ criterion: "The CLI prints the configured greeting", status: "passed", evidence: "observed" }],
+      tests: { status: "passed", evidence: "node --test" },
+      goldenRules: { status: "passed", evidence: "reviewed" },
+      crap: { path: "artifacts/crap.json", sha256: "0".repeat(64) },
+      ...override,
+    };
+    const result = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: {
+      schemaVersion: 1, status: "completed", summary: "invalid specialized hand-off", payload,
+    } });
+    assert.equal(result.status, "protocol_retry");
+  }
+});
+
+test("Tester rejects a missing C.R.A.P. file and a mismatched artifact hash", async (t) => {
+  for (const artifact of ["missing", "wrong_hash"]) {
+    const project = await createProject(t);
+    await mkdir(path.join(project, "src"));
+    await writeFile(path.join(project, "src", "greeting.js"), "export const greeting = 'hello';\n");
+    const started = await startOrchestration({
+      projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+    });
+    await submitHandoff({ projectRoot: project, runId: started.runId, handoff: implementerHandoff() });
+    if (artifact === "wrong_hash") {
+      const artifactDirectory = path.join(project, ".agentic-core", "runs", started.runId, "artifacts");
+      await mkdir(artifactDirectory);
+      await writeFile(path.join(artifactDirectory, "crap.json"), "{}\n");
+    }
+    const result = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: {
+      schemaVersion: 1,
+      status: "completed",
+      summary: "checks passed",
+      payload: {
+        findings: [],
+        criteria: [{ criterion: "The CLI prints the configured greeting", status: "passed", evidence: "observed" }],
+        tests: { status: "passed", evidence: "node --test" },
+        goldenRules: { status: "passed", evidence: "reviewed" },
+        crap: { path: "artifacts/crap.json", sha256: "0".repeat(64) },
+      },
+    } });
+    assert.equal(result.status, "protocol_retry");
+    assert.match(result.brief.protocolErrors.join(" "),
+      artifact === "missing" ? /missing or corrupt/i : /hash does not match/i);
+  }
+});
+
+test("light completes Implementador to Tester with a real C.R.A.P. artifact on the first hand-off", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  await mkdir(path.join(project, "test"));
+  await writeFile(path.join(project, "package.json"), JSON.stringify({ type: "module", scripts: { test: "node --test" } }));
+  await writeFile(path.join(project, "src", "greeting.js"),
+    "export function greeting() { return 'hello'; }\n");
+  await writeFile(path.join(project, "test", "greeting.test.js"), [
+    'import assert from "node:assert/strict";',
+    'import test from "node:test";',
+    'import { greeting } from "../src/greeting.js";',
+    'test("greeting", () => assert.equal(greeting(), "hello"));',
+    "",
+  ].join("\n"));
+  const started = await startOrchestration({
+    projectRoot: project, request: "Orquesta light add greeting", intention: intent(),
+  });
+  const tester = await submitRawHandoff({
+    projectRoot: project, runId: started.runId, response: JSON.stringify(implementerHandoff()),
+  });
+  assert.equal(tester.status, "continued");
+  const gate = await execFileAsync(process.execPath, [qualityCli,
+    "crap", "--run", started.runId, "--output", "artifacts/crap.json"],
+  { cwd: project, encoding: "utf8" });
+  const crap = JSON.parse(gate.stdout);
+  const handoff = {
+    schemaVersion: 1,
+    status: "completed",
+    summary: "All independent checks passed",
+    payload: {
+      findings: [],
+      criteria: [{ criterion: "The CLI prints the configured greeting", status: "passed", evidence: "observed output" }],
+      tests: { status: "passed", evidence: "node --test" },
+      goldenRules: { status: "passed", evidence: "reviewed canonical policy" },
+      crap,
+    },
+  };
+  const result = await submitRawHandoff({
+    projectRoot: project, runId: started.runId, response: JSON.stringify(handoff),
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.reworkCount, 0);
+});
+
 test("Tester completion validates evidence and cleans the successful run", async (t) => {
   const project = await createProject(t);
   await mkdir(path.join(project, "src"));
@@ -260,7 +418,7 @@ test("resume lists choices without auto-selection and returns a divergent run to
   assert.equal(resumed.role.name, "Tester");
   assert.notEqual(resumed.role.instanceId, tester.role.instanceId);
   assert.equal(resumed.reworkCount, 0);
-  assert.deepEqual(resumed.brief.permissions, { read: true, write: [] });
+  assert.deepEqual(resumed.brief.permissions, { read: true, write: ["quality_artifacts"] });
   const listed = await listOrchestrations(project);
   assert.equal(listed.length, 2);
 });

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { hasMaterialBlocker } from "./findings.js";
+import { parseAgentHandoff } from "./host-adapter.js";
 import { preImplementationInventory, qualityInputInventory } from "./quality/inputs.js";
 import { writeTransaction } from "./transaction.js";
 
@@ -30,6 +31,14 @@ const REVIEW_POLICY = {
   scope: "Do not expand criteria, modules, surfaces or neighboring dependencies without evidence that they are directly necessary.",
   advisory: "Future extensibility, unsupported inputs, hypothetical paths, unchanged debt, style, alternatives, unmeasured optimizations and out-of-scope concerns are advisory.",
 };
+const RAW_RESPONSE_CONTRACT = {
+  encoding: "utf8",
+  form: "exactly_one_complete_json_object",
+  wrapperWhitespace: "forbidden",
+  prose: "forbidden",
+  markdown: "forbidden",
+  repair: "forbidden",
+};
 const NORMAL_ROLES = new Set(["Planificador", "Implementador", "Verificador", "Documentador"]);
 const FULL_ROLES = new Set([
   "Explorador", "Planificador", "Implementador", "Refactor", "Tester", "Evaluador", "Documentador",
@@ -54,6 +63,11 @@ function json(value) { return `${JSON.stringify(value, null, 2)}\n`; }
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function hasExactKeys(value, keys) {
+  return plainObject(value)
+    && Object.keys(value).length === keys.length
+    && keys.every((key) => Object.hasOwn(value, key));
 }
 function exactObject(value, keys, location) {
   if (!plainObject(value)) {
@@ -211,6 +225,54 @@ export async function startOrchestration({ projectRoot: projectDirectory, reques
     summary: `${runId}: light -> Implementador`, brief,
   };
 }
+function testerCompletedContract(criteria) {
+  return {
+    rawResponse: RAW_RESPONSE_CONTRACT,
+    completed: {
+      schemaVersion: 1,
+      status: "completed",
+      summary: "<non-empty text>",
+      payload: {
+        findings: [],
+        criteria: criteria.map((criterion) => ({
+          criterion,
+          status: "passed",
+          evidence: "<non-empty text>",
+        })),
+        tests: { status: "passed", evidence: "<non-empty text>" },
+        goldenRules: { status: "passed", evidence: "<non-empty text>" },
+        crap: { path: "artifacts/crap.json", sha256: "<64 lowercase hex characters>" },
+      },
+    },
+  };
+}
+function artifactQualityGate(runId, role, tool, artifactPath) {
+  return {
+    responsibility: role,
+    command: {
+      tool: "agentic-quality",
+      args: [tool, "--run", runId, "--output", artifactPath],
+    },
+    targets: "quality.targets",
+    output: { path: artifactPath, tool },
+    acceptedStatuses: ["approved", "not_applicable"],
+    reference: { path: artifactPath, sha256: "<64 lowercase hex characters>" },
+  };
+}
+function testerQualityGate(runId) {
+  return artifactQualityGate(runId, "Tester", "crap", "artifacts/crap.json");
+}
+function lightPermissions(role) {
+  if (role === "Implementador") return { read: true, write: ["production", "tests"] };
+  if (role === "Tester") return { read: true, write: ["quality_artifacts"] };
+  return { read: true, write: [] };
+}
+function lightTesterContract(runId, intention) {
+  return {
+    handoffContract: testerCompletedContract(intention.criteria),
+    qualityGate: testerQualityGate(runId),
+  };
+}
 function validateCommonHandoffContract(handoff) {
   if (!plainObject(handoff) || !ROLE_HANDOFF_STATUSES.has(handoff.status)) {
     throw new OrchestrationError("handoff_invalid", "hand-off status is not allowed for a role");
@@ -248,7 +310,9 @@ function fullSources(state) {
 }
 function normalPermissions(role) {
   if (role === "Implementador") return { read: true, write: ["production", "tests"] };
-  if (role === "Verificador") return { read: true, write: ["tests_when_production_is_correct"] };
+  if (role === "Verificador") {
+    return { read: true, write: ["tests_when_production_is_correct", "quality_artifacts"] };
+  }
   if (role === "Documentador") return { read: true, write: ["documentation"] };
   return { read: true, write: [] };
 }
@@ -260,6 +324,7 @@ function fullPermissions(role) {
   if (role === "Implementador") return { read: true, write: ["production", "tests"] };
   if (role === "Tester") return { read: true, write: ["tests_when_production_is_correct"] };
   if (role === "Documentador") return { read: true, write: ["documentation"] };
+  if (["Refactor", "Evaluador"].includes(role)) return { read: true, write: ["quality_artifacts"] };
   return { read: true, write: [] };
 }
 function fullRole(sequence, name) {
@@ -603,6 +668,7 @@ async function submitNormalImplementer(projectRoot, runRoot, state, runId, hando
   const brief = buildNormalBrief(state, runId, role,
     "Verify every criterion, run tests, review Golden Rules and structure, and run differential C.R.A.P.; production is read-only.",
     plan, handoff, { quality: { targets: [...handoff.payload.qualityTargets], baseline },
+      qualityGate: artifactQualityGate(runId, "Verificador", "crap", "artifacts/crap.json"),
       baselineReport: qualityBaselineReport ?? { status: "not_attributable" },
       contradictionPolicy: "Edit tests only when production is correct; never silently change a contradictory test." });
   return persistNormalRole(projectRoot, runRoot, state, role, brief, [
@@ -831,6 +897,7 @@ async function submitFullImplementer(projectRoot, runRoot, state, runId, handoff
     "Review structure, Golden Rules and differential C.R.A.P. over production as read-only; report only material localized blockers.",
     currentPlan, handoff, {
       quality: { targets: [...handoff.payload.qualityTargets], baseline },
+      qualityGate: artifactQualityGate(runId, "Refactor", "crap", "artifacts/crap.json"),
       baselineReport: qualityBaselineReport ?? { status: "not_attributable" },
     });
   return persistFullRole(projectRoot, runRoot, state, role, brief, [
@@ -943,6 +1010,7 @@ async function submitFullTester(projectRoot, runRoot, state, runId, handoff) {
         },
         baseline,
       },
+      qualityGate: artifactQualityGate(runId, "Evaluador", "mutate", "artifacts/mutation.json"),
     });
   return persistFullRole(projectRoot, runRoot, state, role, brief, [
     { role: "Tester", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
@@ -1122,7 +1190,8 @@ async function advanceHandoff({ projectRoot: projectDirectory, runId, handoff })
     quality: { targets: [...handoff.payload.qualityTargets], baseline,
       baselineReport: qualityBaselineReport ?? { status: "not_attributable" } },
     reviewPolicy: REVIEW_POLICY,
-    configuration: state.configurationSnapshot, permissions: { read: true, write: [] },
+    ...lightTesterContract(runId, intention),
+    configuration: state.configurationSnapshot, permissions: lightPermissions("Tester"),
   };
   const briefContent = Buffer.from(json(brief));
   if (briefContent.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
@@ -1246,8 +1315,14 @@ async function retryInvalidNormalHandoff(projectRoot, runRoot, state, runId, err
   }
   const plan = state.planHash ? await normalPlan(runRoot) : null;
   const role = normalRole(state.currentRole.sequence + 1, state.currentRole.name);
+  const previousBrief = await currentBrief(runRoot, state.currentRole.sequence);
   const brief = buildNormalBrief(state, runId, role, "Return a valid hand-off for the same normal-mode role.",
     plan, null, { protocolErrors,
+      ...(previousBrief.qualityGate ? {
+        qualityGate: previousBrief.qualityGate,
+        quality: previousBrief.quality,
+        baselineReport: previousBrief.baselineReport,
+      } : {}),
       skills: role.name === "Implementador" && state.changesExecutableBehavior ? ["agentic-tdd"] : [] });
   const result = await persistNormalRole(projectRoot, runRoot, state, role, brief, [
     { role: state.currentRole.name, status: "protocol_retry", summary: protocolErrors.join("; "),
@@ -1270,8 +1345,14 @@ async function retryInvalidFullHandoff(projectRoot, runRoot, state, runId, error
   }
   const currentPlan = state.planHash ? await normalPlan(runRoot) : null;
   const role = fullRole(state.currentRole.sequence + 1, state.currentRole.name);
+  const previousBrief = await currentBrief(runRoot, state.currentRole.sequence);
   const brief = buildFullBrief(state, runId, role,
-    "Return a valid hand-off for the same isolated full-mode role.", currentPlan, null, { protocolErrors });
+    "Return a valid hand-off for the same isolated full-mode role.", currentPlan, null, { protocolErrors,
+      ...(previousBrief.qualityGate ? {
+        qualityGate: previousBrief.qualityGate,
+        quality: previousBrief.quality,
+        baselineReport: previousBrief.baselineReport,
+      } : {}) });
   const result = await persistFullRole(projectRoot, runRoot, state, role, brief, [{
     role: state.currentRole.name, status: "protocol_retry", summary: protocolErrors.join("; "),
     at: new Date().toISOString(),
@@ -1293,10 +1374,14 @@ async function retryInvalidHandoff(projectRoot, runId, error) {
   }
   const role = { sequence: state.currentRole.sequence + 1, name: state.currentRole.name, instanceId: randomUUID() };
   const previousBrief = await currentBrief(runRoot, state.currentRole.sequence);
+  const intention = role.name === "Tester"
+    ? JSON.parse(await readFile(path.join(runRoot, "intention.json"), "utf8"))
+    : null;
   const brief = { schemaVersion: 1, runId, mode: "light", role,
     mission: "Return a valid hand-off for the same role.", contract: LIGHT_CONTRACT, protocolErrors,
     configuration: state.configurationSnapshot, skills: role.name === "Implementador" ? previousBrief.skills ?? [] : [],
-    permissions: { read: true, write: role.name === "Implementador" ? ["production", "tests"] : [] } };
+    ...(role.name === "Tester" ? lightTesterContract(runId, intention) : {}),
+    permissions: lightPermissions(role.name) };
   const content = Buffer.from(json(brief));
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
     throw new OrchestrationError("context_budget_exceeded",
@@ -1322,6 +1407,17 @@ export async function submitHandoff(options) {
     if (error?.code !== "handoff_invalid") throw error;
     return retryInvalidHandoff(projectRoot, options.runId, error);
   }
+}
+
+export async function submitRawHandoff({ projectRoot, runId, response }) {
+  let handoff;
+  try {
+    handoff = parseAgentHandoff(response);
+  } catch (error) {
+    return retryInvalidHandoff(path.resolve(projectRoot), runId,
+      new OrchestrationError("handoff_invalid", error.message));
+  }
+  return submitHandoff({ projectRoot, runId, handoff });
 }
 
 const MODE_ESCALATIONS = new Set(["light:normal", "light:full", "normal:full"]);
@@ -1393,27 +1489,34 @@ export async function approveModeChange({
 
 async function completedTesterHandoff(projectRoot, runRoot, state, runId, handoff) {
   const errors = [];
-  if (!plainObject(handoff) || handoff.schemaVersion !== 1 || !requiredText(handoff.summary)
-    || !plainObject(handoff.payload)) errors.push("completed Tester hand-off has an invalid shape");
+  if (!hasExactKeys(handoff, ["schemaVersion", "status", "summary", "payload"])
+    || handoff.schemaVersion !== 1 || handoff.status !== "completed" || !requiredText(handoff.summary)
+    || !hasExactKeys(handoff.payload, ["findings", "criteria", "tests", "goldenRules", "crap"])) {
+    errors.push("completed Tester hand-off has an invalid closed shape");
+  }
   const findings = handoff.payload?.findings;
   if (!Array.isArray(findings)) errors.push("payload.findings must be an array");
-  else if (findings.some((finding) => finding?.impact === "blocking")) errors.push("completed prohibits blocking findings");
+  else if (findings.length > 0) errors.push("completed Tester findings must be empty");
   const intention = JSON.parse(await readFile(path.join(runRoot, "intention.json"), "utf8"));
   const criteria = handoff.payload?.criteria;
-  if (!Array.isArray(criteria) || intention.criteria.some((expected) => !criteria.some((item) =>
-    item?.criterion === expected && item.status === "passed" && requiredText(item.evidence)))) {
-    errors.push("every acceptance criterion requires independent passed evidence");
+  if (!Array.isArray(criteria) || criteria.length !== intention.criteria.length
+    || criteria.some((item, index) => !hasExactKeys(item, ["criterion", "status", "evidence"])
+      || item.criterion !== intention.criteria[index] || item.status !== "passed" || !requiredText(item.evidence))) {
+    errors.push("criteria must preserve every exact original criterion with passed string evidence");
   }
-  if (handoff.payload?.tests?.status !== "passed" || !requiredText(handoff.payload?.tests?.evidence)) {
+  if (!hasExactKeys(handoff.payload?.tests, ["status", "evidence"])
+    || handoff.payload.tests.status !== "passed" || !requiredText(handoff.payload.tests.evidence)) {
     errors.push("tests require passed evidence");
   }
-  if (handoff.payload?.goldenRules?.status !== "passed" || !requiredText(handoff.payload?.goldenRules?.evidence)) {
-    errors.push("Golden Rules require passed evidence");
+  if (!hasExactKeys(handoff.payload?.goldenRules, ["status", "evidence"])
+    || handoff.payload.goldenRules.status !== "passed" || !requiredText(handoff.payload.goldenRules.evidence)) {
+    errors.push("Golden Rules require passed plain-string evidence");
   }
   const reference = handoff.payload?.crap;
   let report;
-  if (!plainObject(reference) || !requiredText(reference.path) || !/^[a-f0-9]{64}$/.test(reference.sha256 ?? "")) {
-    errors.push("C.R.A.P. requires an artifact path and SHA-256");
+  if (!hasExactKeys(reference, ["path", "sha256"]) || reference.path !== "artifacts/crap.json"
+    || !/^[a-f0-9]{64}$/.test(reference.sha256 ?? "")) {
+    errors.push("C.R.A.P. requires only the artifacts/crap.json path and SHA-256 reference");
   } else {
     const artifactPath = path.resolve(runRoot, ...reference.path.split("/"));
     const relative = path.relative(runRoot, artifactPath).split(path.sep).join("/");
@@ -1430,7 +1533,7 @@ async function completedTesterHandoff(projectRoot, runRoot, state, runId, handof
     crapThreshold: state.configurationSnapshot.quality.crapThreshold,
   }));
   if (report && (report.$schema !== "https://kroxidev.dev/agentic-core/quality-report.schema.json"
-    || report.schemaVersion !== 1 || !["crap", "scan"].includes(report.tool)
+    || report.schemaVersion !== 1 || report.tool !== "crap"
     || !["approved", "not_applicable"].includes(report.status)
     || JSON.stringify(report.hashes?.inputs) !== JSON.stringify(state.baseline?.hashes)
     || report.hashes?.configuration !== expectedConfigurationHash)) {
@@ -1557,8 +1660,8 @@ async function resumeDivergedTester(projectRoot, runRoot, state, runId, baseline
   const brief = { schemaVersion: 1, runId, mode: "light", role,
     mission: "Re-run independent validation because quality inputs diverged.", contract: LIGHT_CONTRACT,
     intention, previousHandoff: state.lastHandoff, divergence: { previous: state.baseline.hashes, current: baseline.hashes },
-    reviewPolicy: REVIEW_POLICY,
-    configuration: state.configurationSnapshot, permissions: { read: true, write: [] } };
+    reviewPolicy: REVIEW_POLICY, ...lightTesterContract(runId, intention),
+    configuration: state.configurationSnapshot, permissions: lightPermissions("Tester") };
   const content = Buffer.from(json(brief));
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
     throw new OrchestrationError("context_budget_exceeded", "Divergence brief exceeds configured limit");
@@ -1636,11 +1739,15 @@ async function handleControlHandoff(projectRoot, runRoot, state, runId, handoff)
   validateControlHandoff(handoff, state.configurationSnapshot.orchestration.handoffMaxBytes);
   const role = { sequence: state.currentRole.sequence + 1, name: state.currentRole.name, instanceId: randomUUID() };
   const previousBrief = await currentBrief(runRoot, state.currentRole.sequence);
+  const testerContract = role.name === "Tester"
+    ? lightTesterContract(runId, JSON.parse(await readFile(path.join(runRoot, "intention.json"), "utf8")))
+    : {};
   const brief = { schemaVersion: 1, runId, mode: "light", role,
     mission: "Continue the same responsibility after the control event is resolved.",
     contract: LIGHT_CONTRACT, previousHandoff: structuredClone(handoff),
     configuration: state.configurationSnapshot, skills: role.name === "Implementador" ? previousBrief.skills ?? [] : [],
-    permissions: { read: true, write: role.name === "Implementador" ? ["production", "tests"] : [] } };
+    ...testerContract,
+    permissions: lightPermissions(role.name) };
   const content = Buffer.from(json(brief));
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
     throw new OrchestrationError("context_budget_exceeded", "Control-event brief exceeds configured limit");

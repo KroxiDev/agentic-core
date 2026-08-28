@@ -1,12 +1,15 @@
-import { getVersion } from "./version.js";
+import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { initialize, uninstallInstallation, updateInstallation } from "./init.js";
+import { submitRawHandoff } from "./orchestration.js";
+import { getVersion } from "./version.js";
 
 const HELP = `Usage:
   agentic-core init [directory] [--yes] [--replace-conflicts]
   agentic-core update [directory] [--force]
   agentic-core uninstall [directory] [--dry-run] [--force]
   agentic-core doctor [directory]
+  agentic-core submit-handoff --run <id> [--input <path>]
   agentic-core --version
   agentic-core --help`;
 
@@ -96,6 +99,28 @@ export async function runMaintenanceCli(args, io = process) {
     }
   }
 
+  if (args[0] === "submit-handoff") {
+    const runIndex = args.indexOf("--run");
+    const inputIndex = args.indexOf("--input");
+    const expectedLength = inputIndex === -1 ? 3 : 5;
+    if (runIndex !== 1 || !args[2] || args.length !== expectedLength
+      || (inputIndex !== -1 && (inputIndex !== 3 || !args[4]))) {
+      io.stderr.write("Usage: agentic-core submit-handoff --run <id> [--input <path>]\n");
+      return 2;
+    }
+    const response = inputIndex === -1 ? await readAll(io.stdin) : await readFile(args[4], "utf8");
+    const result = await submitRawHandoff({ projectRoot: process.cwd(), runId: args[2], response });
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return result.status === "failed" ? 1 : 0;
+  }
+
   io.stderr.write(`Unknown command: ${args[0]}\n`);
   return 2;
+}
+
+async function readAll(stream) {
+  let content = "";
+  stream.setEncoding?.("utf8");
+  for await (const chunk of stream) content += chunk;
+  return content;
 }

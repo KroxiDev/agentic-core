@@ -23,16 +23,17 @@ test("both host adapters select the least-privilege profile for every runtime ro
   }
 });
 
-test("Refactor is bound to a native read-only profile in both hosts", async () => {
+test("Refactor remains bound to agentic-read with only the quality artifact exception", async () => {
   const repositoryRoot = path.resolve(import.meta.dirname, "..");
   const codex = await readFile(path.join(repositoryRoot, "adapters", "codex", "agents", "agentic-read.toml"), "utf8");
   const claude = await readFile(path.join(repositoryRoot, "adapters", "claude", "agents", "agentic-read.md"), "utf8");
   for (const host of ["codex", "claude"]) assert.equal(profileForRole(host, "Refactor"), "agentic-read");
   assert.match(codex, /refactor/i);
-  assert.match(codex, /sandbox_mode = "read-only"/);
+  assert.match(codex, /quality_artifacts/);
+  assert.match(codex, /Do not edit production/i);
   assert.match(claude, /refactor/i);
-  assert.match(claude, /permissionMode: plan/);
-  assert.doesNotMatch(claude, /tools:.*(?:Edit|Write|Bash)/i);
+  assert.match(claude, /quality_artifacts/);
+  assert.doesNotMatch(claude, /tools:.*(?:Edit|Write)(?:,|$)/i);
 });
 
 test("the host-provided invoker receives exactly the complete brief JSON with or without TDD", async () => {
@@ -63,6 +64,8 @@ test("the host-provided invoker receives exactly the complete brief JSON with or
 test("agent responses are parsed only as a raw final hand-off JSON object", () => {
   const handoff = { schemaVersion: 1, status: "completed", summary: "done", payload: {} };
   assert.deepEqual(parseAgentHandoff(JSON.stringify(handoff)), handoff);
+  assert.throws(() => parseAgentHandoff(` ${JSON.stringify(handoff)}`), /wrapper whitespace/i);
+  assert.throws(() => parseAgentHandoff(`${JSON.stringify(handoff)}\n`), /wrapper whitespace/i);
   assert.throws(() => parseAgentHandoff(`Result:\n${JSON.stringify(handoff)}`), /raw JSON/i);
   assert.throws(() => parseAgentHandoff(`\`\`\`json\n${JSON.stringify(handoff)}\n\`\`\``), /raw JSON/i);
   assert.throws(() => parseAgentHandoff(`${JSON.stringify(handoff)}\n${JSON.stringify(handoff)}`), /raw JSON/i);
@@ -115,7 +118,9 @@ test("conditional and unknown skills cannot be loaded outside their contract", a
 test("brief write permissions incompatible with read, test, or documentation roles are rejected", async () => {
   const cases = [
     ["codex", "Planificador", "production"],
+    ["codex", "Planificador", "quality_artifacts"],
     ["claude", "Refactor", "tests"],
+    ["claude", "Implementador", "quality_artifacts"],
     ["codex", "Tester", "production"],
     ["claude", "Verificador", "production"],
     ["codex", "Documentador", "production"],
@@ -143,11 +148,11 @@ test("the adapter accepts only the documented write responsibility for every rol
   const cases = [
     ["Explorador", []],
     ["Planificador", []],
-    ["Evaluador", []],
-    ["Refactor", []],
+    ["Evaluador", ["quality_artifacts"]],
+    ["Refactor", ["quality_artifacts"]],
     ["Implementador", ["production", "tests", "documentation"]],
-    ["Tester", ["tests_when_production_is_correct"]],
-    ["Verificador", ["tests_when_production_is_correct"]],
+    ["Tester", ["tests_when_production_is_correct", "quality_artifacts"]],
+    ["Verificador", ["tests_when_production_is_correct", "quality_artifacts"]],
     ["Documentador", ["documentation"]],
   ];
   for (const [role, write] of cases) {
@@ -163,7 +168,7 @@ test("the adapter accepts only the documented write responsibility for every rol
 test("native host profiles expose four distinct least-privilege capabilities", async () => {
   const repositoryRoot = path.resolve(import.meta.dirname, "..");
   const expectations = {
-    read: { codex: 'sandbox_mode = "read-only"', claude: "tools: Read, Grep, Glob" },
+    read: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Bash, Skill" },
     production: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write, Bash" },
     tests: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write, Bash" },
     docs: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write" },
@@ -187,7 +192,7 @@ test("native host profiles expose four distinct least-privilege capabilities", a
 test("native profile files use only officially supported host fields and tool names", async () => {
   const repositoryRoot = path.resolve(import.meta.dirname, "..");
   const toolsByProfile = {
-    read: ["Read", "Grep", "Glob", "Skill"],
+    read: ["Read", "Grep", "Glob", "Bash", "Skill"],
     production: ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "Skill"],
     tests: ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
     docs: ["Read", "Grep", "Glob", "Edit", "Write"],
@@ -206,7 +211,7 @@ test("native profile files use only officially supported host fields and tool na
     assert.deepEqual(claudeFields, ["name", "description", "tools", "permissionMode"]);
     const tools = frontmatter.match(/^tools:\s*(.*)$/m)?.[1].split(",").map((tool) => tool.trim());
     assert.deepEqual(tools, expectedTools);
-    assert.match(frontmatter, new RegExp(`^permissionMode: ${profile === "read" ? "plan" : "acceptEdits"}$`, "m"));
+    assert.match(frontmatter, /^permissionMode: acceptEdits$/m);
   }
 });
 
@@ -230,7 +235,8 @@ test("orquestar is canonical and Claude discovery files are minimal shims", asyn
   assert.match(canonical, /\^\(Orquesta\|\\\/orquestar\|\\\$orquestar\)/);
   assert.match(canonical, /role supplied by the runtime/i);
   assert.match(canonical, /JSON\.stringify\(brief\).*exactly.*without.*prefix/is);
-  assert.match(canonical, /only.*final response.*one raw JSON object/is);
+  assert.match(canonical, /exact complete final response.*public seam/is);
+  assert.match(canonical, /Never parse.*extract.*trim.*repair/is);
   assert.match(canonical, /agentic-tdd.*Implementador/is);
   assert.match(canonical, /agentic-grilling.*Planificador/is);
   assert.match(canonical, /ask.*only.*objective.*verifiable.*criteria/is);

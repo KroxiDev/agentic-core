@@ -12,17 +12,17 @@ const PROFILE_BY_ROLE = new Map([
 const WRITE_SCOPES_BY_ROLE = new Map([
   ["Explorador", new Set()],
   ["Planificador", new Set()],
-  ["Evaluador", new Set()],
-  ["Refactor", new Set()],
+  ["Evaluador", new Set(["quality_artifacts"])],
+  ["Refactor", new Set(["quality_artifacts"])],
   ["Implementador", new Set(["production", "tests", "documentation"])],
-  ["Tester", new Set(["tests", "tests_when_production_is_correct"])],
-  ["Verificador", new Set(["tests", "tests_when_production_is_correct"])],
+  ["Tester", new Set(["tests", "tests_when_production_is_correct", "quality_artifacts"])],
+  ["Verificador", new Set(["tests", "tests_when_production_is_correct", "quality_artifacts"])],
   ["Documentador", new Set(["documentation"])],
 ]);
 const WRITE_SCOPES_BY_PROFILE = new Map([
-  ["agentic-read", new Set()],
+  ["agentic-read", new Set(["quality_artifacts"])],
   ["agentic-production", new Set(["production", "tests", "documentation"])],
-  ["agentic-tests", new Set(["tests", "tests_when_production_is_correct"])],
+  ["agentic-tests", new Set(["tests", "tests_when_production_is_correct", "quality_artifacts"])],
   ["agentic-docs", new Set(["documentation"])],
 ]);
 
@@ -86,9 +86,12 @@ function validatePermissions(role, profile, permissions) {
 
 export function parseAgentHandoff(response) {
   if (typeof response !== "string") throw new Error("Agent hand-off must be raw JSON text");
+  if (response.trim() !== response) {
+    throw new Error("Agent hand-off must not contain wrapper whitespace");
+  }
   let handoff;
   try {
-    handoff = JSON.parse(response.trim());
+    handoff = JSON.parse(response);
   } catch {
     throw new Error("Agent hand-off must contain only one raw JSON value");
   }

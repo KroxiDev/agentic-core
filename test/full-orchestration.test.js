@@ -330,8 +330,10 @@ test("Implementador creates a production-read-only Refactor without Mutation Tes
   });
 
   assert.equal(refactor.role.name, "Refactor");
-  assert.deepEqual(refactor.brief.permissions, { read: true, write: [] });
+  assert.deepEqual(refactor.brief.permissions, { read: true, write: ["quality_artifacts"] });
   assert.deepEqual(refactor.brief.quality.targets, ["src/greeting.js"]);
+  assert.deepEqual(refactor.brief.qualityGate.command, { tool: "agentic-quality",
+    args: ["crap", "--run", started.runId, "--output", "artifacts/crap.json"] });
   assert.doesNotMatch(JSON.stringify({
     mission: refactor.brief.mission,
     quality: refactor.brief.quality,
@@ -378,9 +380,11 @@ test("Tester creates an Evaluador that compares original authority and exclusive
   });
 
   assert.equal(evaluator.role.name, "Evaluador");
-  assert.deepEqual(evaluator.brief.permissions, { read: true, write: [] });
+  assert.deepEqual(evaluator.brief.permissions, { read: true, write: ["quality_artifacts"] });
   assert.ok(evaluator.brief.sources.some((source) => source.kind === "original_request"));
   assert.equal(evaluator.brief.quality.mutation.required, true);
+  assert.deepEqual(evaluator.brief.qualityGate.command, { tool: "agentic-quality",
+    args: ["mutate", "--run", started.runId, "--output", "artifacts/mutation.json"] });
   assert.deepEqual(evaluator.brief.quality.crap, { repeat: false, report: crap });
 });
 

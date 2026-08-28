@@ -1,14 +1,16 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { analyzeQuality } from "./quality/crap.js";
 import { analyzeMutation } from "./quality/mutation.js";
 import { getVersion } from "./version.js";
+import { writeTransaction } from "./transaction.js";
 
 const HELP = `Usage:
-  agentic-quality scan (--run <id> | --target <path>)
-  agentic-quality crap (--run <id> | --target <path>)
-  agentic-quality mutate (--run <id> | --target <path>)
-  agentic-quality mutation (--run <id> | --target <path>)  alias for mutate
+  agentic-quality scan (--run <id> | --target <path>) [--output artifacts/<file>.json]
+  agentic-quality crap (--run <id> | --target <path>) [--output artifacts/<file>.json]
+  agentic-quality mutate (--run <id> | --target <path>) [--output artifacts/<file>.json]
+  agentic-quality mutation (--run <id> | --target <path>) [--output artifacts/<file>.json]  alias for mutate
   agentic-quality --version
   agentic-quality --help
 
@@ -24,10 +26,25 @@ const EXIT = { approved: 0, not_applicable: 0, failed: 1, unsupported_environmen
   baseline_failed: 3, restoration_failure: 5 };
 
 function parseSource(args) {
-  if (args.length !== 2 || !["--run", "--target"].includes(args[0]) || !args[1] || args[1].startsWith("-")) {
+  if (args.length < 2 || !["--run", "--target"].includes(args[0]) || !args[1] || args[1].startsWith("-")) {
     throw new Error("Exactly one source is required: --run <id> or --target <path>");
   }
-  return { kind: args[0].slice(2), value: args[1] };
+  const remaining = args.slice(2);
+  if (remaining.length === 0) return { kind: args[0].slice(2), value: args[1] };
+  if (remaining.length !== 2 || remaining[0] !== "--output" || !remaining[1]) {
+    throw new Error("Output must be declared once as --output artifacts/<file>.json");
+  }
+  return { kind: args[0].slice(2), value: args[1], output: remaining[1] };
+}
+function artifactOutput(projectRoot, source) {
+  if (source.output === undefined) return undefined;
+  if (source.kind !== "run") throw new Error("--output requires --run <id>");
+  const logicalPath = source.output.split("\\").join("/");
+  if (!/^artifacts\/[a-zA-Z0-9][a-zA-Z0-9._-]*\.json$/.test(logicalPath)) {
+    throw new Error("Output must be a JSON file directly under the run artifacts directory");
+  }
+  const runRoot = path.join(projectRoot, ".agentic-core", "runs", source.value);
+  return { logicalPath, absolutePath: path.join(runRoot, ...logicalPath.split("/")) };
 }
 function targetsFromState(state) {
   const raw = state.quality?.targets ?? state.qualityTargets ?? state.targets ?? state.plan?.qualityTargets;
@@ -81,11 +98,21 @@ export async function runQualityCli(args, io = process) {
   }
   try {
     const source = parseSource(args.slice(1));
+    const output = artifactOutput(process.cwd(), source);
     const resolved = await resolveSource(process.cwd(), source);
     const report = command === "mutate"
       ? await analyzeMutation({ projectRoot: process.cwd(), ...resolved })
       : await analyzeQuality({ projectRoot: process.cwd(), ...resolved, tool: command });
-    io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    if (output) {
+      const content = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+      await writeTransaction(process.cwd(), [{ path: output.absolutePath, content }]);
+      io.stdout.write(`${JSON.stringify({
+        path: output.logicalPath,
+        sha256: createHash("sha256").update(content).digest("hex"),
+      })}\n`);
+    } else {
+      io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    }
     return EXIT[report.status] ?? 5;
   } catch (error) {
     if (error?.code === "ENOENT" || error instanceof SyntaxError || /required|must|not found|does not declare|resolved no/i.test(error.message)) {
