@@ -151,7 +151,13 @@ test("a valid Implementador hand-off creates a fresh read-only Tester", async (t
 
 function testerChangesRequired(summary = "Greeting lacks the required assertion") {
   return { schemaVersion: 1, status: "changes_required", summary, payload: { findings: [{
-    impact: "blocking", category: "tests", evidence: "test/greeting.test.js does not assert configured output",
+    impact: "blocking",
+    category: "tests",
+    authority: { criterionIds: ["The CLI prints the configured greeting"] },
+    scope: "changed",
+    evidence: { kind: "reproduction", detail: "node --test misses the configured output assertion" },
+    materialImpact: "The required greeting can regress without a failing test.",
+    minimalFix: "Add the missing assertion to the changed greeting test.",
   }] } };
 }
 
@@ -306,9 +312,94 @@ test("a role can terminate as failed or blocked without consuming rework", async
     });
     const result = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: {
       schemaVersion: 1, status, summary: `Role ended as ${status}`,
-      payload: { findings: [{ impact: "blocking", category: "required_validation", evidence: "tool unavailable" }] },
+      payload: { findings: [{
+        impact: "blocking", category: "required_validation",
+        authority: { requiredGate: "required validation" },
+        scope: "changed",
+        evidence: { kind: "reproduction", detail: "required tool is unavailable" },
+        materialImpact: "The required validation cannot be completed.",
+        minimalFix: "Restore the required tool and rerun the validation.",
+      }] },
     } });
     assert.equal(result.status, status);
     assert.equal(result.reworkCount, 0);
   }
+});
+
+test("an incomplete blocker is rejected without consuming rework", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  await writeFile(
+    path.join(project, "src", "greeting.js"),
+    "export const greeting = 'hello';\n",
+  );
+  const started = await startOrchestration({
+    projectRoot: project,
+    request: "Orquesta light add greeting",
+    intention: intent(),
+  });
+  await submitHandoff({
+    projectRoot: project,
+    runId: started.runId,
+    handoff: implementerHandoff(),
+  });
+  const result = await submitHandoff({
+    projectRoot: project,
+    runId: started.runId,
+    handoff: {
+      schemaVersion: 1,
+      status: "changes_required",
+      summary: "Hypothetical concern",
+      payload: {
+        findings: [{
+          impact: "blocking",
+          category: "tests",
+          evidence: "Maybe an unsupported input exists.",
+        }],
+      },
+    },
+  });
+  assert.equal(result.status, "protocol_retry");
+  assert.equal(result.reworkCount, 0);
+});
+
+test("a baseline captured after production changed is rejected", async (t) => {
+  const project = await createProject(t);
+  await mkdir(path.join(project, "src"));
+  const sourcePath = path.join(project, "src", "greeting.js");
+  await writeFile(sourcePath, "export const greeting = 'before';\n");
+  const started = await startOrchestration({
+    projectRoot: project,
+    request: "Orquesta light change greeting",
+    intention: intent(),
+  });
+  const changed = "export const greeting = 'after';\n";
+  await writeFile(sourcePath, changed);
+  const handoff = implementerHandoff();
+  handoff.payload.qualityBaselineReport = {
+    $schema:
+      "https://kroxidev.dev/agentic-core/quality-report.schema.json",
+    schemaVersion: 1,
+    tool: "crap",
+    status: "approved",
+    hashes: {
+      inputs: {
+        "src/greeting.js": createHash("sha256")
+          .update(changed)
+          .digest("hex"),
+      },
+    },
+    details: [],
+  };
+  const result = await submitHandoff({
+    projectRoot: project,
+    runId: started.runId,
+    handoff,
+  });
+  assert.equal(result.status, "protocol_retry");
+  assert.equal(result.reworkCount, 0);
+  assert.match(
+    result.brief.protocolErrors.join(" "),
+    /not captured before implementation/,
+  );
 });

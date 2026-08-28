@@ -53,7 +53,15 @@ function implementerHandoff() {
 }
 function changesRequired(summary, category = "tests", extra = {}) {
   return { schemaVersion: 1, status: "changes_required", summary, payload: {
-    findings: [{ impact: "blocking", category, evidence: `${category} blocker with a concrete location` }], ...extra,
+    findings: [{
+      impact: "blocking",
+      category,
+      authority: { criterionIds: ["C1"] },
+      scope: "changed",
+      evidence: { kind: "static_proof", detail: `${category} blocker`, location: "src/greeting.js:1" },
+      materialImpact: "The changed greeting violates an accepted criterion.",
+      minimalFix: "Correct the localized greeting implementation.",
+    }], ...extra,
   } };
 }
 async function writeGateReports(project, runId) {

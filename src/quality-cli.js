@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { analyzeQuality } from "./quality/engine.js";
+import { analyzeQuality } from "./quality/crap.js";
 import { analyzeMutation } from "./quality/mutation.js";
 import { getVersion } from "./version.js";
 
@@ -44,7 +44,8 @@ function targetsFromState(state) {
     if (names.length > 0) selection.set(file.split(path.sep).join("/"), new Set(names));
   }
   if (targets.length === 0) throw new Error("Run state does not declare quality targets");
-  return { targets, selection, equivalents };
+  const baseline = state.quality?.baselineReport ?? state.qualityBaselineReport;
+  return { targets, selection, equivalents, baseline };
 }
 async function resolveSource(projectRoot, source) {
   if (source.kind === "target") {
@@ -87,7 +88,7 @@ export async function runQualityCli(args, io = process) {
     io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return EXIT[report.status] ?? 5;
   } catch (error) {
-    if (error?.code === "ENOENT" || error instanceof SyntaxError || /required|must|not found|does not declare/i.test(error.message)) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError || /required|must|not found|does not declare|resolved no/i.test(error.message)) {
       io.stderr.write(`${error.message}\n`);
       return 4;
     }

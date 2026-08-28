@@ -23,6 +23,34 @@ function symbolName(node, sourceFile) {
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
   return `<anonymous@${line + 1}:${character + 1}>`;
 }
+function declarationKind(node) {
+  if (ts.isConstructorDeclaration(node)) return "constructor";
+  if (ts.isGetAccessorDeclaration(node)) return "getter";
+  if (ts.isSetAccessorDeclaration(node)) return "setter";
+  if (ts.isMethodDeclaration(node)) return "method";
+  if (ts.isArrowFunction(node)) return "arrow_function";
+  if (ts.isFunctionExpression(node)) return "function_expression";
+  return "function";
+}
+function declaredContainer(node, sourceFile) {
+  const names = [];
+  for (let current = node.parent; current; current = current.parent) {
+    if ((ts.isClassDeclaration(current) || ts.isClassExpression(current) || ts.isModuleDeclaration(current))
+      && current.name) names.unshift(current.name.getText(sourceFile));
+    else if (FUNCTION_KINDS.has(current.kind)) names.unshift(symbolName(current, sourceFile));
+  }
+  return names.join(".") || "<module>";
+}
+function signatureDisambiguator(node, sourceFile) {
+  const parameters = node.parameters?.map((parameter) => ({
+    name: parameter.name.getText(sourceFile),
+    type: parameter.type?.getText(sourceFile) ?? null,
+    optional: Boolean(parameter.questionToken || parameter.initializer),
+    rest: Boolean(parameter.dotDotDotToken),
+  })) ?? [];
+  return JSON.stringify({ parameters, typeParameters: node.typeParameters?.length ?? 0,
+    async: Boolean(ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async), generator: Boolean(node.asteriskToken) });
+}
 function isNestedFunction(node, root) { return node !== root && FUNCTION_KINDS.has(node.kind); }
 function complexityOf(root) {
   let complexity = 1;
@@ -88,7 +116,11 @@ export function analyzeSource(filePath, source) {
     if (FUNCTION_KINDS.has(node.kind) && node.body) {
       const start = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
       const end = sourceFile.getLineAndCharacterOfPosition(node.end);
-      symbols.push({ name: symbolName(node, sourceFile), startLine: start.line + 1, endLine: end.line + 1,
+      const name = symbolName(node, sourceFile);
+      const container = declaredContainer(node, sourceFile);
+      symbols.push({ name, qualifiedName: container === "<module>" ? name : `${container}.${name}`, container,
+        declarationKind: declarationKind(node), disambiguator: signatureDisambiguator(node, sourceFile),
+        startLine: start.line + 1, endLine: end.line + 1,
         complexity: complexityOf(node), executableLines: executableLinesOf(node, sourceFile), ast: astFingerprint(node, sourceFile) });
     }
     ts.forEachChild(node, visit);

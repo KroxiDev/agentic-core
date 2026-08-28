@@ -304,6 +304,16 @@ Las Golden Rules proporcionadas ser谩n la 煤nica pol铆tica can贸nica del product
 - Distribuir adapters simulados que no creen agentes reales.
 - Permitir que `doctor` repare archivos ajenos o retire otra capa.
 
+## Correcci T08.1: materialidad y calidad diferencial
+
+- Un finding bloqueante requiere autoridad concreta, alcance cambiado o dependencia directa, evidencia reproducible o prueba est爐ica localizada, impacto material y correcci mima dentro del alcance. Si falta una condici, se trata como advisory y no consume retrabajo.
+- Extensibilidad futura, inputs no soportados, escenarios hipot倀icos sin ruta demostrada, deuda preexistente no empeorada, estilo, dises alternativos, optimizaciones no medidas y asuntos fuera del alcance son siempre advisory.
+- C.R.A.P. usa el baseline inmutable anterior a la implementaci: sbolos nuevos y existentes con baseline no mayor que siete deben quedar en siete o menos; deuda heredada mayor que siete no puede empeorar.
+- Un baseline no atribuible produce una advertencia no bloqueante y nunca un cero inventado. La auditor independiente por `--target` conserva la comparaci absoluta configurada.
+- La identidad estable combina archivo lico, nombre cualificado, contenedor, tipo de declaraci y desambiguador determinista. Ubicaci y hash AST son versiones, no identidad.
+- La vigencia enumera cigo objetivo, tests descubiertos, configuraci y comandos del runner, manifests y lockfiles. Cualquier cambio en esas entradas invalida el reporte.
+- Una selecci explita sin sbolos resueltos es un error y no un resultado `not_applicable`.
+
 ## Notas adicionales
 
 - `agentic-core.md` y `golden-rules.md` son las fuentes de esta especificaci贸n. Las Golden Rules se tratan como contenido can贸nico del producto, no como instrucciones para el proceso de publicaci贸n.

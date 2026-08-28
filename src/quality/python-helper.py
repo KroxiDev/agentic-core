@@ -97,6 +97,10 @@ def analyze(file_path):
     with open(file_path, encoding="utf-8") as source_file:
         source = source_file.read()
     tree = ast.parse(source, filename=file_path)
+    parents = {
+        child: parent for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
     symbols = []
     for node in ast.walk(tree):
         if not isinstance(node, FUNCTION_TYPES):
@@ -105,8 +109,22 @@ def analyze(file_path):
         complexity.visit(node)
         executable = ExecutableLines(node)
         executable.visit(node)
+        containers = []
+        parent = parents.get(node)
+        direct_parent = parent
+        while parent is not None:
+            if isinstance(parent, (ast.ClassDef, *FUNCTION_TYPES)):
+                containers.append(parent.name)
+            parent = parents.get(parent)
+        containers.reverse()
+        container = ".".join(containers) or "<module>"
+        qualified = ".".join([*containers, node.name])
         symbols.append({
             "name": node.name,
+            "qualifiedName": qualified,
+            "container": container,
+            "declarationKind": "method" if isinstance(direct_parent, ast.ClassDef) else "function",
+            "disambiguator": ast.dump(node.args, annotate_fields=True, include_attributes=False),
             "startLine": node.lineno,
             "endLine": node.end_lineno,
             "complexity": complexity.value,

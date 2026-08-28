@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { hasMaterialBlocker } from "./findings.js";
+import { preImplementationInventory, qualityInputInventory } from "./quality/inputs.js";
 import { writeTransaction } from "./transaction.js";
 
 const MODES = new Set(["light", "normal", "full"]);
@@ -18,9 +20,12 @@ const NORMAL_CONTRACT = {
   output: "Return one JSON hand-off that conforms to the normal-mode contract for this role.",
   boundaries: ["Do not weaken acceptance criteria.", "Do not select the next role.", "Report only actionable blockers."],
 };
+const REVIEW_POLICY = {
+  blocking: "Block only material defects tied to concrete authority, changed scope or a direct dependency, reproducible evidence, material impact and a minimal in-scope fix.",
+  scope: "Do not expand criteria, modules, surfaces or neighboring dependencies without evidence that they are directly necessary.",
+  advisory: "Future extensibility, unsupported inputs, hypothetical paths, unchanged debt, style, alternatives, unmeasured optimizations and out-of-scope concerns are advisory.",
+};
 const NORMAL_ROLES = new Set(["Planificador", "Implementador", "Refactor", "Tester", "Documentador"]);
-const FINDING_CATEGORIES = new Set(["specification", "tests", "crap", "mutation", "golden_rules",
-  "required_validation", "documentation"]);
 
 export class OrchestrationError extends Error {
   constructor(code, message) {
@@ -169,9 +174,11 @@ export async function startOrchestration({ projectRoot: projectDirectory, reques
     throw new OrchestrationError("context_budget_exceeded",
       `Brief requires ${briefContent.byteLength} bytes; limit is ${configurationSnapshot.orchestration.briefMaxBytes}`);
   }
+  const preImplementation = await preImplementationInventory(projectRoot);
   const state = {
     schemaVersion: 1, id: runId, mode: "light", status: "running", currentRole: brief.role, reworkCount: 0,
     sourceHashes: { originalRequest: requestSource.sha256, goldenRules: policySource.sha256 },
+    preImplementation,
     configurationSnapshot, baseline: null, lastHandoff: null,
     transitions: [{ role: "Implementador", status: "started", summary: "light -> Implementador", at: new Date().toISOString() }],
   };
@@ -271,9 +278,11 @@ async function startNormalOrchestration({ projectDirectory, request, intention, 
     permissions: normalPermissions(role.name),
   };
   const briefContent = ensureBriefSize(brief, configurationSnapshot.orchestration.briefMaxBytes);
+  const preImplementation = await preImplementationInventory(projectRoot);
   const state = {
     schemaVersion: 1, id: runId, mode: "normal", status: "running", currentRole: role, reworkCount: 0,
     sourceHashes: { originalRequest: requestSource.sha256, goldenRules: policySource.sha256 },
+    preImplementation,
     configurationSnapshot, planHash: null, baseline: null, lastHandoff: null,
     changesExecutableBehavior: Boolean(changesExecutableBehavior), protocolRetryUsed: false, documentationRetryUsed: false,
     transitions: [{ role: "Planificador", status: "started", summary: "normal -> Planificador", at: new Date().toISOString() }],
@@ -335,16 +344,46 @@ function validateImplementerHandoff(handoff, maximumBytes) {
   if (errors.length) throw new OrchestrationError("handoff_invalid", errors.join("; "));
 }
 async function baselineFor(projectRoot, targets) {
-  const hashes = {};
+  const paths = [];
   for (const target of targets) {
     const resolved = path.resolve(projectRoot, target);
     const relative = path.relative(projectRoot, resolved);
     if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
       throw new OrchestrationError("handoff_invalid", `Quality target must be a project-relative file: ${target}`);
     }
-    hashes[target.split(path.sep).join("/")] = sha256(await readFile(resolved));
+    paths.push(resolved);
   }
-  return { capturedAt: new Date().toISOString(), hashes };
+  const inventory = await qualityInputInventory(projectRoot, paths, null, []);
+  return {
+    capturedAt: new Date().toISOString(),
+    hashes: inventory.hashes,
+    inputInventory: inventory.entries,
+  };
+}
+
+function preChangeBaseline(report, state) {
+  if (report === undefined) return undefined;
+  if (!plainObject(report)
+    || report.$schema !== "https://kroxidev.dev/agentic-core/quality-report.schema.json"
+    || report.schemaVersion !== 1
+    || !["crap", "scan"].includes(report.tool)
+    || !plainObject(report.hashes?.inputs)
+    || !Array.isArray(report.details)) {
+    throw new OrchestrationError(
+      "handoff_invalid",
+      "qualityBaselineReport must be a complete C.R.A.P. report",
+    );
+  }
+  const prior = state.preImplementation?.hashes ?? {};
+  for (const [input, hash] of Object.entries(report.hashes.inputs)) {
+    if (prior[input] !== hash) {
+      throw new OrchestrationError(
+        "handoff_invalid",
+        "qualityBaselineReport was not captured before implementation",
+      );
+    }
+  }
+  return structuredClone(report);
 }
 
 function validateCompletedHandoff(handoff, role, maximumBytes) {
@@ -368,8 +407,7 @@ function validateChangesRequired(handoff, role, maximumBytes) {
     || !requiredText(handoff.summary) || !plainObject(handoff.payload)) errors.push(`${role} changes_required hand-off is invalid`);
   else {
     const findings = handoff.payload.findings;
-    if (!Array.isArray(findings) || !findings.some((finding) => finding?.impact === "blocking"
-      && FINDING_CATEGORIES.has(finding.category) && requiredText(finding.evidence))) {
+    if (!Array.isArray(findings) || !hasMaterialBlocker(findings)) {
       errors.push("changes_required requires an actionable typed blocker");
     }
   }
@@ -389,6 +427,7 @@ function buildNormalBrief(state, runId, role, mission, plan, previousHandoff, ex
     plan, previousHandoff: previousHandoff ? structuredClone(previousHandoff) : null,
     sources: normalSources(state),
     policy: { kind: "golden_rules", path: "../../golden-rules.md", sha256: state.sourceHashes.goldenRules },
+    reviewPolicy: REVIEW_POLICY,
     configuration: state.configurationSnapshot, permissions: normalPermissions(role.name), ...extra,
   };
 }
@@ -434,17 +473,24 @@ async function submitNormalPlanner(projectRoot, runRoot, state, runId, handoff) 
 }
 async function submitNormalImplementer(projectRoot, runRoot, state, runId, handoff) {
   validateImplementerHandoff(handoff, state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const qualityBaselineReport = preChangeBaseline(handoff.payload.qualityBaselineReport, state);
   const baseline = await baselineFor(projectRoot, handoff.payload.qualityTargets);
   const plan = await normalPlan(runRoot);
   const role = normalRole(state.currentRole.sequence + 1, "Refactor");
   const brief = buildNormalBrief(state, runId, role,
     "Read-only review of Golden Rules and structure; run differential C.R.A.P. and Mutation Testing gates.",
     plan, handoff, { quality: { targets: [...handoff.payload.qualityTargets], baseline },
+      baselineReport: qualityBaselineReport ?? { status: "not_attributable" },
       permissions: { read: true, write: [] } });
   return persistNormalRole(projectRoot, runRoot, state, role, brief, [
     { role: "Implementador", status: "completed", summary: handoff.summary, at: new Date().toISOString() },
     { role: "Refactor", status: "started", summary: "Implementador -> Refactor", at: new Date().toISOString() },
-  ], [], { baseline, qualityTargets: [...handoff.payload.qualityTargets], lastHandoff: structuredClone(handoff) });
+  ], [], {
+    baseline,
+    qualityBaselineReport,
+    qualityTargets: [...handoff.payload.qualityTargets],
+    lastHandoff: structuredClone(handoff),
+  });
 }
 async function readQualityGate(runRoot, reference, tool, baseline, configurationHash) {
   if (!plainObject(reference) || !requiredText(reference.path) || !/^[a-f0-9]{64}$/.test(reference.sha256 ?? "")) {
@@ -613,6 +659,7 @@ async function advanceHandoff({ projectRoot: projectDirectory, runId, handoff })
   if (state.currentRole?.name === "Tester") return submitTesterHandoff(projectRoot, runRoot, state, runId, handoff);
   if (state.currentRole?.name !== "Implementador") throw new OrchestrationError("role_mismatch", "Unknown current role");
   validateImplementerHandoff(handoff, state.configurationSnapshot.orchestration.handoffMaxBytes);
+  const qualityBaselineReport = preChangeBaseline(handoff.payload.qualityBaselineReport, state);
   const baseline = await baselineFor(projectRoot, handoff.payload.qualityTargets);
   const intention = JSON.parse(await readFile(path.join(runRoot, "intention.json"), "utf8"));
   const role = { sequence: state.currentRole.sequence + 1, name: "Tester", instanceId: randomUUID() };
@@ -622,6 +669,9 @@ async function advanceHandoff({ projectRoot: projectDirectory, runId, handoff })
     contract: LIGHT_CONTRACT, intention, previousHandoff: structuredClone(handoff),
     sources: [{ kind: "original_request", path: "sources/request.txt", sha256: state.sourceHashes.originalRequest }],
     policy: { kind: "golden_rules", path: "../../golden-rules.md", sha256: state.sourceHashes.goldenRules },
+    quality: { targets: [...handoff.payload.qualityTargets], baseline,
+      baselineReport: qualityBaselineReport ?? { status: "not_attributable" } },
+    reviewPolicy: REVIEW_POLICY,
     configuration: state.configurationSnapshot, permissions: { read: true, write: false },
   };
   const briefContent = Buffer.from(json(brief));
@@ -630,6 +680,7 @@ async function advanceHandoff({ projectRoot: projectDirectory, runId, handoff })
       `Brief requires ${briefContent.byteLength} bytes; limit is ${state.configurationSnapshot.orchestration.briefMaxBytes}`);
   }
   const nextState = { ...state, currentRole: role, baseline, lastHandoff: structuredClone(handoff),
+    qualityBaselineReport,
     qualityTargets: [...handoff.payload.qualityTargets], protocolRetryUsed: false,
     transitions: [...state.transitions, { role: "Implementador", status: "completed", summary: handoff.summary,
       at: new Date().toISOString() }, { role: "Tester", status: "started", summary: "Implementador -> Tester",
@@ -653,10 +704,7 @@ function validateTesterChangesRequired(handoff, maximumBytes) {
     if (handoff.status !== "changes_required") errors.push("Tester status must be changes_required");
     if (!requiredText(handoff.summary)) errors.push("summary must be non-empty text");
     const findings = handoff.payload?.findings;
-    const categories = new Set(["specification", "tests", "crap", "mutation", "golden_rules",
-      "required_validation", "documentation"]);
-    if (!Array.isArray(findings) || !findings.some((finding) => finding?.impact === "blocking"
-      && categories.has(finding.category) && requiredText(finding.evidence))) {
+    if (!Array.isArray(findings) || !hasMaterialBlocker(findings)) {
       errors.push("changes_required requires a blocking finding with category and concrete evidence");
     }
   }
@@ -721,9 +769,7 @@ async function handleNormalTerminalHandoff(projectRoot, runRoot, state, runId, h
   const errors = [];
   if (!plainObject(handoff) || handoff.schemaVersion !== 1 || !TERMINAL_STATUSES.has(handoff.status)
     || !requiredText(handoff.summary) || !plainObject(handoff.payload)) errors.push("terminal hand-off has an invalid shape");
-  else if (!Array.isArray(handoff.payload.findings) || handoff.payload.findings.length === 0
-    || handoff.payload.findings.some((finding) => finding?.impact !== "blocking"
-      || !FINDING_CATEGORIES.has(finding.category) || !requiredText(finding.evidence))) {
+  else if (!Array.isArray(handoff.payload.findings) || !hasMaterialBlocker(handoff.payload.findings)) {
     errors.push("terminal hand-off requires typed blocking findings with evidence");
   }
   if (Buffer.byteLength(JSON.stringify(handoff)) > state.configurationSnapshot.orchestration.handoffMaxBytes) {
@@ -932,6 +978,7 @@ async function resumeDivergedTester(projectRoot, runRoot, state, runId, baseline
   const brief = { schemaVersion: 1, runId, mode: "light", role,
     mission: "Re-run independent validation because quality inputs diverged.", contract: LIGHT_CONTRACT,
     intention, previousHandoff: state.lastHandoff, divergence: { previous: state.baseline.hashes, current: baseline.hashes },
+    reviewPolicy: REVIEW_POLICY,
     configuration: state.configurationSnapshot, permissions: { read: true, write: false } };
   const content = Buffer.from(json(brief));
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
@@ -1024,8 +1071,6 @@ async function handleControlHandoff(projectRoot, runRoot, state, runId, handoff)
 const TERMINAL_STATUSES = new Set(["failed", "blocked"]);
 async function handleTerminalHandoff(projectRoot, runRoot, state, runId, handoff) {
   const errors = [];
-  const categories = new Set(["specification", "tests", "crap", "mutation", "golden_rules",
-    "required_validation", "documentation"]);
   if (!plainObject(handoff) || handoff.schemaVersion !== 1 || !TERMINAL_STATUSES.has(handoff.status)
     || !requiredText(handoff.summary) || !plainObject(handoff.payload)) {
     errors.push("terminal hand-off has an invalid shape");
@@ -1033,8 +1078,7 @@ async function handleTerminalHandoff(projectRoot, runRoot, state, runId, handoff
     const allowed = new Set(["schemaVersion", "status", "summary", "payload"]);
     if (Object.keys(handoff).some((key) => !allowed.has(key))) errors.push("terminal hand-off has unknown keys");
     const findings = handoff.payload.findings;
-    if (!Array.isArray(findings) || findings.length === 0 || findings.some((finding) =>
-      finding?.impact !== "blocking" || !categories.has(finding.category) || !requiredText(finding.evidence))) {
+    if (!Array.isArray(findings) || !hasMaterialBlocker(findings)) {
       errors.push("terminal hand-off requires typed blocking findings with evidence");
     }
   }

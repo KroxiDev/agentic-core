@@ -135,6 +135,6 @@ export async function executeCoverage(projectRoot, files, { timeout = 30_000 } =
       const detail = [error.stdout, error.stderr].filter(Boolean).join("\n").trim();
       throw new Error(`Test command failed${detail ? `:\n${detail}` : ""}`);
     }
-    return { ...(await collectV8Coverage(coverageDirectory, files)), runner: invocation.runner };
+    return { ...(await collectV8Coverage(coverageDirectory, files)), runner: invocation.runner, commands };
   } finally { await rm(coverageDirectory, { recursive: true, force: true }); }
 }

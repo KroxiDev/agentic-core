@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import { analyzeSource } from "../src/quality/ast.js";
+import { identityFor } from "../src/quality/crap.js";
 import { collectV8Coverage } from "../src/quality/coverage.js";
 
 const execFileAsync = promisify(execFile);
@@ -252,4 +253,197 @@ test("missing Python is explicit and does not affect JavaScript quality", async 
   const javascriptRoot = await fixture(t);
   const javascript = await run(["scan", "--target", "src/subject.js"], javascriptRoot, env);
   assert.notEqual(javascript.code, 2, javascript.stderr || javascript.stdout);
+});
+
+test("stable symbol identity ignores bodies and separates containers and homonyms", () => {
+  const before = analyzeSource("src/identity.js", `
+class First { same(value) { return value; } }
+class Second { same(value) { return value; } }
+class Overloads {
+  same(value) { return value; }
+  same(value, other) { return value + other; }
+}
+`);
+  const after = analyzeSource("src/identity.js", `
+class First { same(value) { return value + 1; } }
+`);
+  const firstBefore = before.find((symbol) =>
+    symbol.qualifiedName === "First.same");
+  const firstAfter = after[0];
+  assert.equal(
+    identityFor("src/identity.js", firstBefore).stableId,
+    identityFor("src/identity.js", firstAfter).stableId,
+  );
+  const named = before.filter((symbol) => symbol.name === "same")
+    .map((symbol) => identityFor("src/identity.js", symbol).stableId);
+  assert.equal(new Set(named).size, named.length);
+  assert.ok(before.every((symbol) =>
+    symbol.container && symbol.declarationKind
+    && symbol.qualifiedName && symbol.disambiguator));
+});
+
+test("explicit symbol selection that resolves nothing is an error", async (t) => {
+  const root = await fixture(t);
+  const runDirectory = path.join(
+    root, ".agentic-core", "runs", "missing-symbol",
+  );
+  await mkdir(runDirectory, { recursive: true });
+  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
+    quality: {
+      targets: [{ path: "src/subject.js", symbols: ["doesNotExist"] }],
+    },
+  }));
+  const result = await run(["crap", "--run", "missing-symbol"], root);
+  assert.equal(result.code, 4);
+  assert.match(result.stderr, /resolved no quality targets/i);
+});
+
+test("quality freshness inventories every relevant input class", async (t) => {
+  const root = await fixture(t);
+  await writeFile(
+    path.join(root, "package-lock.json"),
+    JSON.stringify({ lockfileVersion: 3 }),
+  );
+  await writeFile(
+    path.join(root, "tsconfig.json"),
+    JSON.stringify({ compilerOptions: {} }),
+  );
+  const first = await run(["crap", "--target", "src/subject.js"], root);
+  const firstReport = JSON.parse(first.stdout);
+  const kinds = new Set(firstReport.inputInventory.entries
+    .map((entry) => entry.kind));
+  assert.deepEqual(new Set([
+    "target_code",
+    "discovered_test",
+    "runner_configuration",
+    "manifest",
+    "lockfile",
+  ]), kinds);
+  assert.ok(firstReport.inputInventory.commands.length > 0);
+  const testPath = path.join(root, "test", "subject.test.js");
+  await writeFile(
+    testPath,
+    `${await readFile(testPath, "utf8")}\n// freshness change\n`,
+  );
+  const second = await run(["crap", "--target", "src/subject.js"], root);
+  const secondReport = JSON.parse(second.stdout);
+  assert.notEqual(
+    firstReport.hashes.inputs["test/subject.test.js"],
+    secondReport.hashes.inputs["test/subject.test.js"],
+  );
+  assert.notEqual(
+    firstReport.hashes.freshness,
+    secondReport.hashes.freshness,
+  );
+});
+
+test("differential CRAP preserves high debt and rejects regression from seven", async (t) => {
+  const highRoot = await fixture(t);
+  const highBaseline = JSON.parse((
+    await run(["crap", "--target", "src/subject.js"], highRoot)
+  ).stdout);
+  const highRun = path.join(
+    highRoot, ".agentic-core", "runs", "high-baseline",
+  );
+  await mkdir(highRun, { recursive: true });
+  await writeFile(path.join(highRun, "state.json"), JSON.stringify({
+    quality: {
+      targets: [{ path: "src/subject.js", symbols: ["uncovered"] }],
+      baselineReport: highBaseline,
+    },
+  }));
+  const inherited = await run(
+    ["crap", "--run", "high-baseline"], highRoot,
+  );
+  assert.equal(inherited.code, 0, inherited.stderr || inherited.stdout);
+  const inheritedDetail = JSON.parse(inherited.stdout).details[0];
+  assert.ok(inheritedDetail.current.crap > 7);
+  assert.equal(inheritedDetail.delta, 0);
+  assert.equal(
+    inheritedDetail.rule,
+    "existing_above_seven_must_not_worsen",
+  );
+
+  const lowRoot = await fixture(t);
+  const lowBaseline = JSON.parse((
+    await run(["crap", "--target", "src/subject.js"], lowRoot)
+  ).stdout);
+  const sourcePath = path.join(lowRoot, "src", "subject.js");
+  const source = await readFile(sourcePath, "utf8");
+  await writeFile(
+    sourcePath,
+    source.replace(
+      "if (value === 6) value += 1;",
+      "if (value === 6) value += 1;\n  if (value === 7) value += 1;",
+    ),
+  );
+  const lowRun = path.join(
+    lowRoot, ".agentic-core", "runs", "low-baseline",
+  );
+  await mkdir(lowRun, { recursive: true });
+  await writeFile(path.join(lowRun, "state.json"), JSON.stringify({
+    quality: {
+      targets: [{ path: "src/subject.js", symbols: ["boundary"] }],
+      baselineReport: lowBaseline,
+    },
+  }));
+  const regressed = await run(
+    ["crap", "--run", "low-baseline"], lowRoot,
+  );
+  assert.equal(regressed.code, 1);
+  const detail = JSON.parse(regressed.stdout).details[0];
+  assert.equal(detail.baseline.crap, 7);
+  assert.ok(detail.current.crap > 7);
+  assert.ok(detail.delta > 0);
+});
+
+test("new symbols use seven and missing baselines never invent zero", async (t) => {
+  const root = await fixture(t);
+  const baseline = JSON.parse((
+    await run(["crap", "--target", "src/subject.js"], root)
+  ).stdout);
+  const sourcePath = path.join(root, "src", "subject.js");
+  await writeFile(
+    sourcePath,
+    `${await readFile(sourcePath, "utf8")}
+export function added(value) { return value; }
+`,
+  );
+  const newRun = path.join(
+    root, ".agentic-core", "runs", "new-symbol",
+  );
+  await mkdir(newRun, { recursive: true });
+  await writeFile(path.join(newRun, "state.json"), JSON.stringify({
+    quality: {
+      targets: [{ path: "src/subject.js", symbols: ["added"] }],
+      baselineReport: baseline,
+    },
+  }));
+  const added = await run(["crap", "--run", "new-symbol"], root);
+  assert.equal(added.code, 0, added.stderr || added.stdout);
+  const addedDetail = JSON.parse(added.stdout).details[0];
+  assert.equal(addedDetail.baseline.status, "new_symbol");
+  assert.equal(addedDetail.rule, "new_symbol_at_or_below_seven");
+
+  const unknownRun = path.join(
+    root, ".agentic-core", "runs", "unknown-baseline",
+  );
+  await mkdir(unknownRun, { recursive: true });
+  await writeFile(path.join(unknownRun, "state.json"), JSON.stringify({
+    quality: {
+      targets: [{ path: "src/subject.js", symbols: ["uncovered"] }],
+      baselineReport: {
+        details: [],
+        inputInventory: { entries: [] },
+      },
+    },
+  }));
+  const unknown = await run(
+    ["crap", "--run", "unknown-baseline"], root,
+  );
+  assert.equal(unknown.code, 0, unknown.stderr || unknown.stdout);
+  const unknownDetail = JSON.parse(unknown.stdout).details[0];
+  assert.equal(unknownDetail.baseline.status, "not_attributable");
+  assert.equal(unknownDetail.delta, null);
+  assert.notEqual(unknownDetail.baseline.crap, 0);
 });
