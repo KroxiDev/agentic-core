@@ -100,6 +100,17 @@ test("normal starts with Planificador and preserves criteria", async (t) => {
   assert.deepEqual(next.brief.skills, ["agentic-tdd"]);
 });
 
+test("a missing reason remains not_specified and does not activate agentic-grilling", async (t) => {
+  const root = await project(t);
+  const started = await startOrchestration({
+    projectRoot: root,
+    request: "Orquesta normal greeting without a stated reason",
+    intention: intention(),
+  });
+  assert.equal(started.brief.intention.reason, "not_specified");
+  assert.deepEqual(started.brief.skills, []);
+});
+
 test("normal follows the four-role graph and never requests mutation", async (t) => {
   const root = await project(t);
   const started = await startOrchestration({ projectRoot: root, request: "Orquesta greeting", intention: intention() });

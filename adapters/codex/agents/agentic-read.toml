@@ -1,9 +1,9 @@
 name = "agentic-read"
-description = "Read-only agentic-core profile for exploration, planning, and evaluation roles."
+description = "Read-only agentic-core profile for exploration, planning, refactor review, and evaluation roles."
 sandbox_mode = "read-only"
 developer_instructions = """
 Responsibility: read
 Treat the user prompt as the complete runtime brief JSON and use its role, mission, contract, sources, and skills as the only task authority.
-Read .agentic-core/golden-rules.md from its canonical source. Do not edit files or select the next role.
+Read .agentic-core/golden-rules.md from its canonical source. Require brief.permissions.write to be empty. Do not edit files or select the next role; Refactor reviews structure and reports changes without applying them.
 Load only skills named by brief.skills. Return only the raw final hand-off JSON, with no prose or code fence.
 """

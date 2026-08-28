@@ -75,6 +75,7 @@ test("a light run snapshots configuration and produces an isolated source-backed
   assert.equal("plan" in brief, false);
   assert.deepEqual(brief.skills, ["agentic-tdd"]);
   assert.equal(brief.role.name, "Implementador");
+  assert.deepEqual(brief.permissions, { read: true, write: ["production", "tests"] });
   assert.match(JSON.stringify(brief), /golden_rules/);
   assert.doesNotMatch(
     JSON.stringify({ role: brief.role, mission: brief.mission, contract: brief.contract }),
@@ -145,7 +146,7 @@ test("a valid Implementador hand-off creates a fresh read-only Tester", async (t
   assert.equal(result.role.name, "Tester");
   assert.equal(result.role.sequence, 2);
   assert.notEqual(result.role.instanceId, started.role.instanceId);
-  assert.equal(result.brief.permissions.write, false);
+  assert.deepEqual(result.brief.permissions, { read: true, write: [] });
   assert.deepEqual(result.brief.previousHandoff, implementerHandoff());
   const requestedWork = { mission: result.brief.mission, quality: result.brief.quality };
   assert.doesNotMatch(JSON.stringify(requestedWork), /mutation/i);
@@ -180,6 +181,7 @@ test("Tester changes_required creates a new Implementador and consumes one globa
   assert.notEqual(result.role.instanceId, tester.role.instanceId);
   assert.equal(result.brief.reworkCount, 1);
   assert.deepEqual(result.brief.skills, ["agentic-tdd"]);
+  assert.deepEqual(result.brief.permissions, { read: true, write: ["production", "tests"] });
   const state = JSON.parse(await readFile(path.join(
     project, ".agentic-core", "runs", started.runId, "state.json"), "utf8"));
   assert.equal(state.reworkCount, 1);
@@ -195,6 +197,7 @@ test("an invalid hand-off gets one fresh-role protocol retry without consuming r
   assert.equal(retry.role.name, "Implementador");
   assert.notEqual(retry.role.instanceId, started.role.instanceId);
   assert.equal(retry.reworkCount, 0);
+  assert.deepEqual(retry.brief.permissions, { read: true, write: ["production", "tests"] });
   const failed = await submitHandoff({ projectRoot: project, runId: started.runId, handoff: {} });
   assert.equal(failed.status, "failed");
   assert.equal(failed.reworkCount, 0);
@@ -257,6 +260,7 @@ test("resume lists choices without auto-selection and returns a divergent run to
   assert.equal(resumed.role.name, "Tester");
   assert.notEqual(resumed.role.instanceId, tester.role.instanceId);
   assert.equal(resumed.reworkCount, 0);
+  assert.deepEqual(resumed.brief.permissions, { read: true, write: [] });
   const listed = await listOrchestrations(project);
   assert.equal(listed.length, 2);
 });
@@ -301,6 +305,7 @@ test("questions, missing context and mode requests create fresh roles without co
     assert.equal(result.status, handoff.status);
     assert.equal(result.reworkCount, 0);
     assert.notEqual(result.role.instanceId, previous);
+    assert.deepEqual(result.brief.permissions, { read: true, write: ["production", "tests"] });
     previous = result.role.instanceId;
   }
 });

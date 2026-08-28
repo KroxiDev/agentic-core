@@ -23,6 +23,7 @@ const expectedInventory = [
   "adapters/codex/agents/agentic-production.toml",
   "adapters/codex/agents/agentic-read.toml",
   "adapters/codex/agents/agentic-tests.toml",
+  "adapters/manual-validation.md",
   "bin/agentic-core.js",
   "bin/agentic-quality.js",
   "golden-rules.md",

@@ -185,6 +185,7 @@ export async function startOrchestration({ projectRoot: projectDirectory, reques
     contract: LIGHT_CONTRACT, intention: normalized.intention, sources: [requestSource, policySource],
     policy: policySource, configuration: configurationSnapshot,
     skills: changesExecutableBehavior ? ["agentic-tdd"] : [],
+    permissions: { read: true, write: ["production", "tests"] },
   };
   const briefContent = Buffer.from(json(brief));
   if (briefContent.byteLength > configurationSnapshot.orchestration.briefMaxBytes) {
@@ -1121,7 +1122,7 @@ async function advanceHandoff({ projectRoot: projectDirectory, runId, handoff })
     quality: { targets: [...handoff.payload.qualityTargets], baseline,
       baselineReport: qualityBaselineReport ?? { status: "not_attributable" } },
     reviewPolicy: REVIEW_POLICY,
-    configuration: state.configurationSnapshot, permissions: { read: true, write: false },
+    configuration: state.configurationSnapshot, permissions: { read: true, write: [] },
   };
   const briefContent = Buffer.from(json(brief));
   if (briefContent.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
@@ -1182,7 +1183,7 @@ async function submitTesterHandoff(projectRoot, runRoot, state, runId, handoff) 
     sources: [{ kind: "original_request", path: "sources/request.txt", sha256: state.sourceHashes.originalRequest }],
     policy: { kind: "golden_rules", path: "../../golden-rules.md", sha256: state.sourceHashes.goldenRules },
     configuration: state.configurationSnapshot, skills: implementerBrief.skills ?? [],
-    permissions: { read: true, write: true } };
+    permissions: { read: true, write: ["production", "tests"] } };
   const content = Buffer.from(json(brief));
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
     throw new OrchestrationError("context_budget_exceeded",
@@ -1295,7 +1296,7 @@ async function retryInvalidHandoff(projectRoot, runId, error) {
   const brief = { schemaVersion: 1, runId, mode: "light", role,
     mission: "Return a valid hand-off for the same role.", contract: LIGHT_CONTRACT, protocolErrors,
     configuration: state.configurationSnapshot, skills: role.name === "Implementador" ? previousBrief.skills ?? [] : [],
-    permissions: { read: true, write: role.name === "Implementador" } };
+    permissions: { read: true, write: role.name === "Implementador" ? ["production", "tests"] : [] } };
   const content = Buffer.from(json(brief));
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
     throw new OrchestrationError("context_budget_exceeded",
@@ -1557,7 +1558,7 @@ async function resumeDivergedTester(projectRoot, runRoot, state, runId, baseline
     mission: "Re-run independent validation because quality inputs diverged.", contract: LIGHT_CONTRACT,
     intention, previousHandoff: state.lastHandoff, divergence: { previous: state.baseline.hashes, current: baseline.hashes },
     reviewPolicy: REVIEW_POLICY,
-    configuration: state.configurationSnapshot, permissions: { read: true, write: false } };
+    configuration: state.configurationSnapshot, permissions: { read: true, write: [] } };
   const content = Buffer.from(json(brief));
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
     throw new OrchestrationError("context_budget_exceeded", "Divergence brief exceeds configured limit");
@@ -1639,7 +1640,7 @@ async function handleControlHandoff(projectRoot, runRoot, state, runId, handoff)
     mission: "Continue the same responsibility after the control event is resolved.",
     contract: LIGHT_CONTRACT, previousHandoff: structuredClone(handoff),
     configuration: state.configurationSnapshot, skills: role.name === "Implementador" ? previousBrief.skills ?? [] : [],
-    permissions: { read: true, write: role.name === "Implementador" } };
+    permissions: { read: true, write: role.name === "Implementador" ? ["production", "tests"] : [] } };
   const content = Buffer.from(json(brief));
   if (content.byteLength > state.configurationSnapshot.orchestration.briefMaxBytes) {
     throw new OrchestrationError("context_budget_exceeded", "Control-event brief exceeds configured limit");

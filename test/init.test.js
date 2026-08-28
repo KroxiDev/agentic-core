@@ -162,6 +162,33 @@ test("init installs native Codex and Claude agents plus canonical skills byte fo
   }
 });
 
+test("update transactionally restores every host profile, canonical skill, and Claude shim", async (t) => {
+  const project = await createProject(t);
+  await runCore(["init", project, "--yes"]);
+  const mappings = [
+    ...["read", "production", "tests", "docs"].flatMap((profile) => [
+      [`adapters/codex/agents/agentic-${profile}.toml`, `.codex/agents/agentic-${profile}.toml`],
+      [`adapters/claude/agents/agentic-${profile}.md`, `.claude/agents/agentic-${profile}.md`],
+    ]),
+    ...["orquestar", "agentic-tdd", "agentic-grilling"].flatMap((skill) => [
+      [`skills/${skill}/SKILL.md`, `.agents/skills/${skill}/SKILL.md`],
+      [`adapters/claude/skills/${skill}/SKILL.md`, `.claude/skills/${skill}/SKILL.md`],
+    ]),
+  ];
+  for (const [, target] of mappings) {
+    await writeFile(path.join(project, ...target.split("/")), `locally diverged ${target}\n`);
+  }
+
+  await runCore(["update", project, "--force"]);
+
+  const manifest = JSON.parse(await readFile(path.join(project, ".agentic-core", "ownership.json"), "utf8"));
+  for (const [source, target] of mappings) {
+    const installed = await readFile(path.join(project, ...target.split("/")));
+    assert.deepEqual(installed, await readFile(path.join(repositoryRoot, ...source.split("/"))), target);
+    assert.equal(manifest.resources.find((resource) => resource.path === target)?.sha256, sha256(installed), target);
+  }
+});
+
 test("--yes does not replace an isolated conflict without explicit authorization", async (t) => {
   const project = await createProject(t);
   const productRoot = path.join(project, ".agentic-core");
