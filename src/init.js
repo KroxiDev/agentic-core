@@ -6,11 +6,33 @@ import { getVersion } from "./version.js";
 
 const PRODUCT = "@kroxidev/agentic-core";
 const CONFIG_VERSION = 1;
+const CORE_RESOURCE_PATHS = [
+  ".agentic-core/config.json",
+  ".agentic-core/config.schema.json",
+  ".agentic-core/golden-rules.md",
+];
+const HOST_RESOURCE_SPECS = [
+  ...["read", "production", "tests", "docs"].flatMap((profile) => [
+    { source: `adapters/codex/agents/agentic-${profile}.toml`, target: `.codex/agents/agentic-${profile}.toml` },
+    { source: `adapters/claude/agents/agentic-${profile}.md`, target: `.claude/agents/agentic-${profile}.md` },
+  ]),
+  ...["orquestar", "agentic-tdd", "agentic-grilling"].flatMap((skill) => [
+    { source: `skills/${skill}/SKILL.md`, target: `.agents/skills/${skill}/SKILL.md` },
+    { source: `adapters/claude/skills/${skill}/SKILL.md`, target: `.claude/skills/${skill}/SKILL.md` },
+  ]),
+];
+const EXPECTED_RESOURCE_PATHS = [...CORE_RESOURCE_PATHS, ...HOST_RESOURCE_SPECS.map(({ target }) => target)];
 const OWNED_DIRECTORIES = [
   ".agentic-core/runs",
   ".agentic-core/reports",
   ".agentic-core/workers",
   ".agentic-core/transactions",
+  ".agents/skills/orquestar",
+  ".agents/skills/agentic-tdd",
+  ".agents/skills/agentic-grilling",
+  ".claude/skills/orquestar",
+  ".claude/skills/agentic-tdd",
+  ".claude/skills/agentic-grilling",
 ];
 const MANAGED_BLOCK = `<!-- AGENTIC_CORE_START -->
 ## agentic-core
@@ -76,8 +98,17 @@ function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function logicalPath(...segments) {
-  return segments.join("/");
+async function installationResources(config) {
+  const hostResources = await Promise.all(HOST_RESOURCE_SPECS.map(async ({ source, target }) => ({
+    path: target,
+    content: await readFile(new URL(`../${source}`, import.meta.url)),
+  })));
+  return [
+    { path: ".agentic-core/config.json", content: config },
+    { path: ".agentic-core/config.schema.json", content: Buffer.from(json(CONFIG_SCHEMA)) },
+    { path: ".agentic-core/golden-rules.md", content: await readFile(new URL("../golden-rules.md", import.meta.url)) },
+    ...hostResources,
+  ];
 }
 
 async function fileKind(filePath) {
@@ -171,17 +202,12 @@ function validateOwnership(owner, action = "update") {
     || !Array.isArray(owner.ownedDirectories)) {
     throw new Error(`Cannot ${action}: ownership manifest is not a recognized agentic-core installation`);
   }
-  const expectedResources = [
-    ".agentic-core/config.json",
-    ".agentic-core/config.schema.json",
-    ".agentic-core/golden-rules.md",
-  ];
   const expectedBlocks = ["AGENTS.md", "CLAUDE.md"];
-  if (owner.resources.length !== expectedResources.length
+  if (owner.resources.length !== EXPECTED_RESOURCE_PATHS.length
     || owner.managedBlocks.length !== expectedBlocks.length
     || owner.ownedDirectories.length !== OWNED_DIRECTORIES.length
     || owner.ownedDirectories.some((directory, index) => directory !== OWNED_DIRECTORIES[index])
-    || owner.resources.some((resource, index) => resource?.path !== expectedResources[index]
+    || owner.resources.some((resource, index) => resource?.path !== EXPECTED_RESOURCE_PATHS[index]
       || !/^[0-9a-f]{64}$/.test(resource?.sha256))
     || owner.managedBlocks.some((block, index) => block?.path !== expectedBlocks[index]
       || block?.id !== "agentic-core"
@@ -208,14 +234,8 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
   const productRoot = path.join(projectRoot, ".agentic-core");
   const ownershipPath = path.join(productRoot, "ownership.json");
   const version = await getVersion();
-  const goldenRules = await readFile(new URL("../golden-rules.md", import.meta.url));
   const config = Buffer.from(json(CONFIG));
-  const schema = Buffer.from(json(CONFIG_SCHEMA));
-  const resources = [
-    { path: logicalPath(".agentic-core", "config.json"), content: config },
-    { path: logicalPath(".agentic-core", "config.schema.json"), content: schema },
-    { path: logicalPath(".agentic-core", "golden-rules.md"), content: goldenRules },
-  ];
+  const resources = await installationResources(config);
   const hostBlocks = ["AGENTS.md", "CLAUDE.md"].map((hostPath) => ({
     path: hostPath,
     id: "agentic-core",
@@ -246,7 +266,7 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
     if (kind !== "missing") conflicts.push({ path: resource.path, kind });
   }
 
-  if (conflicts.length === resources.length) {
+  if (CORE_RESOURCE_PATHS.every((resourcePath) => conflicts.some(({ path: conflictPath }) => conflictPath === resourcePath))) {
     throw new Error("Foreign installation detected: the complete agentic-core footprint exists without a valid ownership manifest");
   }
 
@@ -334,11 +354,7 @@ export async function updateInstallation(projectDirectory, { force = false } = {
   }
   const config = Buffer.from(json(mergeConfig(existingConfig)));
   const version = await getVersion();
-  const resources = [
-    { path: ".agentic-core/config.json", content: config },
-    { path: ".agentic-core/config.schema.json", content: Buffer.from(json(CONFIG_SCHEMA)) },
-    { path: ".agentic-core/golden-rules.md", content: await readFile(new URL("../golden-rules.md", import.meta.url)) },
-  ];
+  const resources = await installationResources(config);
   const divergences = [];
   for (let index = 0; index < resources.length; index += 1) {
     const resource = resources[index];

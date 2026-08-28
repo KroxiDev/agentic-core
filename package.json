@@ -14,12 +14,14 @@
   "files": [
     "bin/",
     "src/",
+    "adapters/",
+    "skills/",
     "golden-rules.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check bin/agentic-core.js && node --check bin/agentic-quality.js && node --check src/init.js && node --check src/maintenance-cli.js && node --check src/orchestration.js && node --check src/quality-cli.js && node --check src/quality/ast.js && node --check src/quality/coverage.js && node --check src/quality/engine.js && node --check src/quality/mutation.js && node --check src/quality/python.js && node --check src/transaction.js && node --check src/version.js"
+    "check": "node --check bin/agentic-core.js && node --check bin/agentic-quality.js && node --check src/host-adapter.js && node --check src/init.js && node --check src/maintenance-cli.js && node --check src/orchestration.js && node --check src/quality-cli.js && node --check src/quality/ast.js && node --check src/quality/coverage.js && node --check src/quality/engine.js && node --check src/quality/mutation.js && node --check src/quality/python.js && node --check src/transaction.js && node --check src/version.js"
   },
   "dependencies": {
     "@jridgewell/trace-mapping": "^0.3.31",

@@ -102,6 +102,20 @@ test("init installs the canonical direct-mode configuration and records ownershi
     ".agentic-core/config.json",
     ".agentic-core/config.schema.json",
     ".agentic-core/golden-rules.md",
+    ".codex/agents/agentic-read.toml",
+    ".claude/agents/agentic-read.md",
+    ".codex/agents/agentic-production.toml",
+    ".claude/agents/agentic-production.md",
+    ".codex/agents/agentic-tests.toml",
+    ".claude/agents/agentic-tests.md",
+    ".codex/agents/agentic-docs.toml",
+    ".claude/agents/agentic-docs.md",
+    ".agents/skills/orquestar/SKILL.md",
+    ".claude/skills/orquestar/SKILL.md",
+    ".agents/skills/agentic-tdd/SKILL.md",
+    ".claude/skills/agentic-tdd/SKILL.md",
+    ".agents/skills/agentic-grilling/SKILL.md",
+    ".claude/skills/agentic-grilling/SKILL.md",
   ]);
   for (const resource of manifest.resources) {
     const content = await readFile(path.join(project, ...resource.path.split("/")));
@@ -113,7 +127,39 @@ test("init installs the canonical direct-mode configuration and records ownershi
     ".agentic-core/reports",
     ".agentic-core/workers",
     ".agentic-core/transactions",
+    ".agents/skills/orquestar",
+    ".agents/skills/agentic-tdd",
+    ".agents/skills/agentic-grilling",
+    ".claude/skills/orquestar",
+    ".claude/skills/agentic-tdd",
+    ".claude/skills/agentic-grilling",
   ]);
+});
+
+test("init installs native Codex and Claude agents plus canonical skills byte for byte", async (t) => {
+  const project = await createProject(t);
+  await runCore(["init", project, "--yes"]);
+  const mappings = [
+    ...["read", "production", "tests", "docs"].flatMap((profile) => [
+      [`adapters/codex/agents/agentic-${profile}.toml`, `.codex/agents/agentic-${profile}.toml`],
+      [`adapters/claude/agents/agentic-${profile}.md`, `.claude/agents/agentic-${profile}.md`],
+    ]),
+    ...["orquestar", "agentic-tdd", "agentic-grilling"].flatMap((skill) => [
+      [`skills/${skill}/SKILL.md`, `.agents/skills/${skill}/SKILL.md`],
+      [`adapters/claude/skills/${skill}/SKILL.md`, `.claude/skills/${skill}/SKILL.md`],
+    ]),
+  ];
+  for (const [source, target] of mappings) {
+    assert.deepEqual(
+      await readFile(path.join(project, ...target.split("/"))),
+      await readFile(path.join(repositoryRoot, ...source.split("/"))),
+      target,
+    );
+  }
+  const manifest = JSON.parse(await readFile(path.join(project, ".agentic-core", "ownership.json"), "utf8"));
+  for (const [, target] of mappings) {
+    assert.ok(manifest.resources.some((resource) => resource.path === target), `${target} is not owned`);
+  }
 });
 
 test("--yes does not replace an isolated conflict without explicit authorization", async (t) => {
@@ -164,7 +210,7 @@ test("init stops when another product owns a complete installation", async (t) =
 });
 
 test("a failure after any installation write restores the prior project byte for byte", async (t) => {
-  for (const failAfterWrite of [1, 2, 3, 4, 5, 6]) {
+  for (const failAfterWrite of Array.from({ length: 20 }, (_, index) => index + 1)) {
     await t.test(`write ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest);
       const productRoot = path.join(project, ".agentic-core");
@@ -322,7 +368,7 @@ test("update without divergences does not require force", async (t) => {
 });
 
 test("a failure after any update mutation restores the installation byte for byte", async (t) => {
-  for (const failAfterWrite of [1, 2, 3, 4, 5, 6, 7]) {
+  for (const failAfterWrite of Array.from({ length: 21 }, (_, index) => index + 1)) {
     await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest);
       await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");
@@ -364,8 +410,28 @@ test("uninstall dry-run reports exact owned resources and blocks without changin
     "Would remove resource: .agentic-core/config.json",
     "Would remove resource: .agentic-core/config.schema.json",
     "Would remove resource: .agentic-core/golden-rules.md",
+    "Would remove resource: .codex/agents/agentic-read.toml",
+    "Would remove resource: .claude/agents/agentic-read.md",
+    "Would remove resource: .codex/agents/agentic-production.toml",
+    "Would remove resource: .claude/agents/agentic-production.md",
+    "Would remove resource: .codex/agents/agentic-tests.toml",
+    "Would remove resource: .claude/agents/agentic-tests.md",
+    "Would remove resource: .codex/agents/agentic-docs.toml",
+    "Would remove resource: .claude/agents/agentic-docs.md",
+    "Would remove resource: .agents/skills/orquestar/SKILL.md",
+    "Would remove resource: .claude/skills/orquestar/SKILL.md",
+    "Would remove resource: .agents/skills/agentic-tdd/SKILL.md",
+    "Would remove resource: .claude/skills/agentic-tdd/SKILL.md",
+    "Would remove resource: .agents/skills/agentic-grilling/SKILL.md",
+    "Would remove resource: .claude/skills/agentic-grilling/SKILL.md",
     "Would remove managed block: AGENTS.md#agentic-core",
     "Would remove managed block: CLAUDE.md#agentic-core",
+    "Would remove owned directory: .agents/skills/orquestar",
+    "Would remove owned directory: .agents/skills/agentic-tdd",
+    "Would remove owned directory: .agents/skills/agentic-grilling",
+    "Would remove owned directory: .claude/skills/orquestar",
+    "Would remove owned directory: .claude/skills/agentic-tdd",
+    "Would remove owned directory: .claude/skills/agentic-grilling",
     "Would remove manifest: .agentic-core/ownership.json",
   ]);
   assertSameSnapshot(await snapshotFiles(project), before);
@@ -455,7 +521,7 @@ test("uninstall never changes an installation owned by another product", async (
 });
 
 test("a failure after any uninstall mutation restores the project byte for byte", async (t) => {
-  for (const failAfterWrite of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+  for (const failAfterWrite of Array.from({ length: 30 }, (_, index) => index + 1)) {
     await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest);
       await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");
