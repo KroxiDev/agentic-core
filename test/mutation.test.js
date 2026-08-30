@@ -353,3 +353,38 @@ test("a restoration failure preserves the isolated evidence and returns exit cod
   assert.equal(sha256(await readFile(sourcePath)), before);
   await rm(report.restoration.evidencePath, { recursive: true, force: true });
 });
+
+test("in-run mutation evidence is ignored by later Node test discovery", async (t) => {
+  const root = await fixture(t, {
+    tests: `import assert from "node:assert/strict";
+import path from "node:path";
+import test from "node:test";
+import { choose } from "../src/subject.js";
+test("runs only from the active project", () => {
+  assert.equal(import.meta.dirname, path.join(process.cwd(), "test"));
+  assert.equal(choose(1), true);
+});
+`,
+  });
+  const runDirectory = path.join(root, ".agentic-core", "runs", "evidence-run");
+  await mkdir(runDirectory, { recursive: true });
+  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
+    quality: { targets: [{ path: "src/subject.js", symbols: ["choose"] }] },
+  }));
+
+  const mutation = await run([
+    "mutate", "--run", "evidence-run", "--output", "artifacts/mutation.json",
+  ], root, {
+    env: { ...process.env, NODE_ENV: "test", AGENTIC_CORE_TEST_FAIL_MUTANT_RESTORE: "1" },
+  });
+  assert.equal(mutation.code, 5, mutation.stderr || mutation.stdout);
+  const artifactDirectory = path.join(runDirectory, "artifacts");
+  const report = JSON.parse(await readFile(path.join(artifactDirectory, "mutation.json"), "utf8"));
+  const relativeEvidence = path.relative(artifactDirectory, report.restoration.evidencePath);
+  assert.equal(relativeEvidence.startsWith("..") || path.isAbsolute(relativeEvidence), false);
+
+  const crap = await run([
+    "crap", "--run", "evidence-run", "--output", "artifacts/crap.json",
+  ], root);
+  assert.equal(crap.code, 0, crap.stderr || crap.stdout);
+});

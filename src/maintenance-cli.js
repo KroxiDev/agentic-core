@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { initialize, uninstallInstallation, updateInstallation } from "./init.js";
-import { submitRawHandoff } from "./orchestration.js";
+import { startOrchestration, submitRawHandoff } from "./orchestration.js";
 import { getVersion } from "./version.js";
 
 const HELP = `Usage:
@@ -9,6 +9,7 @@ const HELP = `Usage:
   agentic-core update [directory] [--force]
   agentic-core uninstall [directory] [--dry-run] [--force]
   agentic-core doctor [directory]
+  agentic-core start [--input <path>]
   agentic-core submit-handoff --run <id> [--input <path>]
   agentic-core --version
   agentic-core --help`;
@@ -99,6 +100,32 @@ export async function runMaintenanceCli(args, io = process) {
     }
   }
 
+  if (args[0] === "start") {
+    const inputIndex = args.indexOf("--input");
+    if ((inputIndex === -1 && args.length !== 1)
+      || (inputIndex !== -1 && (inputIndex !== 1 || !args[2] || args.length !== 3))) {
+      io.stderr.write("Usage: agentic-core start [--input <path>]\n");
+      return 2;
+    }
+    const input = inputIndex === -1 ? await readAll(io.stdin) : await readFile(args[2]);
+    const payload = JSON.parse(decodeUtf8(input));
+    if (!plainObject(payload)) throw new TypeError("Start input must be a JSON object");
+    for (const field of ["changesExecutableBehavior", "planningNeedsHowDecision"]) {
+      if (payload[field] !== undefined && typeof payload[field] !== "boolean") {
+        throw new TypeError(`${field} must be a boolean when provided`);
+      }
+    }
+    const result = await startOrchestration({
+      projectRoot: process.cwd(),
+      request: payload.request,
+      intention: payload.intention,
+      changesExecutableBehavior: payload.changesExecutableBehavior,
+      planningNeedsHowDecision: payload.planningNeedsHowDecision,
+    });
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return 0;
+  }
+
   if (args[0] === "submit-handoff") {
     const runIndex = args.indexOf("--run");
     const inputIndex = args.indexOf("--input");
@@ -108,7 +135,7 @@ export async function runMaintenanceCli(args, io = process) {
       io.stderr.write("Usage: agentic-core submit-handoff --run <id> [--input <path>]\n");
       return 2;
     }
-    const response = inputIndex === -1 ? await readAll(io.stdin) : await readFile(args[4], "utf8");
+    const response = inputIndex === -1 ? await readAll(io.stdin) : await readFile(args[4]);
     const result = await submitRawHandoff({ projectRoot: process.cwd(), runId: args[2], response });
     io.stdout.write(`${JSON.stringify(result)}\n`);
     return result.status === "failed" ? 1 : 0;
@@ -119,8 +146,15 @@ export async function runMaintenanceCli(args, io = process) {
 }
 
 async function readAll(stream) {
-  let content = "";
-  stream.setEncoding?.("utf8");
-  for await (const chunk of stream) content += chunk;
-  return content;
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+function decodeUtf8(content) {
+  return new TextDecoder("utf-8", { fatal: true }).decode(content);
+}
+
+function plainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

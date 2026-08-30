@@ -12,6 +12,7 @@ const CORE_RESOURCE_PATHS = [
   ".agentic-core/golden-rules.md",
 ];
 const HOST_RESOURCE_SPECS = [
+  { source: "src/claude-read-command-guard.mjs", target: ".agentic-core/claude-read-command-guard.mjs" },
   ...["read", "production", "tests", "docs"].flatMap((profile) => [
     { source: `adapters/codex/agents/agentic-${profile}.toml`, target: `.codex/agents/agentic-${profile}.toml` },
     { source: `adapters/claude/agents/agentic-${profile}.md`, target: `.claude/agents/agentic-${profile}.md` },

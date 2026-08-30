@@ -47,7 +47,10 @@ async function missingParentDirectories(projectRoot, operations) {
   return missing.sort((left, right) => left.length - right.length);
 }
 
-export async function writeTransaction(projectDirectory, operations, { failAfterWrite } = {}) {
+export async function writeTransaction(projectDirectory, operations, {
+  failAfterWrite,
+  temporaryRoot = tmpdir(),
+} = {}) {
   const projectRoot = path.resolve(projectDirectory);
   const seen = new Set();
   for (const operation of operations) {
@@ -66,7 +69,8 @@ export async function writeTransaction(projectDirectory, operations, { failAfter
     snapshots.set(operation.path, snapshot);
   }
   const missingDirectories = await missingParentDirectories(projectRoot, operations);
-  const backupRoot = await mkdtemp(path.join(tmpdir(), "agentic-core-transaction-"));
+  await mkdir(temporaryRoot, { recursive: true });
+  const backupRoot = await mkdtemp(path.join(temporaryRoot, "agentic-core-transaction-"));
   const temporaryPaths = new Set();
 
   try {
@@ -127,20 +131,29 @@ export async function writeTransaction(projectDirectory, operations, { failAfter
         restorationErrors.push(restorationError);
       }
     }
-    for (const directory of [...missingDirectories].sort((left, right) => right.length - left.length)) {
+    let backupPreserved = true;
+    if (restorationErrors.length === 0) {
       try {
-        await rmdir(directory);
+        await rm(backupRoot, { recursive: true, force: true });
+        backupPreserved = false;
       } catch (restorationError) {
-        if (restorationError?.code !== "ENOTEMPTY" && restorationError?.code !== "ENOENT") {
-          restorationErrors.push(restorationError);
+        restorationErrors.push(restorationError);
+      }
+    }
+    if (restorationErrors.length === 0) {
+      for (const directory of [...missingDirectories].sort((left, right) => right.length - left.length)) {
+        try {
+          await rmdir(directory);
+        } catch (restorationError) {
+          if (restorationError?.code !== "ENOENT") restorationErrors.push(restorationError);
         }
       }
     }
 
     if (restorationErrors.length > 0) {
-      throw new Error(`Installation failed and restoration was incomplete. Backup preserved at ${backupRoot}`, { cause: error });
+      const backup = backupPreserved ? ` Backup preserved at ${backupRoot}` : "";
+      throw new Error(`Installation failed and restoration was incomplete.${backup}`, { cause: error });
     }
-    await rm(backupRoot, { recursive: true, force: true });
     throw error;
   }
 }

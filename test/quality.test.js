@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { analyzeSource } from "../src/quality/ast.js";
 import { identityFor } from "../src/quality/crap.js";
-import { collectV8Coverage } from "../src/quality/coverage.js";
+import { collectV8Coverage, runnerInvocation } from "../src/quality/coverage.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -67,6 +67,25 @@ async function run(args, cwd, env = process.env) {
     return { stdout: error.stdout, stderr: error.stderr, code: error.code };
   }
 }
+
+test("Jest and Vitest invocations exclude preserved agentic-core evidence", () => {
+  const root = path.resolve("fixture");
+  const vitest = runnerInvocation(root, { devDependencies: { vitest: "1.0.0" } });
+  assert.deepEqual(vitest.args.slice(-3), ["run", "--exclude", "**/.agentic-core/**"]);
+  const jest = runnerInvocation(root, { devDependencies: { jest: "29.0.0" } });
+  assert.equal(jest.args.at(-2), "--runInBand");
+  assert.equal(jest.args.some((argument) => argument.startsWith("--testPathIgnorePatterns")), false);
+  const activeProjectTest = new RegExp(jest.args.at(-1));
+  assert.equal(activeProjectTest.test(path.join(root, "test", "subject.test.js")), true);
+  assert.equal(activeProjectTest.test(path.join(root, ".agentic-core", "runs", "evidence", "subject.test.js")), false);
+  assert.equal(activeProjectTest.test(".agentic-core/runs/evidence/subject.test.js"), false);
+
+  const workerRoot = path.join(root, ".agentic-core", "runs", "evidence", "worker-0");
+  const workerJest = runnerInvocation(workerRoot, { devDependencies: { jest: "29.0.0" } });
+  const activeWorkerTest = new RegExp(workerJest.args.at(-1));
+  assert.equal(activeWorkerTest.test(path.join(workerRoot, "test", "subject.test.js")), true);
+  assert.equal(activeWorkerTest.test(path.join(workerRoot, ".agentic-core", "runs", "nested.test.js")), false);
+});
 
 async function pythonFixture(t, testSource) {
   const root = await mkdtemp(path.join(tmpdir(), "agentic python quality "));
@@ -220,6 +239,58 @@ test("--output persists the complete run C.R.A.P. report and returns its verifie
   ], root);
   assert.equal(escaped.code, 4);
   assert.equal(await readFile(path.join(root, "src", "subject.js"), "utf8"), production);
+});
+
+test("run artifacts contain all quality workspaces when the host temp directory is not writable", async (t) => {
+  const root = await fixture(t);
+  const runDirectory = path.join(root, ".agentic-core", "runs", "restricted-run");
+  await mkdir(runDirectory, { recursive: true });
+  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
+    quality: { targets: [{ path: "src/subject.js", symbols: ["exercised"] }] },
+  }));
+  const blockedTemporaryPath = path.join(root, "blocked-temporary-path");
+  await writeFile(blockedTemporaryPath, "not a directory\n");
+  const restrictedEnvironment = {
+    ...process.env,
+    TMPDIR: blockedTemporaryPath,
+    TMP: blockedTemporaryPath,
+    TEMP: blockedTemporaryPath,
+  };
+
+  const crapResult = await run([
+    "crap", "--run", "restricted-run", "--output", "artifacts/crap.json",
+  ], root, restrictedEnvironment);
+  assert.equal(crapResult.code, 0, crapResult.stderr || crapResult.stdout);
+
+  const mutationResult = await run([
+    "mutate", "--run", "restricted-run", "--output", "artifacts/mutation.json",
+  ], root, restrictedEnvironment);
+
+  const artifactDirectory = path.join(runDirectory, "artifacts");
+  const mutationReport = JSON.parse(await readFile(path.join(artifactDirectory, "mutation.json"), "utf8"));
+  assert.ok([0, 1].includes(mutationResult.code), JSON.stringify({ mutationResult, mutationReport }));
+  assert.deepEqual((await readdir(artifactDirectory)).sort(), ["crap.json", "mutation.json"]);
+  assert.equal(JSON.parse(await readFile(path.join(artifactDirectory, "crap.json"), "utf8")).tool, "crap");
+  assert.equal(mutationReport.tool, "mutation");
+});
+
+test("a failed run quality analysis removes an artifact directory created only for temporary work", async (t) => {
+  const root = await fixture(t);
+  const runDirectory = path.join(root, ".agentic-core", "runs", "failed-run");
+  await mkdir(runDirectory, { recursive: true });
+  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
+    quality: { targets: [{ path: "src/subject.js", symbols: ["exercised"] }] },
+  }));
+  await writeFile(path.join(root, "test", "subject.test.js"), `
+import test from "node:test";
+test("fails", () => { throw new Error("expected baseline failure"); });
+`);
+
+  const result = await run([
+    "crap", "--run", "failed-run", "--output", "artifacts/crap.json",
+  ], root);
+  assert.equal(result.code, 5, result.stderr || result.stdout);
+  await assert.rejects(readdir(path.join(runDirectory, "artifacts")), { code: "ENOENT" });
 });
 
 test("Python AST and unittest coverage preserve the common CRAP report contract", async (t) => {

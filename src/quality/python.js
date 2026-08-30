@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -109,8 +109,12 @@ function resultFromCoverage(document, files, projectRoot) {
   return { attributable, coveredByFile };
 }
 
-export async function executePythonCoverage(runtime, projectRoot, files, { timeout = 30_000 } = {}) {
-  const temporary = await mkdtemp(path.join(tmpdir(), "agentic-core-python-"));
+export async function executePythonCoverage(runtime, projectRoot, files, {
+  timeout = 30_000,
+  temporaryRoot = tmpdir(),
+} = {}) {
+  await mkdir(temporaryRoot, { recursive: true });
+  const temporary = await mkdtemp(path.join(temporaryRoot, "agentic-core-python-"));
   const dataFile = path.join(temporary, ".coverage");
   const outputFile = path.join(temporary, "coverage.json");
   try {

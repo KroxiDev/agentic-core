@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -7,6 +7,12 @@ import { promisify } from "node:util";
 import { TraceMap, eachMapping } from "@jridgewell/trace-mapping";
 
 const execFileAsync = promisify(execFile);
+function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+// A positional Jest filter narrows discovery without replacing the project's configured ignore patterns.
+function activeProjectTestPath(projectRoot) {
+  const operationalRoot = path.resolve(projectRoot, ".agentic-core").split(path.sep).map(escapeRegex).join(String.raw`[\\/]`);
+  return String.raw`^(?!\.agentic-core[\\/])(?!${operationalRoot}[\\/]).*$`;
+}
 function normalizeFile(filePath) { return path.resolve(filePath).toLowerCase(); }
 function urlToFile(url) { try { return url.startsWith("file:") ? fileURLToPath(url) : undefined; } catch { return undefined; } }
 function coverageRanges(functions) { return functions.flatMap(({ ranges }) => ranges); }
@@ -82,7 +88,7 @@ async function nodeTestInvocations(projectRoot) {
       throw error;
     }
     for (const entry of entries) {
-      if (entry.name === "node_modules" || entry.name === ".git") continue;
+      if (["node_modules", ".git", ".agentic-core"].includes(entry.name)) continue;
       const child = path.join(directory, entry.name);
       if (entry.isDirectory()) await visit(child);
       else if (entry.isFile() && /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$/.test(entry.name)) tests.push(child);
@@ -95,10 +101,12 @@ export function runnerInvocation(projectRoot, packageJson) {
   const test = packageJson.scripts?.test ?? "";
   const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
   if (/vitest/i.test(test) || dependencies.vitest) {
-    return { runner: "vitest", args: [path.join(projectRoot, "node_modules", "vitest", "vitest.mjs"), "run"] };
+    return { runner: "vitest", args: [path.join(projectRoot, "node_modules", "vitest", "vitest.mjs"),
+      "run", "--exclude", "**/.agentic-core/**"] };
   }
   if (/jest/i.test(test) || dependencies.jest) {
-    return { runner: "jest", args: [path.join(projectRoot, "node_modules", "jest", "bin", "jest.js"), "--runInBand"] };
+    return { runner: "jest", args: [path.join(projectRoot, "node_modules", "jest", "bin", "jest.js"),
+      "--runInBand", activeProjectTestPath(projectRoot)] };
   }
   return { runner: "node:test" };
 }
@@ -118,8 +126,12 @@ export async function executeTests(projectRoot, { timeout = 30_000 } = {}) {
   }
   return { runner: invocation.runner };
 }
-export async function executeCoverage(projectRoot, files, { timeout = 30_000 } = {}) {
-  const coverageDirectory = await mkdtemp(path.join(tmpdir(), "agentic-core-v8-"));
+export async function executeCoverage(projectRoot, files, {
+  timeout = 30_000,
+  temporaryRoot = tmpdir(),
+} = {}) {
+  await mkdir(temporaryRoot, { recursive: true });
+  const coverageDirectory = await mkdtemp(path.join(temporaryRoot, "agentic-core-v8-"));
   try {
     let packageJson = {};
     try { packageJson = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8")); } catch {}

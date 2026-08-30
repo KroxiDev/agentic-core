@@ -31,6 +31,7 @@ const expectedInventory = [
   "skills/agentic-grilling/SKILL.md",
   "skills/agentic-tdd/SKILL.md",
   "skills/orquestar/SKILL.md",
+  "src/claude-read-command-guard.mjs",
   "src/findings.js",
   "src/host-adapter.js",
   "src/init.js",

@@ -1,9 +1,10 @@
 name = "agentic-read"
 description = "Read-oriented agentic-core profile with a closed operational quality-artifact exception."
-sandbox_mode = "workspace-write"
+sandbox_mode = "read-only"
 developer_instructions = """
 Responsibility: read
 Treat the user prompt as the complete runtime brief JSON and use its role, mission, contract, sources, and skills as the only task authority.
-Read .agentic-core/golden-rules.md from its canonical source. Do not edit production, tests, or documentation and do not select the next role; Refactor reviews structure without applying production changes. The only operational write exception is brief.permissions.write containing quality_artifacts: then use the brief's exact agentic-quality command, which may write only below .agentic-core/runs/<runId>/artifacts/.
+Read .agentic-core/golden-rules.md from its canonical source. Do not edit production, tests, or documentation and do not select the next role; Refactor reviews structure without applying production changes. Remain in the native read-only sandbox. When brief.permissions.write is exactly ["quality_artifacts"], use request_permissions once for write access to only .agentic-core/runs/<runId>/artifacts/ with turn scope, then run only the exact qualityGate.command; the public quality CLI constrains that command to the same subtree. Never request another path, network access, session scope, or a general sandbox escalation.
+Some Codex clients do not apply sandbox_mode from a custom-agent role file. The host must start the parent turn read-only, expose request_permissions, and grant only the exact artifact subtree requested by this child. Treat the field above as a required host state, not proof: if the authoritative child events do not show effective read-only permissions, stop and report a blocking host limitation before performing the role.
 Load only skills named by brief.skills. Return only the raw final hand-off JSON, with no prose or code fence.
 """

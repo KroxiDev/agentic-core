@@ -102,6 +102,7 @@ test("init installs the canonical direct-mode configuration and records ownershi
     ".agentic-core/config.json",
     ".agentic-core/config.schema.json",
     ".agentic-core/golden-rules.md",
+    ".agentic-core/claude-read-command-guard.mjs",
     ".codex/agents/agentic-read.toml",
     ".claude/agents/agentic-read.md",
     ".codex/agents/agentic-production.toml",
@@ -140,6 +141,7 @@ test("init installs native Codex and Claude agents plus canonical skills byte fo
   const project = await createProject(t);
   await runCore(["init", project, "--yes"]);
   const mappings = [
+    ["src/claude-read-command-guard.mjs", ".agentic-core/claude-read-command-guard.mjs"],
     ...["read", "production", "tests", "docs"].flatMap((profile) => [
       [`adapters/codex/agents/agentic-${profile}.toml`, `.codex/agents/agentic-${profile}.toml`],
       [`adapters/claude/agents/agentic-${profile}.md`, `.claude/agents/agentic-${profile}.md`],
@@ -166,6 +168,7 @@ test("update transactionally restores every host profile, canonical skill, and C
   const project = await createProject(t);
   await runCore(["init", project, "--yes"]);
   const mappings = [
+    ["src/claude-read-command-guard.mjs", ".agentic-core/claude-read-command-guard.mjs"],
     ...["read", "production", "tests", "docs"].flatMap((profile) => [
       [`adapters/codex/agents/agentic-${profile}.toml`, `.codex/agents/agentic-${profile}.toml`],
       [`adapters/claude/agents/agentic-${profile}.md`, `.claude/agents/agentic-${profile}.md`],
@@ -437,6 +440,7 @@ test("uninstall dry-run reports exact owned resources and blocks without changin
     "Would remove resource: .agentic-core/config.json",
     "Would remove resource: .agentic-core/config.schema.json",
     "Would remove resource: .agentic-core/golden-rules.md",
+    "Would remove resource: .agentic-core/claude-read-command-guard.mjs",
     "Would remove resource: .codex/agents/agentic-read.toml",
     "Would remove resource: .claude/agents/agentic-read.md",
     "Would remove resource: .codex/agents/agentic-production.toml",

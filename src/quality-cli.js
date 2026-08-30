@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { analyzeQuality } from "./quality/crap.js";
 import { analyzeMutation } from "./quality/mutation.js";
@@ -82,6 +82,10 @@ async function resolveSource(projectRoot, source) {
   }
   throw new Error(`Run not found: ${source.value}`);
 }
+async function exists(targetPath) {
+  try { await access(targetPath); return true; }
+  catch (error) { if (error?.code === "ENOENT") return false; throw error; }
+}
 export async function runQualityCli(args, io = process) {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     io.stdout.write(`${HELP}\n`);
@@ -96,16 +100,20 @@ export async function runQualityCli(args, io = process) {
     io.stderr.write(`Unknown command: ${command}\n`);
     return 4;
   }
+  let temporaryRoot;
+  let temporaryRootExisted = true;
   try {
     const source = parseSource(args.slice(1));
     const output = artifactOutput(process.cwd(), source);
     const resolved = await resolveSource(process.cwd(), source);
+    temporaryRoot = output ? path.dirname(output.absolutePath) : undefined;
+    if (temporaryRoot) temporaryRootExisted = await exists(temporaryRoot);
     const report = command === "mutate"
-      ? await analyzeMutation({ projectRoot: process.cwd(), ...resolved })
-      : await analyzeQuality({ projectRoot: process.cwd(), ...resolved, tool: command });
+      ? await analyzeMutation({ projectRoot: process.cwd(), ...resolved, temporaryRoot })
+      : await analyzeQuality({ projectRoot: process.cwd(), ...resolved, tool: command, temporaryRoot });
     if (output) {
       const content = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
-      await writeTransaction(process.cwd(), [{ path: output.absolutePath, content }]);
+      await writeTransaction(process.cwd(), [{ path: output.absolutePath, content }], { temporaryRoot });
       io.stdout.write(`${JSON.stringify({
         path: output.logicalPath,
         sha256: createHash("sha256").update(content).digest("hex"),
@@ -115,6 +123,15 @@ export async function runQualityCli(args, io = process) {
     }
     return EXIT[report.status] ?? 5;
   } catch (error) {
+    if (temporaryRoot && !temporaryRootExisted) {
+      try { await rmdir(temporaryRoot); }
+      catch (cleanupError) {
+        if (cleanupError?.code !== "ENOENT" && cleanupError?.code !== "ENOTEMPTY") {
+          throw new Error(`Quality execution failed and temporary cleanup was incomplete: ${cleanupError.message}`,
+            { cause: error });
+        }
+      }
+    }
     if (error?.code === "ENOENT" || error instanceof SyntaxError || /required|must|not found|does not declare|resolved no/i.test(error.message)) {
       io.stderr.write(`${error.message}\n`);
       return 4;

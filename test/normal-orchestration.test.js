@@ -93,8 +93,10 @@ test("normal starts with Planificador and preserves criteria", async (t) => {
   assert.equal(started.role.name, "Planificador");
   assert.deepEqual(started.brief.skills, ["agentic-grilling"]);
   const invalid = plan({ criteria: [{ id: "C1", text: "Something", sourceCriteria: ["Print the greeting"] }] });
-  assert.equal((await submitHandoff({ projectRoot: root, runId: started.runId,
-    handoff: plannerDone(invalid) })).status, "protocol_retry");
+  const retry = await submitHandoff({ projectRoot: root, runId: started.runId,
+    handoff: plannerDone(invalid) });
+  assert.equal(retry.status, "protocol_retry");
+  assert.deepEqual(retry.brief.skills, ["agentic-grilling"]);
   const next = await submitHandoff({ projectRoot: root, runId: started.runId, handoff: plannerDone() });
   assert.equal(next.role.name, "Implementador");
   assert.deepEqual(next.brief.skills, ["agentic-tdd"]);

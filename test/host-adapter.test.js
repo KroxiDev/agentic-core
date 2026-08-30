@@ -4,6 +4,36 @@ import path from "node:path";
 import test from "node:test";
 import { parseAgentHandoff, profileForRole, runHostAgent } from "../src/host-adapter.js";
 
+const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const claudeToolsByProfile = {
+  read: ["Read", "Grep", "Glob", "Bash", "PowerShell", "Skill"],
+  production: ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "PowerShell", "Skill"],
+  tests: ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "PowerShell"],
+  docs: ["Read", "Grep", "Glob", "Edit", "Write"],
+};
+const claudePermissionModeByProfile = {
+  read: "dontAsk",
+  production: "acceptEdits",
+  tests: "acceptEdits",
+  docs: "acceptEdits",
+};
+const nativeProfileCache = new Map();
+
+async function nativeProfile(profile) {
+  if (!nativeProfileCache.has(profile)) {
+    nativeProfileCache.set(profile, Promise.all([
+      readFile(path.join(repositoryRoot, "adapters", "codex", "agents", `agentic-${profile}.toml`), "utf8"),
+      readFile(path.join(repositoryRoot, "adapters", "claude", "agents", `agentic-${profile}.md`), "utf8"),
+    ]).then(([codex, claude]) => {
+      const frontmatter = claude.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1];
+      assert.ok(frontmatter, `${profile} has frontmatter`);
+      const tools = frontmatter.match(/^tools:\s*(.*)$/m)?.[1].split(",").map((tool) => tool.trim());
+      return { codex, claude, frontmatter, tools };
+    }));
+  }
+  return nativeProfileCache.get(profile);
+}
+
 const roles = {
   Explorador: "read",
   Planificador: "read",
@@ -24,9 +54,7 @@ test("both host adapters select the least-privilege profile for every runtime ro
 });
 
 test("Refactor remains bound to agentic-read with only the quality artifact exception", async () => {
-  const repositoryRoot = path.resolve(import.meta.dirname, "..");
-  const codex = await readFile(path.join(repositoryRoot, "adapters", "codex", "agents", "agentic-read.toml"), "utf8");
-  const claude = await readFile(path.join(repositoryRoot, "adapters", "claude", "agents", "agentic-read.md"), "utf8");
+  const { codex, claude } = await nativeProfile("read");
   for (const host of ["codex", "claude"]) assert.equal(profileForRole(host, "Refactor"), "agentic-read");
   assert.match(codex, /refactor/i);
   assert.match(codex, /quality_artifacts/);
@@ -165,19 +193,17 @@ test("the adapter accepts only the documented write responsibility for every rol
   }
 });
 
-test("native host profiles expose four distinct least-privilege capabilities", async () => {
-  const repositoryRoot = path.resolve(import.meta.dirname, "..");
+test("native host profiles declare four distinct least-privilege responsibilities", async () => {
   const expectations = {
-    read: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Bash, PowerShell, Skill" },
-    production: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write, Bash, PowerShell" },
-    tests: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write, Bash, PowerShell" },
-    docs: { codex: 'sandbox_mode = "workspace-write"', claude: "tools: Read, Grep, Glob, Edit, Write" },
+    read: { codex: 'sandbox_mode = "read-only"' },
+    production: { codex: 'sandbox_mode = "workspace-write"' },
+    tests: { codex: 'sandbox_mode = "workspace-write"' },
+    docs: { codex: 'sandbox_mode = "workspace-write"' },
   };
   for (const [profile, expected] of Object.entries(expectations)) {
-    const codex = await readFile(path.join(repositoryRoot, "adapters", "codex", "agents", `agentic-${profile}.toml`), "utf8");
-    const claude = await readFile(path.join(repositoryRoot, "adapters", "claude", "agents", `agentic-${profile}.md`), "utf8");
+    const { codex, claude } = await nativeProfile(profile);
     assert.match(codex, new RegExp(expected.codex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(claude, new RegExp(expected.claude));
+    assert.match(claude, new RegExp(`tools: ${claudeToolsByProfile[profile].join(", ")}`));
     assert.match(codex, new RegExp(`Responsibility: ${profile}`));
     assert.match(claude, new RegExp(`Responsibility: ${profile}`));
     for (const content of [codex, claude]) {
@@ -189,57 +215,58 @@ test("native host profiles expose four distinct least-privilege capabilities", a
   }
 });
 
-test("native profile files use only officially supported host fields and tool names", async () => {
-  const repositoryRoot = path.resolve(import.meta.dirname, "..");
-  const toolsByProfile = {
-    read: ["Read", "Grep", "Glob", "Bash", "PowerShell", "Skill"],
-    production: ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "PowerShell", "Skill"],
-    tests: ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "PowerShell"],
-    docs: ["Read", "Grep", "Glob", "Edit", "Write"],
-  };
-  for (const [profile, expectedTools] of Object.entries(toolsByProfile)) {
-    const codex = await readFile(path.join(repositoryRoot, "adapters", "codex", "agents", `agentic-${profile}.toml`), "utf8");
+test("native profile files use the documented host fields and exact Claude tool inventory", async () => {
+  for (const [profile, expectedTools] of Object.entries(claudeToolsByProfile)) {
+    const { codex, frontmatter, tools } = await nativeProfile(profile);
     const codexKeys = codex.split(/\r?\n/)
       .map((line) => line.match(/^([a-z_]+)\s*=/)?.[1])
       .filter(Boolean);
     assert.deepEqual(codexKeys, ["name", "description", "sandbox_mode", "developer_instructions"]);
 
-    const claude = await readFile(path.join(repositoryRoot, "adapters", "claude", "agents", `agentic-${profile}.md`), "utf8");
-    const frontmatter = claude.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1];
-    assert.ok(frontmatter, `${profile} has frontmatter`);
-    const claudeFields = frontmatter.split(/\r?\n/).map((line) => line.match(/^([A-Za-z][A-Za-z]*):/)?.[1]);
-    assert.deepEqual(claudeFields, ["name", "description", "tools", "permissionMode"]);
-    const tools = frontmatter.match(/^tools:\s*(.*)$/m)?.[1].split(",").map((tool) => tool.trim());
+    const claudeFields = frontmatter.split(/\r?\n/)
+      .map((line) => line.match(/^([A-Za-z][A-Za-z]*):/)?.[1])
+      .filter(Boolean);
+    assert.deepEqual(
+      claudeFields,
+      profile === "read"
+        ? ["name", "description", "tools", "permissionMode", "hooks"]
+        : ["name", "description", "tools", "permissionMode"],
+    );
     assert.deepEqual(tools, expectedTools);
-    assert.match(frontmatter, /^permissionMode: acceptEdits$/m);
+    assert.match(frontmatter, new RegExp(`^permissionMode: ${claudePermissionModeByProfile[profile]}$`, "m"));
   }
 });
 
-test("Claude command-capable profiles allow both supported shell tool names", async () => {
-  const repositoryRoot = path.resolve(import.meta.dirname, "..");
-  const toolsFor = async (profile) => {
-    const content = await readFile(
-      path.join(repositoryRoot, "adapters", "claude", "agents", `agentic-${profile}.md`),
-      "utf8",
-    );
-    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1];
-    assert.ok(frontmatter, `${profile} has frontmatter`);
-    return frontmatter.match(/^tools:\s*(.*)$/m)?.[1].split(",").map((tool) => tool.trim());
-  };
+test("Claude and Codex declare the enforceable read-profile boundaries", async () => {
+  const { codex, frontmatter } = await nativeProfile("read");
+  const manual = await readFile(path.join(repositoryRoot, "adapters", "manual-validation.md"), "utf8");
+  assert.match(codex, /^sandbox_mode = "read-only"$/m);
+  assert.match(codex, /request_permissions.*only.*\.agentic-core\/runs\/<runId>\/artifacts\//is);
+  assert.match(codex, /turn scope.*Never request.*network access.*session scope.*general sandbox escalation/is);
+  assert.match(codex, /Some Codex clients.*do not apply.*sandbox_mode/is);
+  assert.match(codex, /host must start.*parent turn read-only.*expose request_permissions/is);
+  assert.match(frontmatter, /^permissionMode: dontAsk$/m);
+  assert.match(frontmatter, /^hooks:$/m);
+  assert.match(frontmatter, /PreToolUse:[\s\S]*matcher: "Bash\|PowerShell"/);
+  assert.match(frontmatter, /node \.agentic-core\/claude-read-command-guard\.mjs/);
+  assert.match(manual, /effective Codex client.*does not apply.*sandbox_mode/is);
+  assert.match(manual, /request_permissions.*only.*artifacts.*turn scope/is);
+  assert.match(manual, /remains blocked.*authoritative child events.*read-only.*outside.*fails/is);
+});
 
+test("Claude command-capable profiles allow both supported shell tool names", async () => {
   for (const profile of ["read", "production", "tests"]) {
-    const tools = await toolsFor(profile);
+    const { tools } = await nativeProfile(profile);
     assert.ok(tools.includes("Bash"), `${profile} allows Bash`);
     assert.ok(tools.includes("PowerShell"), `${profile} allows PowerShell`);
   }
 
-  const docsTools = await toolsFor("docs");
+  const { tools: docsTools } = await nativeProfile("docs");
   assert.equal(docsTools.includes("Bash"), false);
   assert.equal(docsTools.includes("PowerShell"), false);
 });
 
 test("production profiles authorize Implementador tests independently of optional TDD", async () => {
-  const repositoryRoot = path.resolve(import.meta.dirname, "..");
   for (const profilePath of [
     path.join(repositoryRoot, "adapters", "codex", "agents", "agentic-production.toml"),
     path.join(repositoryRoot, "adapters", "claude", "agents", "agentic-production.md"),
@@ -257,6 +284,8 @@ test("orquestar is canonical and Claude discovery files are minimal shims", asyn
   const canonical = await readFile(path.join(repositoryRoot, "skills", "orquestar", "SKILL.md"), "utf8");
   assert.match(canonical, /\^\(Orquesta\|\\\/orquestar\|\\\$orquestar\)/);
   assert.match(canonical, /role supplied by the runtime/i);
+  assert.match(canonical, /agentic-core start.*public seam/is);
+  assert.match(canonical, /Never import.*startOrchestration/is);
   assert.match(canonical, /JSON\.stringify\(brief\).*exactly.*without.*prefix/is);
   assert.match(canonical, /exact complete final response.*public seam/is);
   assert.match(canonical, /Never parse.*extract.*trim.*repair/is);
@@ -265,6 +294,7 @@ test("orquestar is canonical and Claude discovery files are minimal shims", asyn
   assert.match(canonical, /ask.*only.*objective.*verifiable.*criteria/is);
   assert.match(canonical, /reason.*not_specified/is);
   assert.match(canonical, /agentic-grilling.*not.*reason.*missing/is);
+  assert.match(canonical, /result returned by.*submit-handoff.*next runtime decision/is);
   assert.doesNotMatch(canonical, /missing goal, reason, or acceptance criteria/i);
   assert.doesNotMatch(canonical, /Understanding is K\.E\.Y\./);
 

@@ -153,6 +153,7 @@ export async function analyzeQuality({
   tool,
   selection,
   baseline,
+  temporaryRoot,
 }) {
   const started = process.hrtime.bigint();
   const config = await configuration(projectRoot);
@@ -204,9 +205,9 @@ export async function analyzeQuality({
     throw error;
   }
   const coverage = language === "python" && runtime
-    ? await executePythonCoverage(runtime, projectRoot, files)
+    ? await executePythonCoverage(runtime, projectRoot, files, { temporaryRoot })
     : language === "javascript-typescript"
-      ? await executeCoverage(projectRoot, files)
+      ? await executeCoverage(projectRoot, files, { temporaryRoot })
       : {
         attributable: new Set(),
         coveredByFile: new Map(),

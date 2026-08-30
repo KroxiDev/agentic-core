@@ -1323,7 +1323,7 @@ async function retryInvalidNormalHandoff(projectRoot, runRoot, state, runId, err
         quality: previousBrief.quality,
         baselineReport: previousBrief.baselineReport,
       } : {}),
-      skills: role.name === "Implementador" && state.changesExecutableBehavior ? ["agentic-tdd"] : [] });
+      skills: previousBrief.skills ?? [] });
   const result = await persistNormalRole(projectRoot, runRoot, state, role, brief, [
     { role: state.currentRole.name, status: "protocol_retry", summary: protocolErrors.join("; "),
       at: new Date().toISOString() },
@@ -1352,7 +1352,8 @@ async function retryInvalidFullHandoff(projectRoot, runRoot, state, runId, error
         qualityGate: previousBrief.qualityGate,
         quality: previousBrief.quality,
         baselineReport: previousBrief.baselineReport,
-      } : {}) });
+      } : {}),
+      skills: previousBrief.skills ?? [] });
   const result = await persistFullRole(projectRoot, runRoot, state, role, brief, [{
     role: state.currentRole.name, status: "protocol_retry", summary: protocolErrors.join("; "),
     at: new Date().toISOString(),
@@ -1410,14 +1411,24 @@ export async function submitHandoff(options) {
 }
 
 export async function submitRawHandoff({ projectRoot, runId, response }) {
+  const bytes = Buffer.isBuffer(response)
+    ? response
+    : typeof response === "string"
+      ? Buffer.from(response)
+      : null;
+  if (bytes === null) throw new TypeError("Agent hand-off must be raw JSON text or bytes");
+  const transport = { bytes: bytes.byteLength, sha256: sha256(bytes) };
   let handoff;
   try {
-    handoff = parseAgentHandoff(response);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    handoff = parseAgentHandoff(text);
   } catch (error) {
-    return retryInvalidHandoff(path.resolve(projectRoot), runId,
+    const result = await retryInvalidHandoff(path.resolve(projectRoot), runId,
       new OrchestrationError("handoff_invalid", error.message));
+    return { ...result, transport };
   }
-  return submitHandoff({ projectRoot, runId, handoff });
+  const result = await submitHandoff({ projectRoot, runId, handoff });
+  return { ...result, transport };
 }
 
 const MODE_ESCALATIONS = new Set(["light:normal", "light:full", "normal:full"]);

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
@@ -164,15 +164,18 @@ async function configuration(projectRoot) {
   }
 }
 async function copySnapshot(projectRoot, destination) {
-  await cp(projectRoot, destination, {
-    recursive: true,
-    filter: (source) => {
-      const relative = path.relative(projectRoot, source);
-      if (!relative) return true;
-      return !relative.split(path.sep).some((part) => ["node_modules", ".git", ".agentic-core", "coverage", ".venv", "venv",
-        "__pycache__", ".pytest_cache"].includes(part));
-    },
-  });
+  const ignored = new Set(["node_modules", ".git", ".agentic-core", "coverage", ".venv", "venv",
+    "__pycache__", ".pytest_cache"]);
+  await mkdir(destination, { recursive: true });
+  for (const entry of await readdir(projectRoot, { withFileTypes: true })) {
+    if (ignored.has(entry.name)) continue;
+    const source = path.join(projectRoot, entry.name);
+    await cp(source, path.join(destination, entry.name), {
+      recursive: true,
+      filter: (candidate) => !path.relative(projectRoot, candidate).split(path.sep)
+        .some((part) => ignored.has(part)),
+    });
+  }
   const dependencies = path.join(projectRoot, "node_modules");
   try {
     if ((await lstat(dependencies)).isDirectory()) {
@@ -223,8 +226,15 @@ function terminalReport({ started, config, files, targets, status, language, bac
   };
 }
 
-export async function analyzeMutation({ projectRoot, targets, selection, equivalents = [] }) {
+export async function analyzeMutation({
+  projectRoot,
+  targets,
+  selection,
+  equivalents = [],
+  temporaryRoot = tmpdir(),
+}) {
   const started = process.hrtime.bigint();
+  await mkdir(temporaryRoot, { recursive: true });
   const config = await configuration(projectRoot);
   const paths = [...new Set((await Promise.all(targets.map((target) =>
     sourceFiles(path.resolve(projectRoot, target))))).flat())].sort();
@@ -247,8 +257,9 @@ export async function analyzeMutation({ projectRoot, targets, selection, equival
   let coverage;
   try {
     const timeout = testTimeout("AGENTIC_CORE_TEST_BASELINE_TIMEOUT_MS", 30_000);
-    coverage = language === "python" ? await executePythonCoverage(runtime, projectRoot, files, { timeout })
-      : await executeCoverage(projectRoot, files, { timeout });
+    coverage = language === "python"
+      ? await executePythonCoverage(runtime, projectRoot, files, { timeout, temporaryRoot })
+      : await executeCoverage(projectRoot, files, { timeout, temporaryRoot });
   } catch (error) {
     return terminalReport({ started, config, files, targets,
       status: error?.unsupportedEnvironment ? "unsupported_environment" : "baseline_failed",
@@ -272,7 +283,7 @@ export async function analyzeMutation({ projectRoot, targets, selection, equival
       }
     }
     if (coveredMutants.length === 0) continue;
-    const snapshotRoot = await mkdtemp(path.join(tmpdir(), "agentic-core-mutants-"));
+    const snapshotRoot = await mkdtemp(path.join(temporaryRoot, "agentic-core-mutants-"));
     const snapshots = [];
     let preserveEvidence = false;
     try {

@@ -314,6 +314,31 @@ test("Planificador preserves criteria and creates a TDD Implementador", async (t
   assert.deepEqual(implementer.brief.permissions.write, ["production", "tests"]);
 });
 
+test("full protocol retries preserve only the conditional skills of the isolated role", async (t) => {
+  const root = await project(t);
+  const started = await startOrchestration({
+    projectRoot: root,
+    request: "Orquesta full greeting",
+    intention: intention(),
+    planningNeedsHowDecision: true,
+  });
+  const planner = await submitHandoff({
+    projectRoot: root,
+    runId: started.runId,
+    handoff: explorerDone(),
+  });
+  assert.deepEqual(planner.brief.skills, ["agentic-grilling"]);
+
+  const retry = await submitHandoff({
+    projectRoot: root,
+    runId: started.runId,
+    handoff: {},
+  });
+  assert.equal(retry.status, "protocol_retry");
+  assert.equal(retry.role.name, "Planificador");
+  assert.deepEqual(retry.brief.skills, ["agentic-grilling"]);
+});
+
 test("Implementador creates a production-read-only Refactor without Mutation Testing", async (t) => {
   const root = await project(t);
   const started = await startOrchestration({
