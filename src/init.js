@@ -124,13 +124,13 @@ async function fileKind(filePath) {
   }
 }
 
-function appendManagedBlock(existing) {
+export function appendManagedBlock(existing) {
   if (existing.length === 0) return Buffer.from(`${MANAGED_BLOCK}\n`);
   const separator = existing.at(-1) === 0x0a ? "\n" : "\n\n";
   return Buffer.concat([existing, Buffer.from(`${separator}${MANAGED_BLOCK}\n`)]);
 }
 
-function replaceManagedBlock(existing, startMarker, endMarker) {
+export function replaceManagedBlock(existing, startMarker, endMarker) {
   const start = Buffer.from(startMarker);
   const end = Buffer.from(endMarker);
   const startIndex = existing.indexOf(start);
@@ -147,7 +147,7 @@ function replaceManagedBlock(existing, startMarker, endMarker) {
   ]);
 }
 
-function managedBlock(existing, startMarker, endMarker) {
+export function managedBlock(existing, startMarker, endMarker) {
   const start = Buffer.from(startMarker);
   const end = Buffer.from(endMarker);
   const startIndex = existing.indexOf(start);
@@ -194,11 +194,13 @@ function mergeConfig(value) {
   return merged;
 }
 
-function validateOwnership(owner, action = "update") {
+export function validateOwnership(owner, action = "update") {
   if (owner === null || typeof owner !== "object" || Array.isArray(owner)) {
     throw new Error(`Cannot ${action}: ownership manifest is invalid`);
   }
-  if (owner.schemaVersion !== 1 || owner.product !== PRODUCT || typeof owner.installationId !== "string"
+  if (owner.schemaVersion !== 1 || owner.product !== PRODUCT || typeof owner.version !== "string"
+    || owner.version.length === 0 || typeof owner.installationId !== "string"
+    || owner.installationId.length === 0 || owner.configVersion !== CONFIG_VERSION
     || !Array.isArray(owner.resources) || !Array.isArray(owner.managedBlocks)
     || !Array.isArray(owner.ownedDirectories)) {
     throw new Error(`Cannot ${action}: ownership manifest is not a recognized agentic-core installation`);
@@ -217,6 +219,27 @@ function validateOwnership(owner, action = "update") {
       || !/^[0-9a-f]{64}$/.test(block?.sha256))) {
     throw new Error(`Cannot ${action}: ownership manifest does not prove the expected resource boundaries`);
   }
+}
+
+export async function installationDefinition(config = Buffer.from(json(CONFIG))) {
+  const configuration = Buffer.from(config);
+  return {
+    product: PRODUCT,
+    version: await getVersion(),
+    configVersion: CONFIG_VERSION,
+    defaultConfiguration: structuredClone(CONFIG),
+    configurationSchema: structuredClone(CONFIG_SCHEMA),
+    resources: await installationResources(configuration),
+    managedBlocks: ["AGENTS.md", "CLAUDE.md"].map((hostPath) => ({
+      path: hostPath,
+      id: "agentic-core",
+      startMarker: "<!-- AGENTIC_CORE_START -->",
+      endMarker: "<!-- AGENTIC_CORE_END -->",
+      sha256: sha256(Buffer.from(MANAGED_BLOCK)),
+    })),
+    managedBlockContent: Buffer.from(MANAGED_BLOCK),
+    ownedDirectories: [...OWNED_DIRECTORIES],
+  };
 }
 
 function removeManagedBlock(existing, startMarker, endMarker) {

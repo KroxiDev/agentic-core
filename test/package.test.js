@@ -32,6 +32,7 @@ const expectedInventory = [
   "skills/agentic-tdd/SKILL.md",
   "skills/orquestar/SKILL.md",
   "src/claude-read-command-guard.mjs",
+  "src/doctor.js",
   "src/findings.js",
   "src/host-adapter.js",
   "src/init.js",
@@ -109,4 +110,15 @@ test("both CLI entry points work from an installed package", async (t) => {
     });
     assert.match(help.stdout, helpPattern);
   }
+
+  const maintenanceBinary = path.join(installedRoot, "bin", "agentic-core.js");
+  await execFileAsync(process.execPath, [maintenanceBinary, "init", consumer, "--yes"], {
+    cwd: consumer,
+    encoding: "utf8",
+  });
+  const doctor = await execFileAsync(process.execPath, [maintenanceBinary, "doctor", consumer], {
+    cwd: consumer,
+    encoding: "utf8",
+  });
+  assert.equal(JSON.parse(doctor.stdout).status, "healthy");
 });

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
+import { doctorInstallation } from "./doctor.js";
 import { initialize, uninstallInstallation, updateInstallation } from "./init.js";
 import { startOrchestration, submitRawHandoff } from "./orchestration.js";
 import { getVersion } from "./version.js";
@@ -8,7 +9,7 @@ const HELP = `Usage:
   agentic-core init [directory] [--yes] [--replace-conflicts]
   agentic-core update [directory] [--force]
   agentic-core uninstall [directory] [--dry-run] [--force]
-  agentic-core doctor [directory]
+  agentic-core doctor [directory] [--repair]
   agentic-core start [--input <path>]
   agentic-core submit-handoff --run <id> [--input <path>]
   agentic-core --version
@@ -98,6 +99,26 @@ export async function runMaintenanceCli(args, io = process) {
     } finally {
       prompt?.close();
     }
+  }
+
+  if (args[0] === "doctor") {
+    const options = new Set(args.slice(1).filter((argument) => argument.startsWith("-")));
+    for (const option of options) {
+      if (option !== "--repair") {
+        io.stderr.write(`Unknown option: ${option}\n`);
+        return 2;
+      }
+    }
+    const directories = args.slice(1).filter((argument) => !argument.startsWith("-"));
+    if (directories.length > 1) {
+      io.stderr.write("doctor accepts at most one directory\n");
+      return 2;
+    }
+    const result = await doctorInstallation(directories[0] ?? process.cwd(), {
+      repair: options.has("--repair"),
+    });
+    io.stdout.write(`${JSON.stringify(result.report, null, 2)}\n`);
+    return result.exitCode;
   }
 
   if (args[0] === "start") {
