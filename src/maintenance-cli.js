@@ -2,7 +2,12 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { doctorInstallation } from "./doctor.js";
 import { initialize, uninstallInstallation, updateInstallation } from "./init.js";
-import { startOrchestration, submitRawHandoff } from "./orchestration.js";
+import {
+  approveModeChange,
+  resumeOrchestration,
+  startOrchestration,
+  submitRawHandoff,
+} from "./orchestration.js";
 import { getVersion } from "./version.js";
 
 const HELP = `Usage:
@@ -11,6 +16,8 @@ const HELP = `Usage:
   agentic-core uninstall [directory] [--dry-run] [--force]
   agentic-core doctor [directory] [--repair]
   agentic-core start [--input <path>]
+  agentic-core resume [--run <id>]
+  agentic-core approve-mode-change --run <id> --to <normal|full>
   agentic-core submit-handoff --run <id> [--input <path>]
   agentic-core --version
   agentic-core --help`;
@@ -142,6 +149,35 @@ export async function runMaintenanceCli(args, io = process) {
       intention: payload.intention,
       changesExecutableBehavior: payload.changesExecutableBehavior,
       planningNeedsHowDecision: payload.planningNeedsHowDecision,
+    });
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return 0;
+  }
+
+  if (args[0] === "resume") {
+    if (args.length !== 1 && (args.length !== 3 || args[1] !== "--run" || !args[2])) {
+      io.stderr.write("Usage: agentic-core resume [--run <id>]\n");
+      return 2;
+    }
+    const result = await resumeOrchestration({
+      projectRoot: process.cwd(),
+      runId: args[2],
+    });
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return 0;
+  }
+
+  if (args[0] === "approve-mode-change") {
+    if (args.length !== 5 || args[1] !== "--run" || !args[2]
+      || args[3] !== "--to" || !["normal", "full"].includes(args[4])) {
+      io.stderr.write("Usage: agentic-core approve-mode-change --run <id> --to <normal|full>\n");
+      return 2;
+    }
+    const result = await approveModeChange({
+      projectRoot: process.cwd(),
+      runId: args[2],
+      targetMode: args[4],
+      approved: true,
     });
     io.stdout.write(`${JSON.stringify(result)}\n`);
     return 0;

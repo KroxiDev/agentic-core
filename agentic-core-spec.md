@@ -235,7 +235,7 @@ Las Golden Rules proporcionadas serán la única política canónica del product
 72. La skill `orquestar` conducirá el runtime, entregará briefs completos sin prefijos y aceptará únicamente el JSON final del rol.
 73. `agentic-grilling` se cargará al aclarar intención inicial o cuando el Planificador enfrente decisiones reales del HOW; no estará presente en todos los briefs.
 74. `agentic-tdd` se cargará exclusivamente en Implementadores orquestados que cambien comportamiento ejecutable y estandarizará seam público, rojo válido, implementación mínima, verde, refactor y nueva validación.
-75. El CLI de mantenimiento ofrecerá inicialización, actualización, desinstalación, diagnóstico y versión. El CLI de calidad ofrecerá scan, C.R.A.P. y mutación por ejecución u objetivo explícito.
+75. El CLI de mantenimiento ofrecerá inicialización, actualización, desinstalación, diagnóstico y versión, además de los seams públicos `start`, `resume`, `approve-mode-change` y `submit-handoff` que necesita la skill instalada para conducir el runtime sin importar sus funciones internas. El CLI de calidad ofrecerá scan, C.R.A.P. y mutación por ejecución u objetivo explícito.
 76. La instalación registrará producto, versión, identificador, recursos gestionados, hashes, bloques gestionados y versión de configuración en un manifiesto de propiedad.
 77. Los conflictos aislados podrán reemplazarse solo mediante autorización explícita, con respaldo, validación y restauración ante fallo. Una instalación ajena completa detendrá el proceso.
 78. `--yes` solo resolverá decisiones no destructivas; una opción específica autorizará reemplazar conflictos aislados y `--force` se limitará a recursos divergentes que ya pertenezcan al producto.

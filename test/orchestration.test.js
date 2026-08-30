@@ -212,6 +212,82 @@ test("an invalid hand-off gets one fresh-role protocol retry without consuming r
   assert.equal(state.status, "failed");
 });
 
+test("a retried light Implementador keeps the original authority and reaches Tester without rework", async (t) => {
+  const project = await createProject(t);
+  await writeFile(path.join(project, "package.json"), JSON.stringify({
+    type: "module",
+    scripts: { test: "node --test" },
+  }));
+  const started = await startOrchestration({
+    projectRoot: project,
+    request: "Orquesta light add greeting",
+    intention: intent(),
+    changesExecutableBehavior: true,
+  });
+
+  const retry = await submitRawHandoff({
+    projectRoot: project,
+    runId: started.runId,
+    response: "INVALID_HANDOFF",
+  });
+  assert.equal(retry.status, "protocol_retry");
+  assert.equal(retry.role.name, "Implementador");
+  assert.notEqual(retry.role.instanceId, started.role.instanceId);
+  assert.equal(retry.reworkCount, 0);
+  assert.deepEqual(retry.brief.intention, started.brief.intention);
+  assert.deepEqual(retry.brief.sources, started.brief.sources);
+  assert.deepEqual(retry.brief.policy, started.brief.policy);
+  assert.deepEqual(retry.brief.configuration, started.brief.configuration);
+  assert.deepEqual(retry.brief.skills, ["agentic-tdd"]);
+  assert.deepEqual(retry.brief.permissions, { read: true, write: ["production", "tests"] });
+  assert.equal(Object.hasOwn(retry.brief, "previousHandoff"), false);
+
+  await mkdir(path.join(project, "src"));
+  await mkdir(path.join(project, "test"));
+  await writeFile(path.join(project, "src", "greeting.js"),
+    "export function greeting() { return 'hello'; }\n");
+  await writeFile(path.join(project, "test", "greeting.test.js"), [
+    'import assert from "node:assert/strict";',
+    'import test from "node:test";',
+    'import { greeting } from "../src/greeting.js";',
+    'test("greeting", () => assert.equal(greeting(), "hello"));',
+    "",
+  ].join("\n"));
+  const tester = await submitRawHandoff({
+    projectRoot: project,
+    runId: started.runId,
+    response: JSON.stringify(implementerHandoff()),
+  });
+  assert.equal(tester.status, "continued");
+  assert.equal(tester.role.name, "Tester");
+
+  const gate = await execFileAsync(process.execPath, [qualityCli,
+    "crap", "--run", started.runId, "--output", "artifacts/crap.json"],
+  { cwd: project, encoding: "utf8" });
+  const result = await submitRawHandoff({
+    projectRoot: project,
+    runId: started.runId,
+    response: JSON.stringify({
+      schemaVersion: 1,
+      status: "completed",
+      summary: "All independent checks passed",
+      payload: {
+        findings: [],
+        criteria: [{
+          criterion: "The CLI prints the configured greeting",
+          status: "passed",
+          evidence: "observed output",
+        }],
+        tests: { status: "passed", evidence: "node --test" },
+        goldenRules: { status: "passed", evidence: "reviewed canonical policy" },
+        crap: JSON.parse(gate.stdout),
+      },
+    }),
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.reworkCount, 0);
+});
+
 test("raw native responses use one deterministic protocol retry and never extract inner JSON", async (t) => {
   const project = await createProject(t);
   await mkdir(path.join(project, "src"));

@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { initialize } from "../src/init.js";
-import { startOrchestration } from "../src/orchestration.js";
+import { startOrchestration, submitHandoff } from "../src/orchestration.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -29,6 +29,8 @@ test("the maintenance CLI reports the packaged version and help", async () => {
   const help = await runBinary("bin/agentic-core.js", ["--help"]);
   assert.match(help.stdout, /agentic-core init/);
   assert.match(help.stdout, /agentic-core start/);
+  assert.match(help.stdout, /agentic-core resume/);
+  assert.match(help.stdout, /agentic-core approve-mode-change/);
 });
 
 test("the quality CLI reports the packaged version and help", async () => {
@@ -167,4 +169,71 @@ test("submit-handoff records the exact invalid bytes before requesting a protoco
     bytes: Buffer.byteLength(invalid),
     sha256: createHash("sha256").update(invalid).digest("hex"),
   });
+});
+
+test("resume lists runs without choosing and resumes an explicitly selected run", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic public resume "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await initialize(root);
+  const started = await startOrchestration({
+    projectRoot: root,
+    request: "Orquesta light resume greeting",
+    intention: {
+      objective: "Resume greeting",
+      constraints: [],
+      criteria: ["The selected run resumes"],
+    },
+  });
+
+  const listed = JSON.parse((await runBinary("bin/agentic-core.js", ["resume"], { cwd: root })).stdout);
+  assert.equal(listed.status, "selection_required");
+  assert.deepEqual(listed.runs.map(({ id }) => id), [started.runId]);
+
+  const resumed = JSON.parse((await runBinary(
+    "bin/agentic-core.js",
+    ["resume", "--run", started.runId],
+    { cwd: root },
+  )).stdout);
+  assert.equal(resumed.status, "resumed");
+  assert.equal(resumed.role.name, "Implementador");
+  assert.equal(resumed.runId, started.runId);
+});
+
+test("approve-mode-change exposes only an explicitly approved pending escalation", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic public escalation "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await initialize(root);
+  const started = await startOrchestration({
+    projectRoot: root,
+    request: "Orquesta light escalate greeting",
+    intention: {
+      objective: "Escalate greeting",
+      constraints: [],
+      criteria: ["The approved graph starts at its first role"],
+    },
+  });
+  await submitHandoff({
+    projectRoot: root,
+    runId: started.runId,
+    handoff: {
+      schemaVersion: 1,
+      status: "needs_mode_change",
+      summary: "Planning authority is required",
+      payload: {
+        findings: [],
+        requestedMode: "normal",
+        reason: "The HOW needs an explicit plan",
+      },
+    },
+  });
+
+  const escalated = JSON.parse((await runBinary(
+    "bin/agentic-core.js",
+    ["approve-mode-change", "--run", started.runId, "--to", "normal"],
+    { cwd: root },
+  )).stdout);
+  assert.equal(escalated.status, "escalated");
+  assert.equal(escalated.mode, "normal");
+  assert.equal(escalated.role.name, "Planificador");
+  assert.equal(escalated.reworkCount, 0);
 });

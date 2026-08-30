@@ -12,6 +12,8 @@ const npmCli = process.env.npm_execpath
   ?? path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
 const expectedInventory = [
   "LICENSE",
+  "README.md",
+  "THIRD_PARTY_NOTICES.md",
   "adapters/claude/agents/agentic-docs.md",
   "adapters/claude/agents/agentic-production.md",
   "adapters/claude/agents/agentic-read.md",
@@ -57,12 +59,16 @@ async function temporaryDirectory(t, prefix) {
   return directory;
 }
 
-async function runNpm(args, options) {
-  return execFileAsync(process.execPath, [npmCli, ...args], options);
+async function runNpm(args, { cache, ...options }) {
+  return execFileAsync(process.execPath, [npmCli, ...args, "--cache", cache], {
+    ...options,
+  });
 }
 
-test("npm pack contains exactly the initial product inventory", async () => {
+test("npm pack contains exactly the initial product inventory", async (t) => {
+  const cache = await temporaryDirectory(t, "agentic-core-npm-cache-");
   const { stdout } = await runNpm(["pack", "--dry-run", "--json"], {
+    cache,
     cwd: repositoryRoot,
     encoding: "utf8",
   });
@@ -76,15 +82,16 @@ test("npm pack contains exactly the initial product inventory", async () => {
 test("both CLI entry points work from an installed package", async (t) => {
   const packDirectory = await temporaryDirectory(t, "agentic-core-pack-");
   const consumer = await temporaryDirectory(t, "agentic core consumer ");
+  const cache = await temporaryDirectory(t, "agentic-core-npm-cache-");
   const { stdout } = await runNpm(
     ["pack", "--json", "--pack-destination", packDirectory],
-    { cwd: repositoryRoot, encoding: "utf8" },
+    { cache, cwd: repositoryRoot, encoding: "utf8" },
   );
   const [pack] = JSON.parse(stdout);
   const tarball = path.join(packDirectory, pack.filename);
   await runNpm(
     ["install", tarball, "--prefix", consumer, "--ignore-scripts", "--no-audit", "--no-fund"],
-    { cwd: consumer, encoding: "utf8" },
+    { cache, cwd: consumer, encoding: "utf8" },
   );
 
   const installedRoot = path.join(consumer, "node_modules", "@kroxidev", "agentic-core");
@@ -93,6 +100,8 @@ test("both CLI entry points work from an installed package", async (t) => {
     "agentic-core": "bin/agentic-core.js",
     "agentic-quality": "bin/agentic-quality.js",
   });
+  assert.match(await readFile(path.join(installedRoot, "README.md"), "utf8"), /Implementador → Tester/);
+  assert.match(await readFile(path.join(installedRoot, "THIRD_PARTY_NOTICES.md"), "utf8"), /typescript/);
 
   for (const [binary, helpPattern] of [
     ["agentic-core.js", /agentic-core init/],

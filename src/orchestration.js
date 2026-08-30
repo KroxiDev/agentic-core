@@ -1375,11 +1375,21 @@ async function retryInvalidHandoff(projectRoot, runId, error) {
   }
   const role = { sequence: state.currentRole.sequence + 1, name: state.currentRole.name, instanceId: randomUUID() };
   const previousBrief = await currentBrief(runRoot, state.currentRole.sequence);
-  const intention = role.name === "Tester"
-    ? JSON.parse(await readFile(path.join(runRoot, "intention.json"), "utf8"))
-    : null;
+  const persistedIntention = JSON.parse(await readFile(path.join(runRoot, "intention.json"), "utf8"));
+  const requestSource = { kind: "original_request", path: "sources/request.txt",
+    sha256: state.sourceHashes.originalRequest };
+  const policySource = { kind: "golden_rules", path: "../../golden-rules.md",
+    sha256: state.sourceHashes.goldenRules };
+  const preservedContext = {};
+  for (const key of ["previousHandoff", "quality", "reviewPolicy", "divergence", "reworkCount"]) {
+    if (Object.hasOwn(previousBrief, key)) preservedContext[key] = structuredClone(previousBrief[key]);
+  }
+  const intention = structuredClone(previousBrief.intention ?? persistedIntention);
   const brief = { schemaVersion: 1, runId, mode: "light", role,
     mission: "Return a valid hand-off for the same role.", contract: LIGHT_CONTRACT, protocolErrors,
+    intention, ...preservedContext,
+    sources: structuredClone(previousBrief.sources ?? [requestSource]),
+    policy: structuredClone(previousBrief.policy ?? policySource),
     configuration: state.configurationSnapshot, skills: role.name === "Implementador" ? previousBrief.skills ?? [] : [],
     ...(role.name === "Tester" ? lightTesterContract(runId, intention) : {}),
     permissions: lightPermissions(role.name) };
