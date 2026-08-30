@@ -15,7 +15,7 @@
 En PowerShell, desde la raíz del proyecto:
 
 ```powershell
-npm.cmd install --save-dev @kroxidev/agentic-core@0.1.0
+npm.cmd install --save-dev github:KroxiDev/agentic-core
 npx.cmd agentic-core init . --yes
 ```
 
@@ -26,7 +26,7 @@ npx.cmd agentic-core init . --yes
 Actualiza primero el paquete y después los recursos instalados:
 
 ```powershell
-npm.cmd install --save-dev @kroxidev/agentic-core@0.1.0
+npm.cmd install --save-dev github:KroxiDev/agentic-core
 npx.cmd agentic-core update .
 ```
 
