@@ -5,6 +5,7 @@
 ## Requisitos y soporte
 
 - Node.js 20 o superior.
+- Git accesible para npm y acceso de red a GitHub durante instalación y actualización.
 - Windows 10 y Windows 11 son las únicas plataformas con soporte oficial en `0.1.0`.
 - Python 3.10 o superior solo es necesario cuando el proyecto contiene objetivos Python. `coverage.py` es opcional; si no está disponible se usa el tracer de la biblioteca estándar.
 - CodeGraph y Engram son integraciones opcionales. No participan en preflight, contratos, estado, aceptación ni recuperación.
@@ -12,46 +13,61 @@
 
 ## Instalación
 
-En PowerShell, desde la raíz del proyecto:
+En PowerShell, desde la raíz del proyecto, previsualiza primero la instalación:
 
 ```powershell
-npm.cmd install --save-dev github:KroxiDev/agentic-core
-npx.cmd agentic-core init . --yes
+npx.cmd --yes github:KroxiDev/agentic-core init . --yes --dry-run
 ```
 
-`init` instala configuración, Golden Rules, perfiles nativos y skills para ambos hosts, y añade un bloque gestionado a `AGENTS.md` y `CLAUDE.md`. La operación es transaccional: ante un fallo restaura el árbol previo. Un conflicto aislado requiere `--replace-conflicts`; una instalación completa ajena siempre detiene la operación.
+Si el plan es correcto, instala con una sola invocación:
+
+```powershell
+npx.cmd --yes github:KroxiDev/agentic-core init . --yes
+```
+
+`init --dry-run` emite el plan JSON completo —recursos, conflictos, bloques gestionados, manifiesto y runtime— sin crear archivos, directorios, dependencias ni estado. La ejecución real instala configuración, Golden Rules, perfiles nativos y skills para ambos hosts, y añade un bloque gestionado a `AGENTS.md` y `CLAUDE.md`. Un conflicto aislado requiere `--replace-conflicts`; una instalación completa ajena o un límite ambiguo siempre detienen la operación.
+
+La invocación resuelve una revisión de `KroxiDev/agentic-core` una sola vez y conserva transaccionalmente ese entorno exacto en `.agentic-core/runtime`. El manifiesto registra el commit y el hash del árbol; la skill usa `.agentic-core/runtime-launcher.mjs` para mantener disponibles los seams `agentic-core` y `agentic-quality` después de que finaliza `npx`. No se añade `package.json`, lockfile ni `node_modules` a la raíz del proyecto, por lo que también funciona en proyectos Python. `agentic-core` no necesita estar publicado en npm.
+
+El bootstrap no instala comandos globales ni modifica `PATH`: los comandos de la skill pasan por el launcher gestionado. La operación es transaccional y restaura el árbol previo ante un fallo; el cache efímero de `npx` queda fuera del proyecto y continúa bajo gestión de npm.
 
 ## Actualización
 
-Actualiza primero el paquete y después los recursos instalados:
+Previsualiza la revisión GitHub y todos los recursos que cambiarían:
 
 ```powershell
-npm.cmd install --save-dev github:KroxiDev/agentic-core
-npx.cmd agentic-core update .
+npx.cmd --yes github:KroxiDev/agentic-core update . --dry-run
 ```
 
-La actualización conserva una configuración válida, completa claves nuevas y reemplaza recursos solo dentro del manifiesto de propiedad. Si un recurso propio diverge, enumera el conflicto y exige `--force`; no reemplaza instalaciones ajenas. Las ejecuciones persistidas incompatibles con el grafo instalado se eliminan durante esta actualización previa a publicación, sin migración silenciosa.
+Aplica la actualización con una sola invocación:
+
+```powershell
+npx.cmd --yes github:KroxiDev/agentic-core update .
+```
+
+Cada invocación fija una sola revisión GitHub. El preview no modifica configuración, recursos, manifiestos, dependencias, package.json, lockfiles ni runs. La ejecución real conserva una configuración válida, completa claves nuevas y reemplaza transaccionalmente tanto los recursos como el runtime persistido con la revisión resuelta por esa misma invocación. Si un recurso propio diverge, enumera el conflicto y exige añadir `--force`; no reemplaza instalaciones ajenas. Las ejecuciones persistidas incompatibles con el grafo instalado se eliminan sin migración silenciosa.
 
 ## Diagnóstico
 
 ```powershell
-npx.cmd agentic-core doctor .
-npx.cmd agentic-core doctor . --repair
+npx.cmd --yes github:KroxiDev/agentic-core doctor .
+npx.cmd --yes github:KroxiDev/agentic-core doctor . --dry-run
+npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair
+npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair --dry-run
 ```
 
-`doctor` emite JSON accionable sobre manifiesto, hashes, configuración, bloques gestionados, adapters, runtimes requeridos, runs incompletos, workers, transacciones y backends de calidad. `--repair` actúa únicamente cuando la propiedad y la forma esperada del recurso son demostrables, y aplica toda reparación en una transacción. No repara archivos ajenos ni retira otra capa.
+`doctor` emite JSON accionable sobre manifiesto, hashes, configuración, bloques gestionados, adapters, runtimes requeridos, runs incompletos, workers, transacciones y backends de calidad. `doctor --dry-run` calcula el mismo plan que `--repair --dry-run` sin escribir; conserva un código de salida no cero mientras existan errores. `--repair` actúa únicamente cuando la propiedad y la forma esperada del recurso son demostrables, y aplica toda reparación en una transacción. No repara archivos ajenos, no reemplaza un runtime divergente ni retira otra capa.
 
 ## Desinstalación
 
 Previsualiza primero el alcance:
 
 ```powershell
-npx.cmd agentic-core uninstall . --dry-run
-npx.cmd agentic-core uninstall .
-npm.cmd uninstall @kroxidev/agentic-core
+npx.cmd --yes github:KroxiDev/agentic-core uninstall . --dry-run
+npx.cmd --yes github:KroxiDev/agentic-core uninstall .
 ```
 
-La desinstalación elimina recursos registrados, estado operativo y directorios propios que queden vacíos. Conserva archivos desconocidos, otras skills, otros adapters, texto exterior a los bloques gestionados y recursos propios divergentes sin autorización. `--force` autoriza retirar únicamente divergencias que el manifiesto demuestra como propias.
+El preview enumera exactamente lo que retiraría y no modifica el proyecto. La desinstalación real elimina recursos registrados, el runtime persistido cuyo hash coincide, estado operativo y directorios propios que queden vacíos. Conserva archivos desconocidos, otras skills, otros adapters, texto exterior a los bloques gestionados y recursos propios divergentes sin autorización. `--force` autoriza retirar únicamente divergencias que el manifiesto demuestra como propias.
 
 ## Activación explícita y modo directo
 
@@ -137,8 +153,8 @@ La configuración se captura al iniciar el run, por lo que una edición posterio
 Para listar runs reanudables sin seleccionar uno automáticamente:
 
 ```powershell
-npx.cmd agentic-core resume
-npx.cmd agentic-core resume --run <runId>
+node .agentic-core/runtime-launcher.mjs agentic-core resume
+node .agentic-core/runtime-launcher.mjs agentic-core resume --run <runId>
 ```
 
 La reanudación valida schema, fuentes, rutas y hashes. Una fuente canónica divergente falla; una entrada de calidad divergente vuelve obsoleto el reporte y devuelve el run al primer gate que debe repetirse. Estados de grafos antiguos incompatibles fallan explícitamente.
@@ -146,7 +162,7 @@ La reanudación valida schema, fuentes, rutas y hashes. Una fuente canónica div
 Solo se permiten `light` → `normal`, `light` → `full` y `normal` → `full`. El hand-off `needs_mode_change` deja la solicitud pendiente; después de obtener aprobación explícita del usuario, la skill usa:
 
 ```powershell
-npx.cmd agentic-core approve-mode-change --run <runId> --to <normal|full>
+node .agentic-core/runtime-launcher.mjs agentic-core approve-mode-change --run <runId> --to <normal|full>
 ```
 
 La escalada empieza en el primer rol del grafo destino, reinicia solo su presupuesto de retrabajo y conserva solicitud, intención, archivos, tests, plan, blocker accionable y reportes cuyos hashes sigan vigentes.
@@ -172,8 +188,8 @@ La skill instalada conduce normalmente estos seams. Para una integración nativa
 El host debe crear el perfil que devuelve el runtime y pasarle exactamente `JSON.stringify(brief)`. Su respuesta final completa se reenvía sin inspección ni reparación:
 
 ```powershell
-npx.cmd agentic-core start --input start.json
-npx.cmd agentic-core submit-handoff --run <runId> --input native-response.json
+node .agentic-core/runtime-launcher.mjs agentic-core start --input start.json
+node .agentic-core/runtime-launcher.mjs agentic-core submit-handoff --run <runId> --input native-response.json
 ```
 
 Un harness puede observar y recopilar evidencia, pero no sustituir el loop nativo ni simular agentes para una aceptación manual.
@@ -197,11 +213,11 @@ Son necesariamente advisory la extensibilidad futura no solicitada, inputs no so
 Los comandos independientes aceptan exactamente un `--run <id>` o un `--target <path>`:
 
 ```powershell
-npx.cmd agentic-quality scan --target src
-npx.cmd agentic-quality crap --target src
-npx.cmd agentic-quality mutate --target src
-npx.cmd agentic-quality crap --run <runId> --output artifacts/crap.json
-npx.cmd agentic-quality mutate --run <runId> --output artifacts/mutation.json
+node .agentic-core/runtime-launcher.mjs agentic-quality scan --target src
+node .agentic-core/runtime-launcher.mjs agentic-quality crap --target src
+node .agentic-core/runtime-launcher.mjs agentic-quality mutate --target src
+node .agentic-core/runtime-launcher.mjs agentic-quality crap --run <runId> --output artifacts/crap.json
+node .agentic-core/runtime-launcher.mjs agentic-quality mutate --run <runId> --output artifacts/mutation.json
 ```
 
 `mutation` es alias de `mutate`. Los códigos de salida son 0 para aprobado/no aplicable, 1 para gate fallido, 2 para entorno o lenguaje no soportado, 3 para baseline fallido, 4 para uso/configuración inválidos y 5 para error interno o de restauración.

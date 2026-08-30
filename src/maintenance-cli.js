@@ -11,10 +11,10 @@ import {
 import { getVersion } from "./version.js";
 
 const HELP = `Usage:
-  agentic-core init [directory] [--yes] [--replace-conflicts]
-  agentic-core update [directory] [--force]
+  agentic-core init [directory] [--yes] [--replace-conflicts] [--dry-run]
+  agentic-core update [directory] [--force] [--dry-run]
   agentic-core uninstall [directory] [--dry-run] [--force]
-  agentic-core doctor [directory] [--repair]
+  agentic-core doctor [directory] [--repair] [--dry-run]
   agentic-core start [--input <path>]
   agentic-core resume [--run <id>]
   agentic-core approve-mode-change --run <id> --to <normal|full>
@@ -34,9 +34,14 @@ export async function runMaintenanceCli(args, io = process) {
   }
 
   if (args[0] === "init") {
-    const options = new Set(args.slice(1).filter((argument) => argument.startsWith("-")));
+    const optionArguments = args.slice(1).filter((argument) => argument.startsWith("-"));
+    const options = new Set(optionArguments);
+    if (options.size !== optionArguments.length) {
+      io.stderr.write("An option was specified more than once\n");
+      return 2;
+    }
     for (const option of options) {
-      if (option !== "--yes" && option !== "--replace-conflicts") {
+      if (option !== "--yes" && option !== "--replace-conflicts" && option !== "--dry-run") {
         io.stderr.write(`Unknown option: ${option}\n`);
         return 2;
       }
@@ -47,16 +52,26 @@ export async function runMaintenanceCli(args, io = process) {
       return 2;
     }
     const result = await initialize(directories[0] ?? process.cwd(), {
+      dryRun: options.has("--dry-run"),
       replaceConflicts: options.has("--replace-conflicts"),
     });
+    if (result.dryRun) {
+      io.stdout.write(`${JSON.stringify(result.plan, null, 2)}\n`);
+      return result.exitCode;
+    }
     io.stdout.write(`Installed agentic-core ${result.version} in ${result.projectRoot}\n`);
     return 0;
   }
 
   if (args[0] === "update") {
-    const options = new Set(args.slice(1).filter((argument) => argument.startsWith("-")));
+    const optionArguments = args.slice(1).filter((argument) => argument.startsWith("-"));
+    const options = new Set(optionArguments);
+    if (options.size !== optionArguments.length) {
+      io.stderr.write("An option was specified more than once\n");
+      return 2;
+    }
     for (const option of options) {
-      if (option !== "--force") {
+      if (option !== "--force" && option !== "--dry-run") {
         io.stderr.write(`Unknown option: ${option}\n`);
         return 2;
       }
@@ -67,14 +82,24 @@ export async function runMaintenanceCli(args, io = process) {
       return 2;
     }
     const result = await updateInstallation(directories[0] ?? process.cwd(), {
+      dryRun: options.has("--dry-run"),
       force: options.has("--force"),
     });
+    if (result.dryRun) {
+      io.stdout.write(`${JSON.stringify(result.plan, null, 2)}\n`);
+      return result.exitCode;
+    }
     io.stdout.write(`Updated agentic-core ${result.version} in ${result.projectRoot}\n`);
     return 0;
   }
 
   if (args[0] === "uninstall") {
-    const options = new Set(args.slice(1).filter((argument) => argument.startsWith("-")));
+    const optionArguments = args.slice(1).filter((argument) => argument.startsWith("-"));
+    const options = new Set(optionArguments);
+    if (options.size !== optionArguments.length) {
+      io.stderr.write("An option was specified more than once\n");
+      return 2;
+    }
     for (const option of options) {
       if (option !== "--dry-run" && option !== "--force") {
         io.stderr.write(`Unknown option: ${option}\n`);
@@ -109,9 +134,14 @@ export async function runMaintenanceCli(args, io = process) {
   }
 
   if (args[0] === "doctor") {
-    const options = new Set(args.slice(1).filter((argument) => argument.startsWith("-")));
+    const optionArguments = args.slice(1).filter((argument) => argument.startsWith("-"));
+    const options = new Set(optionArguments);
+    if (options.size !== optionArguments.length) {
+      io.stderr.write("An option was specified more than once\n");
+      return 2;
+    }
     for (const option of options) {
-      if (option !== "--repair") {
+      if (option !== "--repair" && option !== "--dry-run") {
         io.stderr.write(`Unknown option: ${option}\n`);
         return 2;
       }
@@ -122,6 +152,7 @@ export async function runMaintenanceCli(args, io = process) {
       return 2;
     }
     const result = await doctorInstallation(directories[0] ?? process.cwd(), {
+      dryRun: options.has("--dry-run"),
       repair: options.has("--repair"),
     });
     io.stdout.write(`${JSON.stringify(result.report, null, 2)}\n`);

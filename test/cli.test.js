@@ -52,6 +52,23 @@ test("the maintenance CLI runs in a project path containing spaces", async () =>
   assert.equal(result.stdout.trim(), "0.1.0");
 });
 
+test("maintenance dry-run accepts only the canonical flag once and rejects command-specific ambiguity", async () => {
+  for (const args of [
+    ["init", ".", "--dry-run", "--dry-run"],
+    ["init", ".", "--dry-run", "--force"],
+    ["update", ".", "--dry-run", "--yes"],
+    ["uninstall", ".", "--dryrun"],
+    ["uninstall", ".", "--dry-run", "--yes"],
+    ["doctor", ".", "--dry-run", "--force"],
+  ]) {
+    await assert.rejects(runBinary("bin/agentic-core.js", args), (error) => {
+      assert.equal(error.code, 2, args.join(" "));
+      assert.match(error.stderr, /Unknown option|specified more than once/);
+      return true;
+    });
+  }
+});
+
 test("start activates orchestration through the public CLI and returns the runtime-selected role", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "agentic public start "));
   t.after(() => rm(root, { recursive: true, force: true }));

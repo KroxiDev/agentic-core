@@ -32,6 +32,27 @@ test("the shipped README covers the complete operational lifecycle", async () =>
   assert.match(readme, /solicitud sin activador[\s\S]*no crea coordinador, run, estado ni subagentes/);
 });
 
+test("the README documents only the verified one-shot GitHub maintenance flow", async () => {
+  const readme = await read("README.md");
+  for (const command of [
+    "npx.cmd --yes github:KroxiDev/agentic-core init . --yes",
+    "npx.cmd --yes github:KroxiDev/agentic-core init . --yes --dry-run",
+    "npx.cmd --yes github:KroxiDev/agentic-core update .",
+    "npx.cmd --yes github:KroxiDev/agentic-core update . --dry-run",
+    "npx.cmd --yes github:KroxiDev/agentic-core doctor .",
+    "npx.cmd --yes github:KroxiDev/agentic-core doctor . --dry-run",
+    "npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair",
+    "npx.cmd --yes github:KroxiDev/agentic-core uninstall . --dry-run",
+    "npx.cmd --yes github:KroxiDev/agentic-core uninstall .",
+  ]) {
+    assert.ok(readme.includes(command), `README is missing ${command}`);
+  }
+  assert.match(readme, /\.agentic-core\/runtime/);
+  assert.match(readme, /no necesita estar publicado en npm/i);
+  assert.doesNotMatch(readme, /npm\.cmd install --save-dev github:KroxiDev\/agentic-core/);
+  assert.doesNotMatch(readme, /npm\.cmd uninstall @kroxidev\/agentic-core/);
+});
+
 test("the documented graphs, budgets and automatic quality gates match the runtime", async () => {
   const readme = await read("README.md");
 

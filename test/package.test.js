@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -49,6 +49,8 @@ const expectedInventory = [
   "src/quality/mutation.js",
   "src/quality/python-helper.py",
   "src/quality/python.js",
+  "src/runtime-launcher.mjs",
+  "src/runtime.js",
   "src/transaction.js",
   "src/version.js",
 ];
@@ -63,6 +65,27 @@ async function runNpm(args, { cache, ...options }) {
   return execFileAsync(process.execPath, [npmCli, ...args, "--cache", cache], {
     ...options,
   });
+}
+
+async function isolatedRuntimeSource(t, tarball, cache) {
+  const runtime = await temporaryDirectory(t, "agentic-core-runtime-source-");
+  await runNpm(
+    ["install", tarball, "--prefix", runtime, "--ignore-scripts", "--no-audit", "--no-fund"],
+    { cache, cwd: runtime, encoding: "utf8" },
+  );
+  const spec = "github:KroxiDev/agentic-core";
+  const commit = "348942743d01227c60ba707e22f5c3976fe6e4e7";
+  await writeFile(path.join(runtime, "package.json"), `${JSON.stringify({
+    dependencies: { "@kroxidev/agentic-core": spec },
+    _npx: { packages: [spec] },
+  }, null, 2)}\n`);
+  const lockPath = path.join(runtime, "package-lock.json");
+  const lock = JSON.parse(await readFile(lockPath, "utf8"));
+  lock.packages[""].dependencies = { "@kroxidev/agentic-core": spec };
+  lock.packages["node_modules/@kroxidev/agentic-core"].resolved =
+    `git+ssh://git@github.com/KroxiDev/agentic-core.git#${commit}`;
+  await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+  return runtime;
 }
 
 test("npm pack contains exactly the initial product inventory", async (t) => {
@@ -130,4 +153,59 @@ test("both CLI entry points work from an installed package", async (t) => {
     encoding: "utf8",
   });
   assert.equal(JSON.parse(doctor.stdout).status, "healthy");
+});
+
+test("a one-shot npm exec candidate previews cleanly and leaves both persisted runtime seams usable", async (t) => {
+  const packDirectory = await temporaryDirectory(t, "agentic-core-bootstrap-pack-");
+  const cache = await temporaryDirectory(t, "agentic-core-bootstrap-cache-");
+  const { stdout } = await runNpm(
+    ["pack", "--json", "--pack-destination", packDirectory],
+    { cache, cwd: repositoryRoot, encoding: "utf8" },
+  );
+  const [pack] = JSON.parse(stdout);
+  const tarball = path.join(packDirectory, pack.filename);
+  const runtime = await isolatedRuntimeSource(t, tarball, cache);
+  const environment = {
+    ...Object.fromEntries(Object.entries(process.env).filter(
+      ([key]) => key.toLowerCase() !== "npm_config_cache",
+    )),
+    NODE_ENV: "test",
+    AGENTIC_CORE_TEST_RUNTIME_ROOT: runtime,
+    NPM_CONFIG_CACHE: cache,
+  };
+  const runCandidate = (cwd, args) => execFileAsync(process.execPath, [
+    npmCli,
+    "exec",
+    "--yes",
+    "--package",
+    tarball,
+    "--",
+    "agentic-core",
+    ...args,
+  ], { cwd, encoding: "utf8", env: environment });
+
+  const previewProject = await temporaryDirectory(t, "agentic core bootstrap preview ");
+  await writeFile(path.join(previewProject, ".hidden"), Buffer.from([0x00, 0xff]));
+  const preview = JSON.parse((await runCandidate(previewProject, ["init", ".", "--yes", "--dry-run"])).stdout);
+  assert.equal(preview.status, "ready");
+  assert.deepEqual(await readdir(previewProject), [".hidden"]);
+  assert.deepEqual(await readFile(path.join(previewProject, ".hidden")), Buffer.from([0x00, 0xff]));
+
+  const project = await temporaryDirectory(t, "agentic core bootstrap consumer ");
+  const initialized = await runCandidate(project, ["init", ".", "--yes"]);
+  assert.match(initialized.stdout, /Installed agentic-core 0\.1\.0/);
+  for (const rootPackageFile of ["package.json", "package-lock.json", "node_modules"]) {
+    await assert.rejects(lstat(path.join(project, rootPackageFile)), { code: "ENOENT" });
+  }
+  const launcher = path.join(project, ".agentic-core", "runtime-launcher.mjs");
+  const version = await execFileAsync(process.execPath, [launcher, "agentic-core", "--version"], {
+    cwd: project,
+    encoding: "utf8",
+  });
+  assert.equal(version.stdout.trim(), "0.1.0");
+  const help = await execFileAsync(process.execPath, [launcher, "agentic-quality", "--help"], {
+    cwd: project,
+    encoding: "utf8",
+  });
+  assert.match(help.stdout, /agentic-quality scan/);
 });

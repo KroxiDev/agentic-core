@@ -58,7 +58,7 @@ test("the Claude read guard allows only the harmless preflight command without r
 
 test("the Claude read guard allows only the exact quality command declared by the child's active brief", async (t) => {
   const { root, runId, transcriptPath, agentId } = await fixture(t);
-  const exact = `agentic-quality crap --run ${runId} --output artifacts/crap.json`;
+  const exact = `node .agentic-core/runtime-launcher.mjs agentic-quality crap --run ${runId} --output artifacts/crap.json`;
   const event = hookEvent(exact, { transcript_path: transcriptPath, agent_id: agentId });
 
   assert.deepEqual(await authorizeClaudeReadCommand(root, event), {
@@ -66,6 +66,7 @@ test("the Claude read guard allows only the exact quality command declared by th
     reason: "active brief quality-artifact command",
   });
   for (const command of [
+    `agentic-quality crap --run ${runId} --output artifacts/crap.json`,
     `${exact} `,
     `${exact}; Set-Content changed.txt changed`,
     `agentic-quality crap --run ${runId} --output ../changed.json`,
@@ -76,7 +77,7 @@ test("the Claude read guard allows only the exact quality command declared by th
 
 test("the Claude read guard fails closed for the wrong profile, shell, permission, or terminal run", async (t) => {
   const { root, runId, transcriptPath, agentId } = await fixture(t);
-  const exact = `agentic-quality crap --run ${runId} --output artifacts/crap.json`;
+  const exact = `node .agentic-core/runtime-launcher.mjs agentic-quality crap --run ${runId} --output artifacts/crap.json`;
   const event = hookEvent(exact, { transcript_path: transcriptPath, agent_id: agentId });
   assert.equal((await authorizeClaudeReadCommand(root, { ...event, agent_type: "agentic-tests" })).allowed, false);
   assert.equal((await authorizeClaudeReadCommand(root, { ...event, tool_name: "Edit" })).allowed, false);
@@ -95,7 +96,7 @@ test("concurrent Claude read agents cannot use another run's quality command", a
     root: first.root,
     runId: "22345678-1234-4234-8234-123456789abc",
   });
-  const secondCommand = `agentic-quality crap --run ${second.runId} --output artifacts/crap.json`;
+  const secondCommand = `node .agentic-core/runtime-launcher.mjs agentic-quality crap --run ${second.runId} --output artifacts/crap.json`;
   const firstEvent = hookEvent(secondCommand, {
     transcript_path: first.transcriptPath,
     agent_id: first.agentId,

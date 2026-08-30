@@ -1,7 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { lstat, readFile, rmdir } from "node:fs/promises";
 import path from "node:path";
-import { writeTransaction } from "./transaction.js";
+import { discoverRuntimeSource, validateRuntimeOwnership } from "./runtime.js";
+import { hashDirectory, writeTransaction } from "./transaction.js";
 import { getVersion } from "./version.js";
 
 const PRODUCT = "@kroxidev/agentic-core";
@@ -13,6 +14,7 @@ const CORE_RESOURCE_PATHS = [
 ];
 const HOST_RESOURCE_SPECS = [
   { source: "src/claude-read-command-guard.mjs", target: ".agentic-core/claude-read-command-guard.mjs" },
+  { source: "src/runtime-launcher.mjs", target: ".agentic-core/runtime-launcher.mjs" },
   ...["read", "production", "tests", "docs"].flatMap((profile) => [
     { source: `adapters/codex/agents/agentic-${profile}.toml`, target: `.codex/agents/agentic-${profile}.toml` },
     { source: `adapters/claude/agents/agentic-${profile}.md`, target: `.claude/agents/agentic-${profile}.md` },
@@ -23,6 +25,8 @@ const HOST_RESOURCE_SPECS = [
   ]),
 ];
 const EXPECTED_RESOURCE_PATHS = [...CORE_RESOURCE_PATHS, ...HOST_RESOURCE_SPECS.map(({ target }) => target)];
+const LEGACY_EXPECTED_RESOURCE_PATHS = EXPECTED_RESOURCE_PATHS
+  .filter((resourcePath) => resourcePath !== ".agentic-core/runtime-launcher.mjs");
 const OWNED_DIRECTORIES = [
   ".agentic-core/runs",
   ".agentic-core/reports",
@@ -97,6 +101,36 @@ function json(value) {
 
 function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function containsPath(parentPath, candidatePath) {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(candidatePath));
+  return relative === "" || (!relative.startsWith(`..${path.sep}`)
+    && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function assertRuntimePersistenceBoundary(runtime, runtimePath) {
+  if (!runtime) return;
+  validateRuntimeOwnership(runtime.manifest);
+  if (typeof runtime.root !== "string" || runtime.root.length === 0) {
+    throw new Error("The ephemeral runtime source path is invalid");
+  }
+  if (containsPath(runtime.root, runtimePath) || containsPath(runtimePath, runtime.root)) {
+    throw new Error("The ephemeral runtime source and destination overlap");
+  }
+}
+
+function deterministicInstallationId(projectRoot, version, resources) {
+  const digest = sha256(Buffer.from(JSON.stringify({
+    product: PRODUCT,
+    projectRoot,
+    version,
+    resources: resources.map(({ path: resourcePath, content }) => ({
+      path: resourcePath,
+      sha256: sha256(content),
+    })),
+  })));
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }
 
 async function installationResources(config) {
@@ -206,18 +240,26 @@ export function validateOwnership(owner, action = "update") {
     throw new Error(`Cannot ${action}: ownership manifest is not a recognized agentic-core installation`);
   }
   const expectedBlocks = ["AGENTS.md", "CLAUDE.md"];
-  if (owner.resources.length !== EXPECTED_RESOURCE_PATHS.length
+  const resourcePathsValid = [EXPECTED_RESOURCE_PATHS, LEGACY_EXPECTED_RESOURCE_PATHS].some((expectedPaths) => (
+    owner.resources.length === expectedPaths.length
+      && owner.resources.every((resource, index) => resource?.path === expectedPaths[index]
+        && /^[0-9a-f]{64}$/.test(resource?.sha256))
+  ));
+  if (!resourcePathsValid
     || owner.managedBlocks.length !== expectedBlocks.length
     || owner.ownedDirectories.length !== OWNED_DIRECTORIES.length
     || owner.ownedDirectories.some((directory, index) => directory !== OWNED_DIRECTORIES[index])
-    || owner.resources.some((resource, index) => resource?.path !== EXPECTED_RESOURCE_PATHS[index]
-      || !/^[0-9a-f]{64}$/.test(resource?.sha256))
     || owner.managedBlocks.some((block, index) => block?.path !== expectedBlocks[index]
       || block?.id !== "agentic-core"
       || block?.startMarker !== "<!-- AGENTIC_CORE_START -->"
       || block?.endMarker !== "<!-- AGENTIC_CORE_END -->"
       || !/^[0-9a-f]{64}$/.test(block?.sha256))) {
     throw new Error(`Cannot ${action}: ownership manifest does not prove the expected resource boundaries`);
+  }
+  try {
+    validateRuntimeOwnership(owner.runtime);
+  } catch {
+    throw new Error(`Cannot ${action}: ownership manifest has invalid runtime boundaries`);
   }
 }
 
@@ -253,13 +295,18 @@ function removeManagedBlock(existing, startMarker, endMarker) {
   ]);
 }
 
-export async function initialize(projectDirectory, { replaceConflicts = false } = {}) {
+export async function initialize(projectDirectory, {
+  dryRun = false,
+  replaceConflicts = false,
+  runtimeSource,
+} = {}) {
   const projectRoot = path.resolve(projectDirectory);
   const productRoot = path.join(projectRoot, ".agentic-core");
   const ownershipPath = path.join(productRoot, "ownership.json");
   const version = await getVersion();
   const config = Buffer.from(json(CONFIG));
   const resources = await installationResources(config);
+  const runtime = runtimeSource === undefined ? await discoverRuntimeSource() : runtimeSource;
   const hostBlocks = ["AGENTS.md", "CLAUDE.md"].map((hostPath) => ({
     path: hostPath,
     id: "agentic-core",
@@ -287,7 +334,7 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
   for (const resource of resources) {
     const targetPath = path.join(projectRoot, ...resource.path.split("/"));
     const kind = await fileKind(targetPath);
-    if (kind !== "missing") conflicts.push({ path: resource.path, kind });
+    if (kind !== "missing") conflicts.push({ path: resource.path, kind, authorized: replaceConflicts });
   }
 
   if (CORE_RESOURCE_PATHS.every((resourcePath) => conflicts.some(({ path: conflictPath }) => conflictPath === resourcePath))) {
@@ -297,8 +344,10 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
   if (conflicts.some(({ kind }) => kind !== "file")) {
     throw new Error(`Unsupported isolated conflict: ${conflicts.map(({ path: conflictPath }) => conflictPath).join(", ")}`);
   }
-  if (conflicts.length > 0 && !replaceConflicts) {
-    throw new Error(`Found isolated conflict: ${conflicts.map(({ path: conflictPath }) => conflictPath).join(", ")}. Re-run with --replace-conflicts to authorize replacement.`);
+  const runtimePath = path.join(productRoot, "runtime");
+  assertRuntimePersistenceBoundary(runtime, runtimePath);
+  if (runtime && await fileKind(runtimePath) !== "missing") {
+    throw new Error("Foreign installation detected: .agentic-core/runtime exists without proven runtime ownership");
   }
 
   const hostWrites = [];
@@ -308,24 +357,26 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
     if (kind !== "missing" && kind !== "file") throw new Error(`Unsupported isolated conflict: ${hostBlock.path}`);
     const existing = kind === "file" ? await readFile(targetPath) : Buffer.alloc(0);
     if (existing.includes(Buffer.from(hostBlock.startMarker)) || existing.includes(Buffer.from(hostBlock.endMarker))) {
-      if (!replaceConflicts) {
-        throw new Error(`Found isolated conflict: ${hostBlock.path}. Re-run with --replace-conflicts to authorize replacement.`);
-      }
       const replacement = replaceManagedBlock(existing, hostBlock.startMarker, hostBlock.endMarker);
       if (replacement === undefined) {
-        throw new Error(`Cannot safely replace an ambiguous managed block in ${hostBlock.path}`);
+        conflicts.push({ path: hostBlock.path, kind: "ambiguous_managed_block", authorized: false });
+        continue;
       }
-      hostWrites.push({ path: targetPath, content: replacement, existed: true });
+      conflicts.push({ path: hostBlock.path, kind: "managed_block", authorized: replaceConflicts });
+      hostWrites.push({ path: targetPath, content: replacement, action: "replace_managed_block" });
       continue;
     }
-    hostWrites.push({ path: targetPath, content: appendManagedBlock(existing), existed: kind === "file" });
+    hostWrites.push({ path: targetPath, content: appendManagedBlock(existing), action: "append_managed_block" });
   }
+
+  const blockers = conflicts.filter(({ authorized }) => !authorized);
+  const unsafeBlockers = blockers.filter(({ kind }) => kind === "ambiguous_managed_block");
 
   const manifest = {
     schemaVersion: 1,
     product: PRODUCT,
     version,
-    installationId: randomUUID(),
+    installationId: deterministicInstallationId(projectRoot, version, resources),
     configVersion: CONFIG_VERSION,
     resources: resources.map(({ path: resourcePath, content }) => ({
       path: resourcePath,
@@ -333,6 +384,7 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
     })),
     managedBlocks: hostBlocks,
     ownedDirectories: OWNED_DIRECTORIES,
+    ...(runtime ? { runtime: runtime.manifest } : {}),
   };
   const operations = [
     ...resources.map((resource) => ({
@@ -340,8 +392,54 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
       content: resource.content,
     })),
     ...hostWrites,
+    ...(runtime ? [{
+      path: runtimePath,
+      type: "replace_directory",
+      sourcePath: runtime.root,
+      sourceSha256: runtime.manifest.treeSha256,
+    }] : []),
     { path: ownershipPath, content: Buffer.from(json(manifest)) },
   ];
+  const plan = {
+    schemaVersion: 1,
+    command: "init",
+    dryRun: true,
+    projectRoot,
+    status: blockers.length === 0 ? "ready" : "blocked",
+    options: { replaceConflicts },
+    conflicts,
+    actions: [
+      ...resources.map((resource) => ({
+        action: "write_resource",
+        path: resource.path,
+        sha256: sha256(resource.content),
+      })),
+      ...hostWrites.map((hostWrite) => ({
+        action: hostWrite.action,
+        path: path.relative(projectRoot, hostWrite.path).replaceAll("\\", "/"),
+        sha256: sha256(hostWrite.content),
+      })),
+      ...(runtime ? [{
+        action: "persist_runtime",
+        path: runtime.manifest.path,
+        source: runtime.manifest.source,
+        treeSha256: runtime.manifest.treeSha256,
+      }] : []),
+      { action: "write_manifest", path: ".agentic-core/ownership.json", sha256: sha256(Buffer.from(json(manifest))) },
+    ],
+    manifest,
+    ...(runtime ? { runtime: runtime.manifest } : {}),
+    ...(blockers.length === 0 ? {} : {
+      error: {
+        code: unsafeBlockers.length > 0 ? "unsafe_conflict" : "authorization_required",
+        message: unsafeBlockers.length > 0
+          ? `Ambiguous managed boundaries cannot be replaced safely: ${unsafeBlockers.map(({ path: conflictPath }) => conflictPath).join(", ")}. Restore one complete boundary before retrying.`
+          : `Found isolated conflict: ${blockers.map(({ path: conflictPath }) => conflictPath).join(", ")}. Re-run with --replace-conflicts to authorize replacement.`,
+      },
+    }),
+  };
+  if (dryRun) return { projectRoot, version, dryRun: true, exitCode: blockers.length === 0 ? 0 : 1, plan };
+  if (blockers.length > 0) throw new Error(plan.error.message);
   const requestedFault = process.env.NODE_ENV === "test"
     ? Number.parseInt(process.env.AGENTIC_CORE_TEST_FAIL_AFTER_WRITE ?? "", 10)
     : Number.NaN;
@@ -349,10 +447,14 @@ export async function initialize(projectDirectory, { replaceConflicts = false } 
     failAfterWrite: Number.isSafeInteger(requestedFault) && requestedFault > 0 ? requestedFault : undefined,
   });
 
-  return { projectRoot, version };
+  return { projectRoot, version, dryRun: false, plan };
 }
 
-export async function updateInstallation(projectDirectory, { force = false } = {}) {
+export async function updateInstallation(projectDirectory, {
+  dryRun = false,
+  force = false,
+  runtimeSource,
+} = {}) {
   const projectRoot = path.resolve(projectDirectory);
   const productRoot = path.join(projectRoot, ".agentic-core");
   const ownershipPath = path.join(productRoot, "ownership.json");
@@ -379,12 +481,20 @@ export async function updateInstallation(projectDirectory, { force = false } = {
   const config = Buffer.from(json(mergeConfig(existingConfig)));
   const version = await getVersion();
   const resources = await installationResources(config);
+  const runtime = runtimeSource === undefined ? await discoverRuntimeSource() : runtimeSource;
   const divergences = [];
-  for (let index = 0; index < resources.length; index += 1) {
-    const resource = resources[index];
+  const recordedResources = new Map(owner.resources.map((resource) => [resource.path, resource]));
+  for (const resource of resources) {
     const targetPath = path.join(projectRoot, ...resource.path.split("/"));
     const kind = await fileKind(targetPath);
-    if (kind !== "file" || sha256(await readFile(targetPath)) !== owner.resources[index].sha256) {
+    const recorded = recordedResources.get(resource.path);
+    if (recorded === undefined) {
+      if (kind !== "missing") {
+        throw new Error(`Cannot update: unowned resource occupies ${resource.path}`);
+      }
+      continue;
+    }
+    if (kind !== "file" || sha256(await readFile(targetPath)) !== recorded.sha256) {
       divergences.push(resource.path);
     }
   }
@@ -408,9 +518,25 @@ export async function updateInstallation(projectDirectory, { force = false } = {
     });
   }
 
-  if (divergences.length > 0 && !force) {
-    throw new Error(`Owned resources diverged: ${divergences.join(", ")}. Re-run with --force to authorize replacement.`);
+  const runtimePath = path.join(productRoot, "runtime");
+  assertRuntimePersistenceBoundary(runtime, runtimePath);
+  const runtimeKind = await fileKind(runtimePath);
+  let runtimeSourceRequired = false;
+  if (owner.runtime === undefined) {
+    if (runtimeKind !== "missing") {
+      throw new Error("Cannot update: .agentic-core/runtime exists without proven runtime ownership");
+    }
+  } else {
+    if (runtimeKind === "other") throw new Error("Cannot update: the persisted runtime has an unsafe path type");
+    const runtimeMatches = runtimeKind === "directory"
+      && await hashDirectory(runtimePath) === owner.runtime.treeSha256;
+    if (!runtimeMatches) {
+      divergences.push(".agentic-core/runtime");
+      runtimeSourceRequired = runtime === undefined;
+    }
   }
+
+  const blocked = runtimeSourceRequired || (divergences.length > 0 && !force);
 
   const managedBlocks = owner.managedBlocks.map((block) => ({
     ...block,
@@ -425,6 +551,7 @@ export async function updateInstallation(projectDirectory, { force = false } = {
     resources: resources.map((resource) => ({ path: resource.path, sha256: sha256(resource.content) })),
     managedBlocks,
     ownedDirectories: OWNED_DIRECTORIES,
+    ...(runtime ? { runtime: runtime.manifest } : owner.runtime ? { runtime: owner.runtime } : {}),
   };
   const runsPath = path.join(productRoot, "runs");
   const runsKind = await fileKind(runsPath);
@@ -438,15 +565,62 @@ export async function updateInstallation(projectDirectory, { force = false } = {
     })),
     ...hostWrites,
     ...(runsKind === "missing" ? [] : [{ path: runsPath, type: "delete" }]),
+    ...(runtime ? [{
+      path: runtimePath,
+      type: "replace_directory",
+      sourcePath: runtime.root,
+      sourceSha256: runtime.manifest.treeSha256,
+    }] : []),
     { path: ownershipPath, content: Buffer.from(json(manifest)) },
   ];
+  const plan = {
+    schemaVersion: 1,
+    command: "update",
+    dryRun: true,
+    projectRoot,
+    status: blocked ? "blocked" : "ready",
+    options: { force },
+    divergences,
+    actions: [
+      ...resources.map((resource) => ({
+        action: "write_resource",
+        path: resource.path,
+        sha256: sha256(resource.content),
+      })),
+      ...hostWrites.map((hostWrite) => ({
+        action: "replace_managed_block",
+        path: path.relative(projectRoot, hostWrite.path).replaceAll("\\", "/"),
+        sha256: sha256(hostWrite.content),
+      })),
+      ...(runsKind === "missing" ? [] : [{ action: "delete_owned_directory", path: ".agentic-core/runs" }]),
+      ...(runtime ? [{
+        action: "persist_runtime",
+        path: runtime.manifest.path,
+        source: runtime.manifest.source,
+        treeSha256: runtime.manifest.treeSha256,
+      }] : []),
+      { action: "write_manifest", path: ".agentic-core/ownership.json", sha256: sha256(Buffer.from(json(manifest))) },
+    ],
+    manifest,
+    ...(runtime ? { runtime: runtime.manifest } : owner.runtime ? { runtime: owner.runtime } : {}),
+    ...(blocked ? {
+      error: {
+        code: runtimeSourceRequired ? "runtime_source_required" : "force_required",
+        message: runtimeSourceRequired
+          ? "The persisted runtime diverged, but this invocation has no canonical GitHub runtime source. Re-run update through github:KroxiDev/agentic-core."
+          : `Owned resources diverged: ${divergences.join(", ")}. Re-run with --force to authorize replacement.`,
+      },
+    } : {}),
+  };
+  if (dryRun) return { projectRoot, version, divergences, dryRun: true, exitCode: blocked ? 1 : 0, plan };
+  if (blocked) throw new Error(plan.error.message);
   const requestedFault = process.env.NODE_ENV === "test"
     ? Number.parseInt(process.env.AGENTIC_CORE_TEST_FAIL_AFTER_WRITE ?? "", 10)
     : Number.NaN;
   await writeTransaction(projectRoot, operations, {
     failAfterWrite: Number.isSafeInteger(requestedFault) && requestedFault > 0 ? requestedFault : undefined,
   });
-  return { projectRoot, version, divergences };
+  return { projectRoot, version, divergences, dryRun: false, plan };
 }
 
 export async function uninstallInstallation(projectDirectory, {
@@ -509,6 +683,20 @@ export async function uninstallInstallation(projectDirectory, {
       content: removeManagedBlock(existing, block.startMarker, block.endMarker),
     });
     actions.push(`managed block: ${block.path}#${block.id}`);
+  }
+
+  if (owner.runtime) {
+    const targetPath = path.join(projectRoot, ...owner.runtime.path.split("/"));
+    const kind = await fileKind(targetPath);
+    if (kind !== "missing") {
+      const matches = kind === "directory" && await hashDirectory(targetPath) === owner.runtime.treeSha256;
+      if (matches || ((kind === "file" || kind === "directory") && await authorize("runtime", owner.runtime.path))) {
+        operations.push({ path: targetPath, type: "delete" });
+        actions.push(`runtime: ${owner.runtime.path}`);
+      } else {
+        preserved.push(`divergent runtime: ${owner.runtime.path}`);
+      }
+    }
   }
 
   for (const ownedDirectory of owner.ownedDirectories) {

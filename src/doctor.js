@@ -13,7 +13,7 @@ import {
 } from "./init.js";
 import { analyzeSource } from "./quality/ast.js";
 import { analyzePythonSource, choosePythonRunner, findPython } from "./quality/python.js";
-import { writeTransaction } from "./transaction.js";
+import { hashDirectory, writeTransaction } from "./transaction.js";
 
 const execFileAsync = promisify(execFile);
 const PROBLEM_STATUSES = new Set(["error", "blocked"]);
@@ -283,9 +283,10 @@ async function addResourceChecks({ checks, definition, owner, projectRoot, curre
       : { available: false },
   }));
 
-  for (let index = 0; index < definition.resources.length; index += 1) {
-    const expected = definition.resources[index];
-    const recorded = owner.resources[index];
+  const recordedByPath = new Map(owner.resources.map((resource) => [resource.path, resource]));
+  const updatedByPath = new Map(updatedOwner.resources.map((resource) => [resource.path, resource]));
+  for (const expected of definition.resources) {
+    const recorded = recordedByPath.get(expected.path);
     const targetPath = path.join(projectRoot, ...expected.path.split("/"));
     const unsafeParent = expected.path === ".agentic-core/config.json"
       ? configInspection.unsafeParent : await unsafePathParent(projectRoot, targetPath);
@@ -296,7 +297,22 @@ async function addResourceChecks({ checks, definition, owner, projectRoot, curre
       : undefined;
     const actualHash = actualContent === undefined ? undefined : sha256(actualContent);
     const expectedHash = sha256(expected.content);
-    const result = recordedResourceCheck({
+    const result = recorded === undefined ? {
+      healthy: false,
+      repairable: currentVersion && actualKind === "missing" && unsafeParent === undefined,
+      message: actualKind === "missing"
+        ? "The current package declares a new managed resource that is not installed"
+        : "An unowned path occupies a resource declared by the current package",
+      evidence: {
+        path: expected.path,
+        kind: actualKind,
+        recordedSha256: null,
+        actualSha256: actualHash ?? null,
+        expectedSha256: currentVersion ? expectedHash : null,
+        ...(unsafeParent ? { unsafeParent } : {}),
+      },
+      action: "install the newly declared packaged resource",
+    } : recordedResourceCheck({
       expected, recorded, actualKind, actualHash, expectedHash, currentVersion, unsafeParent, configInspection,
     });
     const id = `resource:${expected.path}`;
@@ -321,7 +337,7 @@ async function addResourceChecks({ checks, definition, owner, projectRoot, curre
     if (!result.repairable) continue;
 
     if (expected.path === ".agentic-core/config.json" && configInspection.valid) {
-      updatedOwner.resources[index].sha256 = actualHash;
+      updatedByPath.get(expected.path).sha256 = actualHash;
       plan.addAction({ checkId: id, action: "record_hash", path: expected.path });
       continue;
     }
@@ -330,7 +346,10 @@ async function addResourceChecks({ checks, definition, owner, projectRoot, curre
     } else {
       plan.addAction({ checkId: id, action: "record_hash", path: expected.path });
     }
-    updatedOwner.resources[index].sha256 = expectedHash;
+    updatedByPath.set(expected.path, { path: expected.path, sha256: expectedHash });
+  }
+  if (definition.resources.every((resource) => updatedByPath.has(resource.path))) {
+    updatedOwner.resources = definition.resources.map((resource) => updatedByPath.get(resource.path));
   }
 }
 
@@ -575,6 +594,60 @@ async function addTransactionCheck(checks, projectRoot) {
   }));
 }
 
+async function addRuntimePersistenceCheck(checks, projectRoot, owner) {
+  if (owner.runtime === undefined) {
+    checks.push(check({
+      id: "runtime.persistence",
+      component: "runtime",
+      status: "not_applicable",
+      message: "This legacy installation does not record an isolated persisted runtime",
+      evidence: { recorded: false },
+      remediation: "Run agentic-core update from the canonical GitHub npx source to persist an isolated runtime.",
+    }));
+    return;
+  }
+  const targetPath = path.join(projectRoot, ...owner.runtime.path.split("/"));
+  const unsafeParent = await unsafePathParent(projectRoot, targetPath);
+  const kind = unsafeParent ? "unsafe_parent" : await fileKind(targetPath);
+  let actualHash;
+  let hashError;
+  if (kind === "directory") {
+    try {
+      actualHash = await hashDirectory(targetPath);
+    } catch (error) {
+      hashError = error.message;
+    }
+  }
+  const healthy = kind === "directory" && hashError === undefined && actualHash === owner.runtime.treeSha256;
+  checks.push(check(healthy ? {
+    id: "runtime.persistence",
+    component: "runtime",
+    status: "ok",
+    message: "The persisted agentic runtime matches its ownership hash",
+    evidence: {
+      path: owner.runtime.path,
+      source: owner.runtime.source,
+      commit: owner.runtime.commit,
+      recordedSha256: owner.runtime.treeSha256,
+      actualSha256: actualHash,
+    },
+  } : {
+    id: "runtime.persistence",
+    component: "runtime",
+    status: "error",
+    message: "The persisted agentic runtime is missing, unsafe, or divergent",
+    evidence: {
+      path: owner.runtime.path,
+      kind,
+      recordedSha256: owner.runtime.treeSha256,
+      actualSha256: actualHash ?? null,
+      ...(unsafeParent ? { unsafeParent } : {}),
+      ...(hashError ? { error: hashError } : {}),
+    },
+    remediation: "Run agentic-core update from the intended GitHub revision; doctor will not replace a runtime dependency tree.",
+  }));
+}
+
 async function findPythonSource(projectRoot) {
   async function visit(directory) {
     const entries = await readdir(directory, { withFileTypes: true });
@@ -794,6 +867,7 @@ function addOwnershipBlockedChecks(checks) {
     ["operations.runs", "operations", "Persisted-run ownership cannot be established"],
     ["operations.workers", "operations", "Worker ownership cannot be established"],
     ["operations.transactions", "operations", "Transaction ownership cannot be established"],
+    ["runtime.persistence", "runtime", "Persisted-runtime ownership cannot be established"],
   ]) {
     checks.push(check({
       id, component, status: "blocked", message,
@@ -873,6 +947,7 @@ async function diagnose(projectRoot, definition, hostAgentProbe) {
   const updatedOwner = structuredClone(owner);
   await addResourceChecks({ checks, definition, owner, projectRoot, currentVersion, plan, updatedOwner });
   await addManagedBlockChecks({ checks, definition, owner, projectRoot, currentVersion, plan, updatedOwner });
+  await addRuntimePersistenceCheck(checks, projectRoot, owner);
   await addRunCheck(checks, projectRoot);
   await addWorkerCheck({ checks, projectRoot, plan });
   await addTransactionCheck(checks, projectRoot);
@@ -911,7 +986,7 @@ async function assertRepairParentsSafe(projectRoot, operations) {
   }
 }
 
-export async function doctorInstallation(projectDirectory, { repair = false, hostAgentProbe } = {}) {
+export async function doctorInstallation(projectDirectory, { dryRun = false, repair = false, hostAgentProbe } = {}) {
   const projectRoot = path.resolve(projectDirectory);
   const definition = await installationDefinition();
   const probe = cachedHostProbe(hostAgentProbe, projectRoot);
@@ -922,10 +997,15 @@ export async function doctorInstallation(projectDirectory, { repair = false, hos
     projectRoot,
     status: before.diagnosis.status,
     diagnosis: before.diagnosis,
-    repair: { requested: repair, status: repair ? "pending" : "not_requested", actions: [] },
+    repair: {
+      requested: repair || dryRun,
+      dryRun,
+      status: repair || dryRun ? "pending" : "not_requested",
+      actions: [],
+    },
   };
 
-  if (!repair) return { exitCode: before.diagnosis.status === "healthy" ? 0 : 1, report };
+  if (!repair && !dryRun) return { exitCode: before.diagnosis.status === "healthy" ? 0 : 1, report };
   if (before.diagnosis.status === "healthy") {
     report.repair.status = "not_needed";
     return { exitCode: 0, report };
@@ -936,6 +1016,20 @@ export async function doctorInstallation(projectDirectory, { repair = false, hos
     report.repair.status = "blocked";
     report.repair.reason = "No problem has a safe repair backed by the valid current ownership contract.";
     return { exitCode: 1, report };
+  }
+
+  if (dryRun) {
+    try {
+      await assertRepairParentsSafe(projectRoot, before.plan.operations);
+    } catch (error) {
+      report.status = "repair_blocked";
+      report.repair.status = "blocked";
+      report.repair.reason = error.message;
+      return { exitCode: 1, report };
+    }
+    report.status = "repair_preview";
+    report.repair.status = "preview";
+    return { exitCode: before.diagnosis.status === "healthy" ? 0 : 1, report };
   }
 
   try {

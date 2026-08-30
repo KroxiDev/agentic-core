@@ -8,6 +8,7 @@ const QUALITY_ARTIFACTS = new Map([
   ["crap", "artifacts/crap.json"],
   ["mutate", "artifacts/mutation.json"],
 ]);
+const RUNTIME_LAUNCHER = "node .agentic-core/runtime-launcher.mjs";
 
 function sameRole(left, right) {
   return left?.sequence === right?.sequence
@@ -29,7 +30,7 @@ function declaredQualityCommand(brief, state, runId) {
     return undefined;
   }
   if (QUALITY_ARTIFACTS.get(qualityTool) !== outputPath) return undefined;
-  return [command.tool, ...command.args].join(" ");
+  return [RUNTIME_LAUNCHER, command.tool, ...command.args].join(" ");
 }
 
 async function transcriptBrief(event) {

@@ -57,13 +57,13 @@ async function snapshotTree(root, relative = "") {
     const targetPath = path.join(root, childRelative);
     const details = await lstat(targetPath);
     if (details.isDirectory()) {
-      snapshot.set(key, { kind: "directory" });
+      snapshot.set(key, { kind: "directory", mode: details.mode });
       const children = await snapshotTree(root, childRelative);
       for (const [childKey, value] of children) snapshot.set(childKey, value);
     } else if (details.isFile()) {
-      snapshot.set(key, { kind: "file", content: await readFile(targetPath) });
+      snapshot.set(key, { kind: "file", mode: details.mode, content: await readFile(targetPath) });
     } else {
-      snapshot.set(key, { kind: "other" });
+      snapshot.set(key, { kind: "other", mode: details.mode });
     }
   }
   return snapshot;
@@ -152,17 +152,137 @@ test("doctor repairs only registered resources and block boundaries while preser
   assert.doesNotMatch(agents, /divergent core/);
 });
 
+test("doctor --dry-run and --repair --dry-run return the same repair preview without writing", async (t) => {
+  const project = await createProject(t);
+  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  await writeFile(path.join(project, ".agentic-core", "golden-rules.md"), "corrupt rules\r\n");
+  await rm(path.join(project, ".codex", "agents", "agentic-read.toml"));
+  const workerRoot = path.join(project, ".agentic-core", "workers", ".abandoned");
+  await mkdir(workerRoot, { recursive: true });
+  await writeFile(path.join(workerRoot, "state.bin"), Buffer.from([0x00, 0xff]));
+  const before = await snapshotTree(project);
+
+  const previewOnly = await runCore(["doctor", project, "--dry-run"]);
+  const repairPreview = await runCore(["doctor", project, "--repair", "--dry-run"]);
+  const preview = reportOf(previewOnly);
+
+  assert.equal(previewOnly.code, 1);
+  assert.equal(repairPreview.code, 1);
+  assert.deepEqual(reportOf(repairPreview), preview);
+  assert.equal(preview.status, "repair_preview");
+  assert.deepEqual(preview.repair, {
+    requested: true,
+    dryRun: true,
+    status: "preview",
+    actions: preview.repair.actions,
+  });
+  assert.ok(preview.repair.actions.some((action) => action.action === "restore_resource"));
+  assert.ok(preview.repair.actions.some((action) => action.action === "remove_abandoned_worker"));
+  assertSameSnapshot(await snapshotTree(project), before);
+
+  const appliedResult = await runCore(["doctor", project, "--repair"]);
+  const applied = reportOf(appliedResult);
+  assert.equal(appliedResult.code, 0);
+  assert.deepEqual(applied.repair.actions, preview.repair.actions);
+  assert.equal(applied.status, "repaired");
+});
+
+test("doctor --dry-run detects a divergent persisted runtime without replacing or deleting it", async (t) => {
+  const project = await createProject(t);
+  const runtime = await mkdtemp(path.join(tmpdir(), "agentic doctor npx runtime "));
+  t.after(() => rm(runtime, { recursive: true, force: true }));
+  const packageRoot = path.join(runtime, "node_modules", "@kroxidev", "agentic-core");
+  await mkdir(path.join(packageRoot, "bin"), { recursive: true });
+  const commit = "348942743d01227c60ba707e22f5c3976fe6e4e7";
+  await writeFile(path.join(runtime, "package.json"), JSON.stringify({
+    dependencies: { "@kroxidev/agentic-core": "github:KroxiDev/agentic-core" },
+    _npx: { packages: ["github:KroxiDev/agentic-core"] },
+  }));
+  await writeFile(path.join(runtime, "package-lock.json"), JSON.stringify({
+    lockfileVersion: 3,
+    packages: {
+      "node_modules/@kroxidev/agentic-core": {
+        resolved: `git+ssh://git@github.com/KroxiDev/agentic-core.git#${commit}`,
+      },
+    },
+  }));
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
+    name: "@kroxidev/agentic-core",
+    bin: { "agentic-core": "bin/agentic-core.js", "agentic-quality": "bin/agentic-quality.js" },
+  }));
+  await writeFile(path.join(packageRoot, "bin", "agentic-core.js"), "export {};\n");
+  await writeFile(path.join(packageRoot, "bin", "agentic-quality.js"), "export {};\n");
+  const environment = {
+    ...process.env,
+    NODE_ENV: "test",
+    AGENTIC_CORE_TEST_RUNTIME_ROOT: runtime,
+  };
+  assert.equal((await runCore(["init", project, "--yes"], { env: environment })).code, 0);
+  const revision = path.join(project, ".agentic-core", "runtime", "node_modules", "@kroxidev", "agentic-core", "REVISION");
+  await writeFile(revision, "foreign runtime change\r\n");
+  const before = await snapshotTree(project);
+
+  const result = await runCore(["doctor", project, "--dry-run"]);
+  const report = reportOf(result);
+
+  assert.equal(result.code, 1);
+  assert.equal(report.status, "repair_blocked");
+  const runtimeCheck = findCheck(report.diagnosis, "runtime.persistence");
+  assert.equal(runtimeCheck.status, "error");
+  assert.equal(runtimeCheck.repair.available, false);
+  assert.match(runtimeCheck.remediation, /update/i);
+  assertSameSnapshot(await snapshotTree(project), before);
+});
+
+test("doctor previews and repairs the launcher missing from a legacy ownership manifest", async (t) => {
+  const project = await createProject(t);
+  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  const productRoot = path.join(project, ".agentic-core");
+  const manifestPath = path.join(productRoot, "ownership.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.resources = manifest.resources.filter(({ path: resourcePath }) => resourcePath !== ".agentic-core/runtime-launcher.mjs");
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await rm(path.join(productRoot, "runtime-launcher.mjs"));
+  const before = await snapshotTree(project);
+
+  const previewResult = await runCore(["doctor", project, "--dry-run"]);
+  const preview = reportOf(previewResult);
+
+  assert.equal(previewResult.code, 1);
+  assert.equal(preview.status, "repair_preview");
+  const launcherCheck = findCheck(preview.diagnosis, "resource:.agentic-core/runtime-launcher.mjs");
+  assert.equal(launcherCheck.status, "error");
+  assert.equal(launcherCheck.repair.available, true);
+  assertSameSnapshot(await snapshotTree(project), before);
+
+  const repairedResult = await runCore(["doctor", project, "--repair"]);
+  const repaired = reportOf(repairedResult);
+  assert.equal(repairedResult.code, 0);
+  assert.equal(repaired.status, "repaired");
+  assert.equal(findCheck(repaired.postRepair, "resource:.agentic-core/runtime-launcher.mjs").status, "ok");
+});
+
 test("doctor restores an invalid owned configuration to the canonical schema", async (t) => {
   const project = await createProject(t);
   assert.equal((await runCore(["init", project, "--yes"])).code, 0);
   const configPath = path.join(project, ".agentic-core", "config.json");
   await writeFile(configPath, "{invalid configuration\r\n");
+  const before = await snapshotTree(project);
+
+  const previewResult = await runCore(["doctor", project, "--dry-run"]);
+  const preview = reportOf(previewResult);
+  assert.equal(previewResult.code, 1);
+  assert.equal(preview.status, "repair_preview");
+  assert.ok(preview.repair.actions.some((action) => action.action === "restore_resource"
+    && action.path === ".agentic-core/config.json"));
+  assertSameSnapshot(await snapshotTree(project), before);
 
   const result = await runCore(["doctor", project, "--repair"]);
   const report = reportOf(result);
 
   assert.equal(result.code, 0);
   assert.equal(report.status, "repaired");
+  assert.deepEqual(report.repair.actions, preview.repair.actions);
   assert.equal(findCheck(report.diagnosis, "configuration.schema").status, "error");
   assert.equal(findCheck(report.postRepair, "configuration.schema").status, "ok");
   assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
@@ -178,7 +298,7 @@ test("doctor restores an invalid owned configuration to the canonical schema", a
   });
 });
 
-test("doctor never repairs a foreign or unproven installation", async (t) => {
+test("doctor previews and repair never change a foreign or unproven installation", async (t) => {
   for (const [name, manifest] of [
     ["foreign", { schemaVersion: 1, product: "another-product" }],
     ["unproven", undefined],
@@ -191,6 +311,14 @@ test("doctor never repairs a foreign or unproven installation", async (t) => {
       await writeFile(path.join(productRoot, "foreign.txt"), "do not modify\r\n");
       await writeFile(path.join(project, "AGENTS.md"), "foreign instructions\r\n");
       const before = await snapshotTree(project);
+
+      const previewResult = await runCore(["doctor", project, "--dry-run"]);
+      const preview = reportOf(previewResult);
+      assert.equal(previewResult.code, 1);
+      assert.equal(preview.status, "repair_blocked");
+      assert.equal(preview.repair.status, "blocked");
+      assert.equal(findCheck(preview.diagnosis, "installation.manifest").status, "error");
+      assertSameSnapshot(await snapshotTree(project), before);
 
       const result = await runCore(["doctor", project, "--repair"]);
       const report = reportOf(result);
