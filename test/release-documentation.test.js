@@ -14,6 +14,7 @@ test("the shipped README covers the complete operational lifecycle", async () =>
     "## Actualización",
     "## Diagnóstico",
     "## Desinstalación",
+    "## Formato de salida",
     "## Activación explícita y modo directo",
     "## Reanudación y escaladas",
     "## Blockers y advisory",
@@ -29,6 +30,9 @@ test("the shipped README covers the complete operational lifecycle", async () =>
   assert.match(readme, /Windows 10 y Windows 11 son las únicas plataformas con soporte oficial/);
   assert.match(readme, /CodeGraph y Engram son integraciones opcionales/);
   assert.match(readme, /`coverage\.py` es opcional/);
+  assert.match(readme, /PLAN \(sin escrituras\)[\s\S]*LISTO[\s\S]*ADVERTENCIAS[\s\S]*ACCIONES MANUALES PENDIENTES/);
+  assert.match(readme, /Cuando la salida se captura, canaliza o redirige, se conserva la representación anterior/);
+  assert.match(readme, /launcher gestionado fuerza además esa salida estructurada/);
   assert.match(readme, /solicitud sin activador[\s\S]*no crea coordinador, run, estado ni subagentes/);
 });
 
@@ -140,6 +144,15 @@ test("the native release checklist contains all six host and mode runs", async (
   }
   assert.equal((checklist.match(/\| (?:Codex|Claude Code) \| `(?:light|normal|full)` \|/gu) ?? []).length, 6);
   assert.match(checklist, /same candidate commit and tarball SHA-256/);
+  assert.match(checklist, /package inventory must contain exactly the intended 43 files/);
+  for (const command of [
+    "node .agentic-core/runtime-launcher.mjs agentic-core start",
+    "node .agentic-core/runtime-launcher.mjs agentic-core submit-handoff",
+    "node .agentic-core/runtime-launcher.mjs agentic-quality crap",
+    "node .agentic-core/runtime-launcher.mjs agentic-quality mutate",
+  ]) {
+    assert.ok(checklist.includes(command), `manual validation is missing ${command}`);
+  }
 });
 
 test("the orchestration skill prevents duplicate runtime transitions and transport leaks", async () => {

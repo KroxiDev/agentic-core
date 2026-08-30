@@ -25,6 +25,7 @@ async function run() {
   const binary = path.join(packageDirectory, ...BINARIES.get(command).split("/"));
   const child = spawn(process.execPath, [binary, ...args], {
     cwd: projectRoot,
+    env: { ...process.env, AGENTIC_CORE_OUTPUT: "json" },
     stdio: "inherit",
     windowsHide: true,
   });

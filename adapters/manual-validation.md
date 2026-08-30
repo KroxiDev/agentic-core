@@ -20,7 +20,7 @@ Run one current-tree pass of:
 - `npm.cmd pack --dry-run --json`
 - `git diff --check`
 
-All commands must pass, and the package inventory must contain exactly the intended 40 files with no fixtures, caches, run state, native evidence or validation helpers. This automated gate replaces native-row approval for issue #16.
+All commands must pass, and the package inventory must contain exactly the intended 43 files with no fixtures, caches, run state, native evidence or validation helpers. This automated gate replaces native-row approval for issue #16.
 
 ## Native observation reference
 
@@ -38,10 +38,10 @@ The checklist below records what a future optional native investigation would ne
 
 For every row:
 
-- [ ] Begin the user request with literal `Orquesta light`, `Orquesta normal`, or `Orquesta full`. The installed skill must call the packaged `agentic-core start` seam; an observer may capture evidence but must not drive transitions.
+- [ ] Begin the user request with literal `Orquesta light`, `Orquesta normal`, or `Orquesta full`. The installed skill must call the packaged `node .agentic-core/runtime-launcher.mjs agentic-core start` seam; an observer may capture evidence but must not drive transitions.
 - [ ] Capture every native Agent/subagent invocation with its runtime-selected profile, real native identifier, fresh `role.instanceId`, and prompt hash.
 - [ ] Prove the native prompt bytes are exactly `JSON.stringify(brief)`, without prefix, suffix, fence or wrapper whitespace.
-- [ ] Capture the authoritative native final-response field, the exact stdin/file bytes passed to `agentic-core submit-handoff`, and the returned transport receipt. All three SHA-256 values must match.
+- [ ] Capture the authoritative native final-response field, the exact stdin/file bytes passed to `node .agentic-core/runtime-launcher.mjs agentic-core submit-handoff`, and the returned transport receipt. All three SHA-256 values must match.
 - [ ] Submit one invalid raw response unchanged and record the real `protocol_retry`; the retry must create a fresh same-role agent and must not consume retrabajo.
 - [ ] Confirm briefs stay below 16 KiB, hand-offs below 32 KiB, source hashes remain valid, only one agent is active, and no role chooses its successor.
 - [ ] Confirm the final working tree contains only the scenario's intended change and documentation decision; no run state, cache, snapshot, transaction backup or fixture artifact may leak into the product tree.
@@ -75,7 +75,7 @@ Use a small executable change with independent acceptance criteria.
 
 - [ ] Observe exactly Implementador → Tester, with fresh native IDs and no other role.
 - [ ] Confirm the Implementador receives `agentic-tdd` when executable behavior changes and records red, green and refactor evidence.
-- [ ] Confirm the Tester runs exactly `agentic-quality crap --run <runId> --output artifacts/crap.json`.
+- [ ] Confirm the Tester runs exactly `node .agentic-core/runtime-launcher.mjs agentic-quality crap --run <runId> --output artifacts/crap.json`.
 - [ ] Confirm the returned C.R.A.P. reference contains only `{path, sha256}`, the report hash matches, and its status is `approved` or `not_applicable`.
 - [ ] Confirm no mutation command or mutation artifact is requested.
 - [ ] Confirm the happy path terminates as `completed` and removes terminal run state.
@@ -101,7 +101,7 @@ Use a change with a concrete exploration surface and at least one mutation targe
 - [ ] Confirm Planificador reads the original request and converts the exploration into a criteria-traceable flat plan.
 - [ ] Confirm Refactor keeps production read-only, checks structure and Golden Rules, and runs differential C.R.A.P. without Mutation Testing.
 - [ ] Confirm Tester independently verifies criteria, tests and Golden Rules and never silently changes a contradictory test.
-- [ ] Confirm Evaluador reads the original request, compares intention, plan, changes and current evidence, then runs `agentic-quality mutate --run <runId> --output artifacts/mutation.json`.
+- [ ] Confirm Evaluador reads the original request, compares intention, plan, changes and current evidence, then runs `node .agentic-core/runtime-launcher.mjs agentic-quality mutate --run <runId> --output artifacts/mutation.json`.
 - [ ] Confirm mutation is differential, the report identity/freshness hashes match, and any equivalent has localized static proof. C.R.A.P. is repeated only if its prior report is stale.
 - [ ] Confirm Documentador is a fresh, mandatory, non-blocking agent.
 - [ ] Confirm the happy path terminates as `completed` and removes terminal run state.

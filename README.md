@@ -11,6 +11,32 @@
 - CodeGraph y Engram son integraciones opcionales. No participan en preflight, contratos, estado, aceptación ni recuperación.
 - No se declara soporte oficial para otros sistemas o lenguajes, ni mejoras de rendimiento sin mediciones.
 
+## Formato de salida
+
+Cuando `stdout` está conectado a una terminal interactiva, todos los comandos operativos presentan la información en secciones breves y consistentes: una cabecera propia del comando —por ejemplo `PLAN (sin escrituras)`, `ACCIONES`, `DIAGNÓSTICO`, `RESULTADO` o `ANÁLISIS DE CALIDAD`— seguida por `LISTO`, `ADVERTENCIAS` y `ACCIONES MANUALES PENDIENTES`. Los conflictos, divergencias, ejecuciones disponibles y hallazgos aparecen en secciones adicionales solo cuando existen.
+
+```text
+PLAN (sin escrituras)
+
+- copiar: .agentic-core/config.json
+- actualizar: AGENTS.md
+- persistir runtime: .agentic-core/runtime
+
+LISTO
+
+- Plan completo calculado sin escrituras.
+
+ADVERTENCIAS
+
+- Ninguna.
+
+ACCIONES MANUALES PENDIENTES
+
+- Ninguna.
+```
+
+El cambio es únicamente de presentación. Códigos de salida, transacciones, archivos, hashes y estados mantienen sus contratos. Cuando la salida se captura, canaliza o redirige, se conserva la representación anterior consumible por herramientas: JSON para previews de `init`/`update`, `doctor`, los seams de orquestación y los reportes de calidad; `uninstall` conserva sus líneas contractuales. El launcher gestionado fuerza además esa salida estructurada para la skill, incluso si el host ejecuta sus seams dentro de una PTY. `--help` y `--version` mantienen su formato convencional.
+
 ## Instalación
 
 En PowerShell, desde la raíz del proyecto, previsualiza primero la instalación:
@@ -25,7 +51,7 @@ Si el plan es correcto, instala con una sola invocación:
 npx.cmd --yes github:KroxiDev/agentic-core init . --yes
 ```
 
-`init --dry-run` emite el plan JSON completo —recursos, conflictos, bloques gestionados, manifiesto y runtime— sin crear archivos, directorios, dependencias ni estado. La ejecución real instala configuración, Golden Rules, perfiles nativos y skills para ambos hosts, y añade un bloque gestionado a `AGENTS.md` y `CLAUDE.md`. Un conflicto aislado requiere `--replace-conflicts`; una instalación completa ajena o un límite ambiguo siempre detienen la operación.
+`init --dry-run` presenta el plan legible en una terminal y conserva el plan JSON completo al capturarlo —recursos, conflictos, bloques gestionados, manifiesto y runtime— sin crear archivos, directorios, dependencias ni estado. La ejecución real instala configuración, Golden Rules, perfiles nativos y skills para ambos hosts, y añade un bloque gestionado a `AGENTS.md` y `CLAUDE.md`. Un conflicto aislado requiere `--replace-conflicts`; una instalación completa ajena o un límite ambiguo siempre detienen la operación.
 
 La invocación resuelve una revisión de `KroxiDev/agentic-core` una sola vez y conserva transaccionalmente ese entorno exacto en `.agentic-core/runtime`. El manifiesto registra el commit y el hash del árbol; la skill usa `.agentic-core/runtime-launcher.mjs` para mantener disponibles los seams `agentic-core` y `agentic-quality` después de que finaliza `npx`. No se añade `package.json`, lockfile ni `node_modules` a la raíz del proyecto, por lo que también funciona en proyectos Python. `agentic-core` no necesita estar publicado en npm.
 
@@ -56,7 +82,7 @@ npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair
 npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair --dry-run
 ```
 
-`doctor` emite JSON accionable sobre manifiesto, hashes, configuración, bloques gestionados, adapters, runtimes requeridos, runs incompletos, workers, transacciones y backends de calidad. `doctor --dry-run` calcula el mismo plan que `--repair --dry-run` sin escribir; conserva un código de salida no cero mientras existan errores. `--repair` actúa únicamente cuando la propiedad y la forma esperada del recurso son demostrables, y aplica toda reparación en una transacción. No repara archivos ajenos, no reemplaza un runtime divergente ni retira otra capa.
+`doctor` presenta un diagnóstico accionable por secciones en una terminal y conserva el reporte JSON completo cuando la salida se captura. Incluye manifiesto, hashes, configuración, bloques gestionados, adapters, runtimes requeridos, runs incompletos, workers, transacciones y backends de calidad. `doctor --dry-run` calcula el mismo plan que `--repair --dry-run` sin escribir; conserva un código de salida no cero mientras existan errores. `--repair` actúa únicamente cuando la propiedad y la forma esperada del recurso son demostrables, y aplica toda reparación en una transacción. No repara archivos ajenos, no reemplaza un runtime divergente ni retira otra capa.
 
 ## Desinstalación
 

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { access, readFile, rmdir } from "node:fs/promises";
 import path from "node:path";
+import { formatQualityResult, writeCommandResult } from "./cli-output.js";
 import { analyzeQuality } from "./quality/crap.js";
 import { analyzeMutation } from "./quality/mutation.js";
 import { getVersion } from "./version.js";
@@ -114,12 +115,21 @@ export async function runQualityCli(args, io = process) {
     if (output) {
       const content = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
       await writeTransaction(process.cwd(), [{ path: output.absolutePath, content }], { temporaryRoot });
-      io.stdout.write(`${JSON.stringify({
+      const reference = {
         path: output.logicalPath,
         sha256: createHash("sha256").update(content).digest("hex"),
-      })}\n`);
+      };
+      writeCommandResult(
+        io,
+        () => formatQualityResult(command, reference),
+        `${JSON.stringify(reference)}\n`,
+      );
     } else {
-      io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      writeCommandResult(
+        io,
+        () => formatQualityResult(command, report),
+        `${JSON.stringify(report, null, 2)}\n`,
+      );
     }
     return EXIT[report.status] ?? 5;
   } catch (error) {

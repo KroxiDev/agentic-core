@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
+import {
+  formatMaintenanceResult,
+  formatOrchestrationResult,
+  writeCommandResult,
+} from "./cli-output.js";
 import { doctorInstallation } from "./doctor.js";
 import { initialize, uninstallInstallation, updateInstallation } from "./init.js";
 import {
@@ -56,10 +61,18 @@ export async function runMaintenanceCli(args, io = process) {
       replaceConflicts: options.has("--replace-conflicts"),
     });
     if (result.dryRun) {
-      io.stdout.write(`${JSON.stringify(result.plan, null, 2)}\n`);
+      writeCommandResult(
+        io,
+        () => formatMaintenanceResult("init", result),
+        `${JSON.stringify(result.plan, null, 2)}\n`,
+      );
       return result.exitCode;
     }
-    io.stdout.write(`Installed agentic-core ${result.version} in ${result.projectRoot}\n`);
+    writeCommandResult(
+      io,
+      () => formatMaintenanceResult("init", result),
+      `Installed agentic-core ${result.version} in ${result.projectRoot}\n`,
+    );
     return 0;
   }
 
@@ -86,10 +99,18 @@ export async function runMaintenanceCli(args, io = process) {
       force: options.has("--force"),
     });
     if (result.dryRun) {
-      io.stdout.write(`${JSON.stringify(result.plan, null, 2)}\n`);
+      writeCommandResult(
+        io,
+        () => formatMaintenanceResult("update", result),
+        `${JSON.stringify(result.plan, null, 2)}\n`,
+      );
       return result.exitCode;
     }
-    io.stdout.write(`Updated agentic-core ${result.version} in ${result.projectRoot}\n`);
+    writeCommandResult(
+      io,
+      () => formatMaintenanceResult("update", result),
+      `Updated agentic-core ${result.version} in ${result.projectRoot}\n`,
+    );
     return 0;
   }
 
@@ -125,8 +146,15 @@ export async function runMaintenanceCli(args, io = process) {
         },
       });
       const prefix = result.dryRun ? "Would remove" : "Removed";
-      for (const action of result.actions) io.stdout.write(`${prefix} ${action}\n`);
-      for (const item of result.preserved) io.stdout.write(`Preserved ${item}\n`);
+      const structuredOutput = [
+        ...result.actions.map((action) => `${prefix} ${action}`),
+        ...result.preserved.map((item) => `Preserved ${item}`),
+      ];
+      writeCommandResult(
+        io,
+        () => formatMaintenanceResult("uninstall", result),
+        structuredOutput.length > 0 ? `${structuredOutput.join("\n")}\n` : "",
+      );
       return 0;
     } finally {
       prompt?.close();
@@ -155,7 +183,11 @@ export async function runMaintenanceCli(args, io = process) {
       dryRun: options.has("--dry-run"),
       repair: options.has("--repair"),
     });
-    io.stdout.write(`${JSON.stringify(result.report, null, 2)}\n`);
+    writeCommandResult(
+      io,
+      () => formatMaintenanceResult("doctor", result),
+      `${JSON.stringify(result.report, null, 2)}\n`,
+    );
     return result.exitCode;
   }
 
@@ -181,7 +213,11 @@ export async function runMaintenanceCli(args, io = process) {
       changesExecutableBehavior: payload.changesExecutableBehavior,
       planningNeedsHowDecision: payload.planningNeedsHowDecision,
     });
-    io.stdout.write(`${JSON.stringify(result)}\n`);
+    writeCommandResult(
+      io,
+      () => formatOrchestrationResult("start", result),
+      `${JSON.stringify(result)}\n`,
+    );
     return 0;
   }
 
@@ -194,7 +230,11 @@ export async function runMaintenanceCli(args, io = process) {
       projectRoot: process.cwd(),
       runId: args[2],
     });
-    io.stdout.write(`${JSON.stringify(result)}\n`);
+    writeCommandResult(
+      io,
+      () => formatOrchestrationResult("resume", result),
+      `${JSON.stringify(result)}\n`,
+    );
     return 0;
   }
 
@@ -210,7 +250,11 @@ export async function runMaintenanceCli(args, io = process) {
       targetMode: args[4],
       approved: true,
     });
-    io.stdout.write(`${JSON.stringify(result)}\n`);
+    writeCommandResult(
+      io,
+      () => formatOrchestrationResult("approve-mode-change", result),
+      `${JSON.stringify(result)}\n`,
+    );
     return 0;
   }
 
@@ -225,7 +269,11 @@ export async function runMaintenanceCli(args, io = process) {
     }
     const response = inputIndex === -1 ? await readAll(io.stdin) : await readFile(args[4]);
     const result = await submitRawHandoff({ projectRoot: process.cwd(), runId: args[2], response });
-    io.stdout.write(`${JSON.stringify(result)}\n`);
+    writeCommandResult(
+      io,
+      () => formatOrchestrationResult("submit-handoff", result),
+      `${JSON.stringify(result)}\n`,
+    );
     return result.status === "failed" ? 1 : 0;
   }
 
