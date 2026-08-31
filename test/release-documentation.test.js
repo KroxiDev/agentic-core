@@ -103,13 +103,19 @@ test("the README fixes the closed contracts for materiality, isolation, state an
   ]) assert.match(readme, contract);
 });
 
-test("third-party notices exactly match the release lock dependency inventory", async () => {
+test("third-party notices exactly match the bundled runtime dependency inventory", async () => {
   const [lock, notices] = await Promise.all([
     read("package-lock.json").then(JSON.parse),
     read("THIRD_PARTY_NOTICES.md"),
   ]);
+  const bundled = new Set([
+    "@jridgewell/resolve-uri",
+    "@jridgewell/sourcemap-codec",
+    "@jridgewell/trace-mapping",
+    "typescript",
+  ]);
   const expected = Object.entries(lock.packages)
-    .filter(([location]) => location.startsWith("node_modules/"))
+    .filter(([location]) => bundled.has(location.slice("node_modules/".length)))
     .map(([location, metadata]) => ({
       name: location.slice("node_modules/".length),
       version: metadata.version,
@@ -121,7 +127,8 @@ test("third-party notices exactly match the release lock dependency inventory", 
     .sort((left, right) => left.name.localeCompare(right.name));
 
   assert.deepEqual(documented, expected);
-  assert.match(notices, /tarball does not bundle third-party packages/);
+  assert.match(notices, /production artifact bundles the reachable runtime implementation/);
+  assert.match(notices, /esbuild` 0\.28\.2 as a development-only dependency/);
   assert.match(notices, /ThirdPartyNoticeText\.txt/);
 });
 
@@ -144,7 +151,7 @@ test("the native release checklist contains all six host and mode runs", async (
   }
   assert.equal((checklist.match(/\| (?:Codex|Claude Code) \| `(?:light|normal|full)` \|/gu) ?? []).length, 6);
   assert.match(checklist, /same candidate commit and tarball SHA-256/);
-  assert.match(checklist, /package inventory must contain exactly the intended 43 files/);
+  assert.match(checklist, /package inventory must contain exactly the intended 33 files/);
   for (const command of [
     "node .agentic-core/runtime-launcher.mjs agentic-core start",
     "node .agentic-core/runtime-launcher.mjs agentic-core submit-handoff",

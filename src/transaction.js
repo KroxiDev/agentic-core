@@ -19,6 +19,78 @@ function compareNames(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function normalizedFileTreeFiles(files) {
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error("Runtime file inventory must be a non-empty array");
+  }
+  const seen = new Set();
+  const normalized = files.map((file) => {
+    if (file === null || typeof file !== "object" || Array.isArray(file)
+      || typeof file.path !== "string" || file.path.length === 0 || !Buffer.isBuffer(file.content)) {
+      throw new Error("Runtime file inventory contains an invalid entry");
+    }
+    const parts = file.path.split("/");
+    if (path.isAbsolute(file.path) || file.path.includes("\\")
+      || parts.some((part) => part === "" || part === "." || part === "..")) {
+      throw new Error(`Runtime file path is unsafe: ${file.path}`);
+    }
+    if (seen.has(file.path)) throw new Error(`Runtime file path is duplicated: ${file.path}`);
+    seen.add(file.path);
+    return { path: file.path, content: file.content };
+  });
+  const paths = new Set(normalized.map(({ path: filePath }) => filePath));
+  for (const { path: filePath } of normalized) {
+    const parts = filePath.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      const parent = parts.slice(0, index).join("/");
+      if (paths.has(parent)) throw new Error(`Runtime file path conflicts with a directory: ${parent}`);
+    }
+  }
+  return normalized.sort((left, right) => compareNames(left.path, right.path));
+}
+
+export function hashFileTree(files) {
+  const normalized = normalizedFileTreeFiles(files);
+  const directories = new Set([""]);
+  const byDirectory = new Map();
+  for (const file of normalized) {
+    const parts = file.path.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      directories.add(parts.slice(0, index).join("/"));
+    }
+    const directory = parts.slice(0, -1).join("/");
+    const entries = byDirectory.get(directory) ?? [];
+    entries.push({ kind: "file", name: parts.at(-1), file });
+    byDirectory.set(directory, entries);
+  }
+  for (const directory of directories) {
+    if (directory === "") continue;
+    const parts = directory.split("/");
+    const parent = parts.slice(0, -1).join("/");
+    const entries = byDirectory.get(parent) ?? [];
+    if (!entries.some((entry) => entry.kind === "directory" && entry.name === parts.at(-1))) {
+      entries.push({ kind: "directory", name: parts.at(-1), path: directory });
+    }
+    byDirectory.set(parent, entries);
+  }
+
+  const hash = createHash("sha256");
+  const visit = (relative) => {
+    hash.update(`directory\0${relative}\0`);
+    const entries = (byDirectory.get(relative) ?? []).sort((left, right) => compareNames(left.name, right.name));
+    for (const entry of entries) {
+      if (entry.kind === "directory") {
+        visit(entry.path);
+      } else {
+        hash.update(`file\0${entry.file.path}\0${entry.file.content.byteLength}\0`);
+        hash.update(entry.file.content);
+      }
+    }
+  };
+  visit("");
+  return hash.digest("hex");
+}
+
 export async function hashDirectory(directory) {
   const root = path.resolve(directory);
   const rootDetails = await lstat(root);
@@ -112,13 +184,23 @@ export async function writeTransaction(projectDirectory, operations, {
       throw new Error(`Transaction target is not compatible with the operation: ${operation.path}`);
     }
     if (operation.type === "replace_directory") {
-      operation.sourcePath = path.resolve(operation.sourcePath);
-      if (pathsOverlap(operation.sourcePath, operation.path)) {
-        throw new Error(`Directory transaction source and destination overlap: ${operation.path}`);
+      const usesFiles = operation.files !== undefined;
+      if (usesFiles === (operation.sourcePath !== undefined)) {
+        throw new Error(`Directory transaction requires exactly one source: ${operation.path}`);
       }
-      const actualSourceHash = await hashDirectory(operation.sourcePath);
+      let actualSourceHash;
+      if (usesFiles) {
+        operation.files = normalizedFileTreeFiles(operation.files);
+        actualSourceHash = hashFileTree(operation.files);
+      } else {
+        operation.sourcePath = path.resolve(operation.sourcePath);
+        if (pathsOverlap(operation.sourcePath, operation.path)) {
+          throw new Error(`Directory transaction source and destination overlap: ${operation.path}`);
+        }
+        actualSourceHash = await hashDirectory(operation.sourcePath);
+      }
       if (actualSourceHash !== operation.sourceSha256) {
-        throw new Error(`Runtime source changed before the transaction: ${operation.sourcePath}`);
+        throw new Error(`Runtime source changed before the transaction: ${operation.sourcePath ?? operation.path}`);
       }
     }
     snapshots.set(operation.path, snapshot);
@@ -154,9 +236,18 @@ export async function writeTransaction(projectDirectory, operations, {
         await mkdir(path.dirname(operation.path), { recursive: true });
         const temporaryPath = `${operation.path}.agentic-core-${randomUUID()}.tmp`;
         temporaryPaths.add(temporaryPath);
-        await cp(operation.sourcePath, temporaryPath, { recursive: true, errorOnExist: true, dereference: false });
+        if (operation.files) {
+          await mkdir(temporaryPath);
+          for (const file of operation.files) {
+            const targetPath = path.join(temporaryPath, ...file.path.split("/"));
+            await mkdir(path.dirname(targetPath), { recursive: true });
+            await writeFile(targetPath, file.content, { flag: "wx" });
+          }
+        } else {
+          await cp(operation.sourcePath, temporaryPath, { recursive: true, errorOnExist: true, dereference: false });
+        }
         if (await hashDirectory(temporaryPath) !== operation.sourceSha256) {
-          throw new Error(`Runtime source changed while it was copied: ${operation.sourcePath}`);
+          throw new Error(`Runtime source changed while it was copied: ${operation.sourcePath ?? operation.path}`);
         }
         if (["directory", "file"].includes(snapshots.get(operation.path).kind)) {
           await rm(operation.path, { recursive: true, force: true });

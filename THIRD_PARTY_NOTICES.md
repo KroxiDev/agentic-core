@@ -1,6 +1,6 @@
 # Third-party notices
 
-`@kroxidev/agentic-core` is licensed under MIT. Its npm tarball does not bundle third-party packages; npm installs the runtime dependency graph separately. The `0.1.0` release lock resolves exactly the following packages:
+`@kroxidev/agentic-core` is licensed under MIT. Its production artifact bundles the reachable runtime implementation from the following third-party packages. The persisted runtime does not install their original `node_modules` trees; it keeps the corresponding license and notice files under `third_party/`:
 
 | Package | Version | Relationship | License |
 | --- | --- | --- | --- |
@@ -8,6 +8,8 @@
 | `@jridgewell/sourcemap-codec` | `1.5.5` | Transitive through `@jridgewell/trace-mapping` | `MIT` |
 | `@jridgewell/trace-mapping` | `0.3.31` | Direct | `MIT` |
 | `typescript` | `6.0.3` | Direct | `Apache-2.0` |
+
+The reproducible build uses `esbuild` 0.28.2 as a development-only dependency. `esbuild` executes while preparing the package or building the repository, but its implementation and platform binary are not copied into the production artifact or persisted runtime.
 
 ## @jridgewell/trace-mapping 0.3.31
 

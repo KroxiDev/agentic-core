@@ -14,46 +14,36 @@ const expectedInventory = [
   "LICENSE",
   "README.md",
   "THIRD_PARTY_NOTICES.md",
-  "adapters/claude/agents/agentic-docs.md",
-  "adapters/claude/agents/agentic-production.md",
-  "adapters/claude/agents/agentic-read.md",
-  "adapters/claude/agents/agentic-tests.md",
-  "adapters/claude/skills/agentic-grilling/SKILL.md",
-  "adapters/claude/skills/agentic-tdd/SKILL.md",
-  "adapters/claude/skills/orquestar/SKILL.md",
-  "adapters/codex/agents/agentic-docs.toml",
-  "adapters/codex/agents/agentic-production.toml",
-  "adapters/codex/agents/agentic-read.toml",
-  "adapters/codex/agents/agentic-tests.toml",
-  "adapters/manual-validation.md",
   "bin/agentic-core.js",
   "bin/agentic-quality.js",
-  "golden-rules.md",
+  "dist/runtime/agentic-core.mjs",
+  "dist/runtime/LICENSE",
+  "dist/runtime/payload-manifest.json",
+  "dist/runtime/python-helper.py",
+  "dist/runtime/resources/adapters/claude/agents/agentic-docs.md",
+  "dist/runtime/resources/adapters/claude/agents/agentic-production.md",
+  "dist/runtime/resources/adapters/claude/agents/agentic-read.md",
+  "dist/runtime/resources/adapters/claude/agents/agentic-tests.md",
+  "dist/runtime/resources/adapters/claude/skills/agentic-grilling/SKILL.md",
+  "dist/runtime/resources/adapters/claude/skills/agentic-tdd/SKILL.md",
+  "dist/runtime/resources/adapters/claude/skills/orquestar/SKILL.md",
+  "dist/runtime/resources/adapters/codex/agents/agentic-docs.toml",
+  "dist/runtime/resources/adapters/codex/agents/agentic-production.toml",
+  "dist/runtime/resources/adapters/codex/agents/agentic-read.toml",
+  "dist/runtime/resources/adapters/codex/agents/agentic-tests.toml",
+  "dist/runtime/resources/golden-rules.md",
+  "dist/runtime/resources/skills/agentic-grilling/SKILL.md",
+  "dist/runtime/resources/skills/agentic-tdd/SKILL.md",
+  "dist/runtime/resources/skills/orquestar/SKILL.md",
+  "dist/runtime/resources/src/claude-read-command-guard.mjs",
+  "dist/runtime/resources/src/runtime-launcher.mjs",
+  "dist/runtime/THIRD_PARTY_NOTICES.md",
+  "dist/runtime/third_party/@jridgewell/resolve-uri/LICENSE",
+  "dist/runtime/third_party/@jridgewell/sourcemap-codec/LICENSE",
+  "dist/runtime/third_party/@jridgewell/trace-mapping/LICENSE",
+  "dist/runtime/third_party/typescript/LICENSE.txt",
+  "dist/runtime/third_party/typescript/ThirdPartyNoticeText.txt",
   "package.json",
-  "skills/agentic-grilling/SKILL.md",
-  "skills/agentic-tdd/SKILL.md",
-  "skills/orquestar/SKILL.md",
-  "src/claude-read-command-guard.mjs",
-  "src/cli-output.js",
-  "src/doctor.js",
-  "src/findings.js",
-  "src/host-adapter.js",
-  "src/init.js",
-  "src/maintenance-cli.js",
-  "src/orchestration.js",
-  "src/quality-cli.js",
-  "src/quality/ast.js",
-  "src/quality/coverage.js",
-  "src/quality/crap.js",
-  "src/quality/engine.js",
-  "src/quality/inputs.js",
-  "src/quality/mutation.js",
-  "src/quality/python-helper.py",
-  "src/quality/python.js",
-  "src/runtime-launcher.mjs",
-  "src/runtime.js",
-  "src/transaction.js",
-  "src/version.js",
 ];
 
 async function temporaryDirectory(t, prefix) {
@@ -63,7 +53,7 @@ async function temporaryDirectory(t, prefix) {
 }
 
 async function runNpm(args, { cache, ...options }) {
-  return execFileAsync(process.execPath, [npmCli, ...args, "--cache", cache], {
+  return execFileAsync(process.execPath, [npmCli, ...args, "--silent", "--cache", cache], {
     ...options,
   });
 }
@@ -71,7 +61,7 @@ async function runNpm(args, { cache, ...options }) {
 async function isolatedRuntimeSource(t, tarball, cache) {
   const runtime = await temporaryDirectory(t, "agentic-core-runtime-source-");
   await runNpm(
-    ["install", tarball, "--prefix", runtime, "--ignore-scripts", "--no-audit", "--no-fund"],
+    ["install", tarball, "--prefix", runtime, "--no-audit", "--no-fund"],
     { cache, cwd: runtime, encoding: "utf8" },
   );
   const spec = "github:KroxiDev/agentic-core";
@@ -89,9 +79,9 @@ async function isolatedRuntimeSource(t, tarball, cache) {
   return runtime;
 }
 
-test("npm pack contains exactly the initial product inventory", async (t) => {
+test("npm pack contains exactly the production runtime inventory", async (t) => {
   const cache = await temporaryDirectory(t, "agentic-core-npm-cache-");
-  const { stdout } = await runNpm(["pack", "--dry-run", "--json"], {
+  const { stdout } = await runNpm(["pack", "--ignore-scripts", "--dry-run", "--json"], {
     cache,
     cwd: repositoryRoot,
     encoding: "utf8",
@@ -108,17 +98,22 @@ test("both CLI entry points work from an installed package", async (t) => {
   const consumer = await temporaryDirectory(t, "agentic core consumer ");
   const cache = await temporaryDirectory(t, "agentic-core-npm-cache-");
   const { stdout } = await runNpm(
-    ["pack", "--json", "--pack-destination", packDirectory],
+    ["pack", "--ignore-scripts", "--json", "--pack-destination", packDirectory],
     { cache, cwd: repositoryRoot, encoding: "utf8" },
   );
   const [pack] = JSON.parse(stdout);
   const tarball = path.join(packDirectory, pack.filename);
   await runNpm(
-    ["install", tarball, "--prefix", consumer, "--ignore-scripts", "--no-audit", "--no-fund"],
+    ["install", tarball, "--prefix", consumer, "--no-audit", "--no-fund"],
     { cache, cwd: consumer, encoding: "utf8" },
   );
 
   const installedRoot = path.join(consumer, "node_modules", "@kroxidev", "agentic-core");
+  for (const dependencyTree of [
+    path.join(consumer, "node_modules", "typescript"),
+    path.join(consumer, "node_modules", "@jridgewell"),
+    path.join(installedRoot, "node_modules"),
+  ]) await assert.rejects(lstat(dependencyTree), { code: "ENOENT" });
   const installedPackage = JSON.parse(await readFile(path.join(installedRoot, "package.json"), "utf8"));
   assert.deepEqual(installedPackage.bin, {
     "agentic-core": "bin/agentic-core.js",
@@ -160,7 +155,7 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
   const packDirectory = await temporaryDirectory(t, "agentic-core-bootstrap-pack-");
   const cache = await temporaryDirectory(t, "agentic-core-bootstrap-cache-");
   const { stdout } = await runNpm(
-    ["pack", "--json", "--pack-destination", packDirectory],
+    ["pack", "--ignore-scripts", "--json", "--pack-destination", packDirectory],
     { cache, cwd: repositoryRoot, encoding: "utf8" },
   );
   const [pack] = JSON.parse(stdout);
@@ -198,6 +193,10 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
   for (const rootPackageFile of ["package.json", "package-lock.json", "node_modules"]) {
     await assert.rejects(lstat(path.join(project, rootPackageFile)), { code: "ENOENT" });
   }
+  const persistedRuntime = path.join(project, ".agentic-core", "runtime");
+  for (const forbidden of ["package.json", "package-lock.json", "node_modules", "_npx", "payload-manifest.json"]) {
+    await assert.rejects(lstat(path.join(persistedRuntime, forbidden)), { code: "ENOENT" });
+  }
   const launcher = path.join(project, ".agentic-core", "runtime-launcher.mjs");
   const version = await execFileAsync(process.execPath, [launcher, "agentic-core", "--version"], {
     cwd: project,
@@ -209,4 +208,22 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
     encoding: "utf8",
   });
   assert.match(help.stdout, /agentic-quality scan/);
+  await writeFile(path.join(project, "quality-smoke.mjs"), "export function identity(value) { return value; }\n");
+  await writeFile(path.join(project, "quality-smoke.test.mjs"), [
+    'import assert from "node:assert/strict";',
+    'import test from "node:test";',
+    'import { identity } from "./quality-smoke.mjs";',
+    'test("identity", () => assert.equal(identity(7), 7));',
+    "",
+  ].join("\n"));
+  const quality = await execFileAsync(process.execPath, [
+    launcher,
+    "agentic-quality",
+    "scan",
+    "--target",
+    "quality-smoke.mjs",
+  ], { cwd: project, encoding: "utf8" });
+  const qualityReport = JSON.parse(quality.stdout);
+  assert.equal(qualityReport.status, "approved");
+  assert.equal(qualityReport.details.length, 1);
 });

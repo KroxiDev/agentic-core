@@ -1,10 +1,4 @@
 #!/usr/bin/env node
 
-import { runQualityCli } from "../src/quality-cli.js";
-
-try {
-  process.exitCode = await runQualityCli(process.argv.slice(2));
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 5;
-}
+process.argv.splice(2, 0, "agentic-quality");
+await import("../dist/runtime/agentic-core.mjs");

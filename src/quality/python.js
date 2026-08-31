@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const helper = fileURLToPath(new URL("python-helper.py", import.meta.url));
+export const pythonHelper = fileURLToPath(new URL("python-helper.py", import.meta.url));
 const executionOptions = (projectRoot, timeout, env = process.env) => ({
   cwd: projectRoot, env, encoding: "utf8", maxBuffer: 10 * 1024 * 1024, timeout, windowsHide: true,
 });
@@ -32,14 +32,14 @@ export async function findPython(projectRoot, { timeout = 10_000 } = {}) {
 
 export async function analyzePythonSource(runtime, projectRoot, filePath, { timeout = 10_000 } = {}) {
   const { stdout } = await execFileAsync(runtime.executable,
-    [...runtime.prefix, helper, "analyze", filePath], executionOptions(projectRoot, timeout));
+    [...runtime.prefix, pythonHelper, "analyze", filePath], executionOptions(projectRoot, timeout));
   return JSON.parse(stdout);
 }
 
 export async function generatePythonMutants(runtime, projectRoot, filePath, logicalPath, selectedSymbols,
   { timeout = 10_000 } = {}) {
   const { stdout } = await execFileAsync(runtime.executable, [
-    ...runtime.prefix, helper, "mutants", filePath, "--logical-path", logicalPath,
+    ...runtime.prefix, pythonHelper, "mutants", filePath, "--logical-path", logicalPath,
     "--symbols", JSON.stringify([...selectedSymbols ?? []]),
   ], executionOptions(projectRoot, timeout));
   return JSON.parse(stdout);
@@ -131,7 +131,7 @@ export async function executePythonCoverage(runtime, projectRoot, files, {
         backend: "coverage.py", runner };
     }
     try {
-      await execFileAsync(runtime.executable, [...runtime.prefix, helper, "trace", "--output", outputFile,
+      await execFileAsync(runtime.executable, [...runtime.prefix, pythonHelper, "trace", "--output", outputFile,
         "--runner", runner, "--targets", JSON.stringify(files.map(({ path: filePath }) => filePath))],
       executionOptions(projectRoot, timeout));
     } catch (error) { throw testFailure(error); }

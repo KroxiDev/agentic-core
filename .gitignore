@@ -6,6 +6,8 @@ node_modules/
 coverage/
 dist/
 *.tgz
+__pycache__/
+*.py[cod]
 
 # Local configuration and logs
 .env

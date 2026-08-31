@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -208,18 +208,23 @@ test("doctor --dry-run detects a divergent persisted runtime without replacing o
   }));
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
     name: "@kroxidev/agentic-core",
+    version: "0.1.0",
     bin: { "agentic-core": "bin/agentic-core.js", "agentic-quality": "bin/agentic-quality.js" },
   }));
   await writeFile(path.join(packageRoot, "bin", "agentic-core.js"), "export {};\n");
   await writeFile(path.join(packageRoot, "bin", "agentic-quality.js"), "export {};\n");
+  await cp(path.join(repositoryRoot, "dist", "runtime"), path.join(packageRoot, "dist", "runtime"), {
+    recursive: true,
+    errorOnExist: true,
+  });
   const environment = {
     ...process.env,
     NODE_ENV: "test",
     AGENTIC_CORE_TEST_RUNTIME_ROOT: runtime,
   };
   assert.equal((await runCore(["init", project, "--yes"], { env: environment })).code, 0);
-  const revision = path.join(project, ".agentic-core", "runtime", "node_modules", "@kroxidev", "agentic-core", "REVISION");
-  await writeFile(revision, "foreign runtime change\r\n");
+  const artifact = path.join(project, ".agentic-core", "runtime", "agentic-core.mjs");
+  await writeFile(artifact, "foreign runtime change\r\n");
   const before = await snapshotTree(project);
 
   const result = await runCore(["doctor", project, "--dry-run"]);

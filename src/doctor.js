@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   appendManagedBlock,
@@ -12,7 +11,8 @@ import {
   validateOwnership,
 } from "./init.js";
 import { analyzeSource } from "./quality/ast.js";
-import { analyzePythonSource, choosePythonRunner, findPython } from "./quality/python.js";
+import { analyzePythonSource, choosePythonRunner, findPython, pythonHelper } from "./quality/python.js";
+import { inspectPersistedRuntime } from "./runtime.js";
 import { hashDirectory, writeTransaction } from "./transaction.js";
 
 const execFileAsync = promisify(execFile);
@@ -613,9 +613,14 @@ async function addRuntimePersistenceCheck(checks, projectRoot, owner) {
   let hashError;
   if (kind === "directory") {
     try {
-      actualHash = await hashDirectory(targetPath);
+      ({ treeSha256: actualHash } = await inspectPersistedRuntime(targetPath, owner.runtime, owner.version));
     } catch (error) {
       hashError = error.message;
+      try {
+        actualHash = await hashDirectory(targetPath);
+      } catch {
+        // Preserve the more specific persisted-runtime validation error.
+      }
     }
   }
   const healthy = kind === "directory" && hashError === undefined && actualHash === owner.runtime.treeSha256;
@@ -770,8 +775,7 @@ async function addBackendChecks(checks, projectRoot) {
   }));
 
   try {
-    const helperPath = fileURLToPath(new URL("quality/python-helper.py", import.meta.url));
-    const symbols = await analyzePythonSource(runtime, projectRoot, helperPath);
+    const symbols = await analyzePythonSource(runtime, projectRoot, pythonHelper);
     if (!Array.isArray(symbols)) throw new Error("Python analyzer returned a non-array result");
     const runner = await choosePythonRunner(runtime, projectRoot);
     const coverage = await pythonCoverageBackend(runtime, projectRoot);

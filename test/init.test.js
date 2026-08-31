@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { uninstallInstallation } from "../src/init.js";
+import { hashDirectory } from "../src/transaction.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -55,6 +56,10 @@ async function createNpxRuntime(t, options = {}) {
     "if (process.argv.includes('--version')) process.stdout.write('0.1.0\\n');\n");
   await writeFile(path.join(packageRoot, "bin", "agentic-quality.js"),
     "if (process.argv.includes('--help')) process.stdout.write('agentic-quality test help\\n');\n");
+  await cp(path.join(repositoryRoot, "dist", "runtime"), path.join(packageRoot, "dist", "runtime"), {
+    recursive: true,
+    errorOnExist: true,
+  });
   await writeFile(path.join(packageRoot, "REVISION"), `${commit}\n`);
   return { runtime, commit };
 }
@@ -242,6 +247,8 @@ test("the GitHub npx bootstrap previews and transactionally persists the exact r
 
   assert.deepEqual(preview.runtime, {
     path: ".agentic-core/runtime",
+    format: "self-contained-v1",
+    manifest: "runtime-manifest.json",
     source: `github:KroxiDev/agentic-core#${commit}`,
     commit,
     treeSha256: preview.runtime.treeSha256,
@@ -275,7 +282,31 @@ test("the GitHub npx bootstrap previews and transactionally persists the exact r
     cwd: project,
     encoding: "utf8",
   });
-  assert.match(quality.stdout, /agentic-quality test help/);
+  assert.match(quality.stdout, /agentic-quality scan/);
+  const persistedRuntime = path.join(project, ".agentic-core", "runtime");
+  for (const forbidden of ["node_modules", "_npx", "package.json", "package-lock.json", "payload-manifest.json"]) {
+    await assert.rejects(lstat(path.join(persistedRuntime, forbidden)), { code: "ENOENT" });
+  }
+  const runtimeManifest = JSON.parse(await readFile(path.join(persistedRuntime, "runtime-manifest.json"), "utf8"));
+  assert.equal(runtimeManifest.format, "self-contained-v1");
+  assert.equal(runtimeManifest.commit, commit);
+  assert.deepEqual(runtimeManifest.bins, {
+    "agentic-core": "agentic-core.mjs",
+    "agentic-quality": "agentic-core.mjs",
+  });
+  const update = await execFileAsync(process.execPath, [launcher, "agentic-core", "update", ".", "--dry-run"], {
+    cwd: project,
+    encoding: "utf8",
+  });
+  assert.equal(JSON.parse(update.stdout).status, "ready");
+  await writeFile(path.join(persistedRuntime, "agentic-core.mjs"), "// divergent runtime\n");
+  await assert.rejects(execFileAsync(process.execPath, [launcher, "agentic-core", "--version"], {
+    cwd: project,
+    encoding: "utf8",
+  }), (error) => {
+    assert.match(error.stderr, /does not match its ownership hash/i);
+    return true;
+  });
 });
 
 test("init --dry-run rejects an overlapping ephemeral runtime boundary without writing", async (t) => {
@@ -319,6 +350,35 @@ test("init --dry-run rejects non-canonical runtime binary paths without writing"
   assertSameSnapshot(await snapshotFiles(project), before);
 });
 
+test("init --dry-run rejects a packaged runtime payload that fails integrity", async (t) => {
+  const project = await createProject(t);
+  const { runtime } = await createNpxRuntime(t);
+  const artifact = path.join(
+    runtime,
+    "node_modules",
+    "@kroxidev",
+    "agentic-core",
+    "dist",
+    "runtime",
+    "agentic-core.mjs",
+  );
+  await writeFile(artifact, "// tampered payload\n");
+  const before = await snapshotFiles(project);
+
+  await assert.rejects(runCore(["init", project, "--yes", "--dry-run"], {
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      AGENTIC_CORE_TEST_RUNTIME_ROOT: runtime,
+    },
+  }), (error) => {
+    assert.equal(error.code, 1);
+    assert.match(error.stderr, /payload failed integrity validation/i);
+    return true;
+  });
+  assertSameSnapshot(await snapshotFiles(project), before);
+});
+
 test("update --dry-run previews the exact next GitHub runtime and real update persists the same tree", async (t) => {
   const project = await createProject(t);
   const first = await createNpxRuntime(t);
@@ -348,15 +408,13 @@ test("update --dry-run previews the exact next GitHub runtime and real update pe
     const content = await readFile(path.join(project, ...action.path.split("/")));
     assert.equal(sha256(content), action.sha256, `${action.action} ${action.path}`);
   }
-  assert.equal(await readFile(path.join(
+  const runtimeManifest = JSON.parse(await readFile(path.join(
     project,
     ".agentic-core",
     "runtime",
-    "node_modules",
-    "@kroxidev",
-    "agentic-core",
-    "REVISION",
-  ), "utf8"), `${second.commit}\n`);
+    "runtime-manifest.json",
+  ), "utf8"));
+  assert.equal(runtimeManifest.commit, second.commit);
 });
 
 test("update --dry-run requires a GitHub runtime source before replacing a divergent persisted runtime", async (t) => {
@@ -369,15 +427,7 @@ test("update --dry-run requires a GitHub runtime source before replacing a diver
       AGENTIC_CORE_TEST_RUNTIME_ROOT: source.runtime,
     },
   });
-  await writeFile(path.join(
-    project,
-    ".agentic-core",
-    "runtime",
-    "node_modules",
-    "@kroxidev",
-    "agentic-core",
-    "REVISION",
-  ), "divergent runtime\n");
+  await writeFile(path.join(project, ".agentic-core", "runtime", "agentic-core.mjs"), "divergent runtime\n");
   const before = await snapshotFiles(project);
 
   await assert.rejects(runCore(["update", project, "--force", "--dry-run"]), (error) => {
@@ -388,6 +438,51 @@ test("update --dry-run requires a GitHub runtime source before replacing a diver
     assert.deepEqual(plan.divergences, [".agentic-core/runtime"]);
     return true;
   });
+  assertSameSnapshot(await snapshotFiles(project), before);
+});
+
+test("maintenance rejects an inconsistent self-contained runtime manifest even with retagged ownership", async (t) => {
+  const project = await createProject(t);
+  const source = await createNpxRuntime(t);
+  await runCore(["init", project, "--yes"], {
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      AGENTIC_CORE_TEST_RUNTIME_ROOT: source.runtime,
+    },
+  });
+  const productRoot = path.join(project, ".agentic-core");
+  const runtimeRoot = path.join(productRoot, "runtime");
+  const runtimeManifestPath = path.join(runtimeRoot, "runtime-manifest.json");
+  const runtimeManifest = JSON.parse(await readFile(runtimeManifestPath, "utf8"));
+  runtimeManifest.commit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  await writeFile(runtimeManifestPath, `${JSON.stringify(runtimeManifest, null, 2)}\n`);
+  const ownershipPath = path.join(productRoot, "ownership.json");
+  const owner = JSON.parse(await readFile(ownershipPath, "utf8"));
+  owner.runtime.treeSha256 = await hashDirectory(runtimeRoot);
+  await writeFile(ownershipPath, `${JSON.stringify(owner, null, 2)}\n`);
+  const before = await snapshotFiles(project);
+
+  await assert.rejects(runCore(["doctor", project]), (error) => {
+    assert.equal(error.code, 1);
+    const report = JSON.parse(error.stdout);
+    assert.equal(report.status, "unhealthy");
+    const runtimeCheck = report.diagnosis.checks.find(({ id }) => id === "runtime.persistence");
+    assert.equal(runtimeCheck.status, "error");
+    assert.match(runtimeCheck.evidence.error, /runtime manifest is invalid/i);
+    return true;
+  });
+  await assert.rejects(runCore(["update", project, "--dry-run"]), (error) => {
+    assert.equal(error.code, 1);
+    const plan = JSON.parse(error.stdout);
+    assert.equal(plan.status, "blocked");
+    assert.equal(plan.error.code, "runtime_source_required");
+    assert.deepEqual(plan.divergences, [".agentic-core/runtime"]);
+    return true;
+  });
+  const uninstall = await runCore(["uninstall", project, "--dry-run"]);
+  assert.match(uninstall.stdout, /Preserved divergent runtime: \.agentic-core\/runtime/);
+  assert.doesNotMatch(uninstall.stdout, /Would remove runtime:/);
   assertSameSnapshot(await snapshotFiles(project), before);
 });
 
@@ -912,8 +1007,8 @@ test("uninstall --dry-run preserves a divergent runtime unless --force explicitl
     AGENTIC_CORE_TEST_RUNTIME_ROOT: source.runtime,
   };
   await runCore(["init", project, "--yes"], { env: environment });
-  const revision = path.join(project, ".agentic-core", "runtime", "node_modules", "@kroxidev", "agentic-core", "REVISION");
-  await writeFile(revision, "divergent runtime\r\n");
+  const artifact = path.join(project, ".agentic-core", "runtime", "agentic-core.mjs");
+  await writeFile(artifact, "divergent runtime\r\n");
   const before = await snapshotFiles(project);
 
   const conservative = await runCore(["uninstall", project, "--dry-run"]);

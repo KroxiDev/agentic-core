@@ -1,16 +1,41 @@
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { hashDirectory } from "./transaction.js";
+import {
+  GITHUB_SPEC,
+  PRODUCT,
+  RUNTIME_BINS,
+  RUNTIME_FORMAT,
+  RUNTIME_MANIFEST,
+  RUNTIME_PAYLOAD_COPIES,
+  RUNTIME_PAYLOAD_MANIFEST,
+} from "./runtime-layout.js";
+import { hashFileTree } from "./transaction.js";
 
-const PRODUCT = "@kroxidev/agentic-core";
-const GITHUB_SPEC = "github:KroxiDev/agentic-core";
 const BIN_PATHS = new Map([
   ["agentic-core", "bin/agentic-core.js"],
   ["agentic-quality", "bin/agentic-quality.js"],
 ]);
 const BINS = [...BIN_PATHS.keys()];
-const packageRoot = fileURLToPath(new URL("../", import.meta.url));
+const bundled = typeof __AGENTIC_CORE_BUNDLED_RUNTIME__ === "boolean" && __AGENTIC_CORE_BUNDLED_RUNTIME__;
+const packageRoot = fileURLToPath(new URL(bundled ? "../../" : "../", import.meta.url));
+const expectedPayloadPaths = [
+  ...new Set(Object.values(RUNTIME_BINS)),
+  ...RUNTIME_PAYLOAD_COPIES.map(({ target }) => target),
+].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+
+function json(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function sha256(content) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function plainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 async function jsonFile(filePath, label) {
   try {
@@ -24,6 +49,105 @@ function commitFromResolved(resolved) {
   const match = /^git\+(?:ssh:\/\/git@|https:\/\/)github\.com\/KroxiDev\/agentic-core\.git#([0-9a-f]{40})$/u.exec(resolved);
   if (!match) throw new Error("The ephemeral runtime is not pinned to KroxiDev/agentic-core on GitHub");
   return match[1];
+}
+
+function validatePayloadManifest(manifest, version) {
+  const records = Array.isArray(manifest?.integrity?.files) ? manifest.integrity.files : [];
+  const filePaths = records.map((file) => file?.path);
+  const binsValid = plainObject(manifest?.bins)
+    && BINS.every((bin) => manifest.bins[bin] === RUNTIME_BINS[bin])
+    && Object.keys(manifest.bins).length === BINS.length;
+  const filesValid = records.length === expectedPayloadPaths.length
+    && manifest?.integrity?.algorithm === "sha256"
+    && records.every((file, index) => plainObject(file)
+      && file.path === expectedPayloadPaths[index]
+      && Number.isSafeInteger(file.bytes) && file.bytes >= 0
+      && /^[0-9a-f]{64}$/u.test(file.sha256));
+  if (!plainObject(manifest) || manifest.schemaVersion !== 1
+    || manifest.type !== "agentic-core-runtime-payload" || manifest.product !== PRODUCT
+    || manifest.version !== version || manifest.format !== RUNTIME_FORMAT
+    || !binsValid || !filesValid || new Set(filePaths).size !== filePaths.length) {
+    throw new Error("The packaged runtime payload manifest is invalid");
+  }
+}
+
+async function readSafeTree(root, label = "The packaged runtime payload") {
+  const resolvedRoot = path.resolve(root);
+  const rootDetails = await lstat(resolvedRoot);
+  if (!rootDetails.isDirectory() || rootDetails.isSymbolicLink()) {
+    throw new Error(`${label} is not a safe directory`);
+  }
+  const files = [];
+  const visit = async (directory, relative = "") => {
+    const entries = (await readdir(directory, { withFileTypes: true }))
+      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const entry of entries) {
+      const child = path.join(directory, entry.name);
+      const logicalPath = relative ? `${relative}/${entry.name}` : entry.name;
+      const details = await lstat(child);
+      if (details.isSymbolicLink()) throw new Error(`${label} contains a symbolic link: ${logicalPath}`);
+      if (details.isDirectory()) {
+        await visit(child, logicalPath);
+      } else if (details.isFile()) {
+        files.push({ path: logicalPath, content: await readFile(child) });
+      } else {
+        throw new Error(`${label} contains an unsupported entry: ${logicalPath}`);
+      }
+    }
+  };
+  await visit(resolvedRoot);
+  return files;
+}
+
+async function assembledRuntime(installedRoot, { root, source, commit, version }) {
+  const payloadRoot = path.join(installedRoot, "dist", "runtime");
+  const payloadManifest = await jsonFile(
+    path.join(payloadRoot, RUNTIME_PAYLOAD_MANIFEST),
+    "The packaged runtime payload manifest",
+  );
+  validatePayloadManifest(payloadManifest, version);
+  const payloadTree = await readSafeTree(payloadRoot);
+  const actualPaths = payloadTree.map(({ path: filePath }) => filePath);
+  const expectedPaths = [...expectedPayloadPaths, RUNTIME_PAYLOAD_MANIFEST]
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  if (actualPaths.length !== expectedPaths.length
+    || actualPaths.some((filePath, index) => filePath !== expectedPaths[index])) {
+    throw new Error("The packaged runtime payload contains an unexpected file inventory");
+  }
+
+  const byPath = new Map(payloadTree.map((file) => [file.path, file]));
+  const files = payloadManifest.integrity.files.map((record) => {
+    const file = byPath.get(record.path);
+    if (file.content.byteLength !== record.bytes || sha256(file.content) !== record.sha256) {
+      throw new Error(`The packaged runtime payload failed integrity validation: ${record.path}`);
+    }
+    return file;
+  });
+  const runtimeManifest = {
+    schemaVersion: 1,
+    product: PRODUCT,
+    version,
+    format: RUNTIME_FORMAT,
+    source,
+    commit,
+    bins: RUNTIME_BINS,
+    integrity: payloadManifest.integrity,
+  };
+  files.push({ path: RUNTIME_MANIFEST, content: Buffer.from(json(runtimeManifest)) });
+  const treeSha256 = hashFileTree(files);
+  return {
+    root,
+    files,
+    manifest: {
+      path: ".agentic-core/runtime",
+      format: RUNTIME_FORMAT,
+      manifest: RUNTIME_MANIFEST,
+      source,
+      commit,
+      treeSha256,
+      bins: [...BINS],
+    },
+  };
 }
 
 async function inspectRuntimeRoot(runtimeRoot) {
@@ -40,7 +164,7 @@ async function inspectRuntimeRoot(runtimeRoot) {
   const commit = commitFromResolved(installed?.resolved);
   const installedRoot = path.join(root, "node_modules", "@kroxidev", "agentic-core");
   const installedPackage = await jsonFile(path.join(installedRoot, "package.json"), "The installed runtime package manifest");
-  if (installedPackage.name !== PRODUCT
+  if (installedPackage.name !== PRODUCT || typeof installedPackage.version !== "string"
     || BINS.some((bin) => installedPackage.bin?.[bin] !== BIN_PATHS.get(bin))) {
     throw new Error("The ephemeral runtime does not expose both canonical binary paths");
   }
@@ -51,27 +175,30 @@ async function inspectRuntimeRoot(runtimeRoot) {
       throw new Error(`The ephemeral runtime binary is not a regular file: ${bin}`);
     }
   }
-  return {
+  return assembledRuntime(installedRoot, {
     root,
-    manifest: {
-      path: ".agentic-core/runtime",
-      source: `${GITHUB_SPEC}#${commit}`,
-      commit,
-      treeSha256: await hashDirectory(root),
-      bins: [...BINS],
-    },
-  };
+    source: `${GITHUB_SPEC}#${commit}`,
+    commit,
+    version: installedPackage.version,
+  });
 }
 
 export async function discoverRuntimeSource() {
   const testRoot = process.env.NODE_ENV === "test" ? process.env.AGENTIC_CORE_TEST_RUNTIME_ROOT : undefined;
   if (testRoot) return inspectRuntimeRoot(testRoot);
 
+  let executingPackage;
+  try {
+    executingPackage = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (executingPackage.name !== PRODUCT) return undefined;
   const candidate = path.resolve(packageRoot, "..", "..", "..");
-  const candidatePackagePath = path.join(candidate, "package.json");
   let candidatePackage;
   try {
-    candidatePackage = JSON.parse(await readFile(candidatePackagePath, "utf8"));
+    candidatePackage = JSON.parse(await readFile(path.join(candidate, "package.json"), "utf8"));
   } catch (error) {
     if (error?.code === "ENOENT") return undefined;
     throw error;
@@ -86,15 +213,65 @@ export async function discoverRuntimeSource() {
 
 export function validateRuntimeOwnership(runtime) {
   if (runtime === undefined) return;
-  if (runtime === null || typeof runtime !== "object" || Array.isArray(runtime)
-    || runtime.path !== ".agentic-core/runtime"
-    || !/^github:KroxiDev\/agentic-core#[0-9a-f]{40}$/u.test(runtime.source)
-    || !/^[0-9a-f]{40}$/u.test(runtime.commit)
-    || runtime.source !== `${GITHUB_SPEC}#${runtime.commit}`
-    || !/^[0-9a-f]{64}$/u.test(runtime.treeSha256)
-    || !Array.isArray(runtime.bins)
-    || runtime.bins.length !== BINS.length
-    || runtime.bins.some((bin, index) => bin !== BINS[index])) {
-    throw new Error("Runtime ownership metadata is invalid");
+  const baseValid = plainObject(runtime)
+    && runtime.path === ".agentic-core/runtime"
+    && /^github:KroxiDev\/agentic-core#[0-9a-f]{40}$/u.test(runtime.source)
+    && /^[0-9a-f]{40}$/u.test(runtime.commit)
+    && runtime.source === `${GITHUB_SPEC}#${runtime.commit}`
+    && /^[0-9a-f]{64}$/u.test(runtime.treeSha256)
+    && Array.isArray(runtime.bins)
+    && runtime.bins.length === BINS.length
+    && runtime.bins.every((bin, index) => bin === BINS[index]);
+  const formatValid = runtime?.format === undefined
+    || (runtime.format === RUNTIME_FORMAT && runtime.manifest === RUNTIME_MANIFEST);
+  if (!baseValid || !formatValid) throw new Error("Runtime ownership metadata is invalid");
+}
+
+function validatePersistedRuntimeManifest(manifest, runtime, ownerVersion, files) {
+  const binsValid = plainObject(manifest?.bins)
+    && BINS.every((bin) => manifest.bins[bin] === RUNTIME_BINS[bin])
+    && Object.keys(manifest.bins).length === BINS.length;
+  const records = manifest?.integrity?.files;
+  if (!plainObject(manifest) || manifest.schemaVersion !== 1
+    || manifest.product !== PRODUCT || manifest.version !== ownerVersion
+    || manifest.format !== RUNTIME_FORMAT || manifest.source !== runtime.source
+    || manifest.commit !== runtime.commit || !binsValid
+    || manifest?.integrity?.algorithm !== "sha256" || !Array.isArray(records)) {
+    throw new Error("The persisted runtime manifest is invalid");
   }
+  const expectedPaths = files.map(({ path: filePath }) => filePath)
+    .filter((filePath) => filePath !== RUNTIME_MANIFEST);
+  if (records.length !== expectedPaths.length
+    || new Set(records.map((record) => record?.path)).size !== records.length) {
+    throw new Error("The persisted runtime manifest has an invalid file inventory");
+  }
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    const actual = byPath.get(expectedPaths[index]);
+    if (!plainObject(record) || record.path !== expectedPaths[index]
+      || record.bytes !== actual?.content.byteLength || record.sha256 !== sha256(actual?.content)) {
+      throw new Error(`The persisted runtime manifest failed integrity validation: ${String(record?.path)}`);
+    }
+  }
+}
+
+export async function inspectPersistedRuntime(runtimeRoot, runtime, ownerVersion) {
+  validateRuntimeOwnership(runtime);
+  const files = await readSafeTree(runtimeRoot, "The persisted runtime");
+  const treeSha256 = hashFileTree(files);
+  if (treeSha256 !== runtime.treeSha256) {
+    throw new Error("The persisted runtime does not match its ownership hash");
+  }
+  if (runtime.format === undefined) return { treeSha256 };
+
+  const manifestFile = files.find(({ path: filePath }) => filePath === RUNTIME_MANIFEST);
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestFile?.content.toString("utf8") ?? "");
+  } catch (error) {
+    throw new Error(`The persisted runtime manifest is invalid: ${error.message}`);
+  }
+  validatePersistedRuntimeManifest(manifest, runtime, ownerVersion, files);
+  return { treeSha256 };
 }

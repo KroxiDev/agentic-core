@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, rmdir } from "node:fs/promises";
 import path from "node:path";
-import { discoverRuntimeSource, validateRuntimeOwnership } from "./runtime.js";
-import { hashDirectory, writeTransaction } from "./transaction.js";
+import { discoverRuntimeSource, inspectPersistedRuntime, validateRuntimeOwnership } from "./runtime.js";
+import { HOST_RESOURCE_SPECS } from "./runtime-layout.js";
+import { writeTransaction } from "./transaction.js";
 import { getVersion } from "./version.js";
 
 const PRODUCT = "@kroxidev/agentic-core";
@@ -11,18 +12,6 @@ const CORE_RESOURCE_PATHS = [
   ".agentic-core/config.json",
   ".agentic-core/config.schema.json",
   ".agentic-core/golden-rules.md",
-];
-const HOST_RESOURCE_SPECS = [
-  { source: "src/claude-read-command-guard.mjs", target: ".agentic-core/claude-read-command-guard.mjs" },
-  { source: "src/runtime-launcher.mjs", target: ".agentic-core/runtime-launcher.mjs" },
-  ...["read", "production", "tests", "docs"].flatMap((profile) => [
-    { source: `adapters/codex/agents/agentic-${profile}.toml`, target: `.codex/agents/agentic-${profile}.toml` },
-    { source: `adapters/claude/agents/agentic-${profile}.md`, target: `.claude/agents/agentic-${profile}.md` },
-  ]),
-  ...["orquestar", "agentic-tdd", "agentic-grilling"].flatMap((skill) => [
-    { source: `skills/${skill}/SKILL.md`, target: `.agents/skills/${skill}/SKILL.md` },
-    { source: `adapters/claude/skills/${skill}/SKILL.md`, target: `.claude/skills/${skill}/SKILL.md` },
-  ]),
 ];
 const EXPECTED_RESOURCE_PATHS = [...CORE_RESOURCE_PATHS, ...HOST_RESOURCE_SPECS.map(({ target }) => target)];
 const LEGACY_EXPECTED_RESOURCE_PATHS = EXPECTED_RESOURCE_PATHS
@@ -134,14 +123,16 @@ function deterministicInstallationId(projectRoot, version, resources) {
 }
 
 async function installationResources(config) {
+  const bundled = typeof __AGENTIC_CORE_BUNDLED_RUNTIME__ === "boolean" && __AGENTIC_CORE_BUNDLED_RUNTIME__;
+  const packagedResource = (source) => new URL(`${bundled ? "./resources/" : "../"}${source}`, import.meta.url);
   const hostResources = await Promise.all(HOST_RESOURCE_SPECS.map(async ({ source, target }) => ({
     path: target,
-    content: await readFile(new URL(`../${source}`, import.meta.url)),
+    content: await readFile(packagedResource(source)),
   })));
   return [
     { path: ".agentic-core/config.json", content: config },
     { path: ".agentic-core/config.schema.json", content: Buffer.from(json(CONFIG_SCHEMA)) },
-    { path: ".agentic-core/golden-rules.md", content: await readFile(new URL("../golden-rules.md", import.meta.url)) },
+    { path: ".agentic-core/golden-rules.md", content: await readFile(packagedResource("golden-rules.md")) },
     ...hostResources,
   ];
 }
@@ -395,7 +386,7 @@ export async function initialize(projectDirectory, {
     ...(runtime ? [{
       path: runtimePath,
       type: "replace_directory",
-      sourcePath: runtime.root,
+      files: runtime.files,
       sourceSha256: runtime.manifest.treeSha256,
     }] : []),
     { path: ownershipPath, content: Buffer.from(json(manifest)) },
@@ -528,8 +519,15 @@ export async function updateInstallation(projectDirectory, {
     }
   } else {
     if (runtimeKind === "other") throw new Error("Cannot update: the persisted runtime has an unsafe path type");
-    const runtimeMatches = runtimeKind === "directory"
-      && await hashDirectory(runtimePath) === owner.runtime.treeSha256;
+    let runtimeMatches = false;
+    if (runtimeKind === "directory") {
+      try {
+        await inspectPersistedRuntime(runtimePath, owner.runtime, owner.version);
+        runtimeMatches = true;
+      } catch {
+        runtimeMatches = false;
+      }
+    }
     if (!runtimeMatches) {
       divergences.push(".agentic-core/runtime");
       runtimeSourceRequired = runtime === undefined;
@@ -568,7 +566,7 @@ export async function updateInstallation(projectDirectory, {
     ...(runtime ? [{
       path: runtimePath,
       type: "replace_directory",
-      sourcePath: runtime.root,
+      files: runtime.files,
       sourceSha256: runtime.manifest.treeSha256,
     }] : []),
     { path: ownershipPath, content: Buffer.from(json(manifest)) },
@@ -689,7 +687,15 @@ export async function uninstallInstallation(projectDirectory, {
     const targetPath = path.join(projectRoot, ...owner.runtime.path.split("/"));
     const kind = await fileKind(targetPath);
     if (kind !== "missing") {
-      const matches = kind === "directory" && await hashDirectory(targetPath) === owner.runtime.treeSha256;
+      let matches = false;
+      if (kind === "directory") {
+        try {
+          await inspectPersistedRuntime(targetPath, owner.runtime, owner.version);
+          matches = true;
+        } catch {
+          matches = false;
+        }
+      }
       if (matches || ((kind === "file" || kind === "directory") && await authorize("runtime", owner.runtime.path))) {
         operations.push({ path: targetPath, type: "delete" });
         actions.push(`runtime: ${owner.runtime.path}`);

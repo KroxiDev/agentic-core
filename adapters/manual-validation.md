@@ -20,7 +20,7 @@ Run one current-tree pass of:
 - `npm.cmd pack --dry-run --json`
 - `git diff --check`
 
-All commands must pass, and the package inventory must contain exactly the intended 43 files with no fixtures, caches, run state, native evidence or validation helpers. This automated gate replaces native-row approval for issue #16.
+All commands must pass, and the package inventory must contain exactly the intended 33 files with no fixtures, caches, run state, native evidence or validation helpers. This automated gate replaces native-row approval for issue #16.
 
 ## Native observation reference
 
