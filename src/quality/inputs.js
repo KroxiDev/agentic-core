@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { compareCodeUnits } from "./order.js";
 
 const CODE_EXTENSIONS = new Set([
   ".js", ".jsx", ".mjs", ".cjs",
@@ -62,7 +63,7 @@ async function projectFiles(directory, projectRoot = directory) {
     throw error;
   }
   const files = [];
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+  for (const entry of entries.sort((left, right) => compareCodeUnits(left.name, right.name))) {
     const child = path.join(directory, entry.name);
     const relative = logicalPath(projectRoot, child);
     if (qualityPathIsExcluded(relative)) continue;
@@ -103,7 +104,7 @@ export function normalizeQualityScopes(projectRoot, rawScopes) {
     }
     return logical;
   });
-  return [...new Set(normalized)].sort();
+  return [...new Set(normalized)].sort(compareCodeUnits);
 }
 
 function inScope(file, scopes) {
@@ -133,7 +134,7 @@ export async function captureQualityCheckpoint(projectRoot, rawScopes) {
   }
 
   const entries = [];
-  for (const filePath of [...new Set(candidates)].sort()) {
+  for (const filePath of [...new Set(candidates)].sort(compareCodeUnits)) {
     const file = logicalPath(root, filePath);
     const kind = file === ".agentic-core/config.json"
       ? "quality_configuration"
@@ -143,6 +144,8 @@ export async function captureQualityCheckpoint(projectRoot, rawScopes) {
     if (qualityContentIsBinary(content)) continue;
     entries.push({ kind, path: file, sha256: sha256(content), content });
   }
+  entries.sort((left, right) => compareCodeUnits(left.path, right.path)
+    || compareCodeUnits(left.kind, right.kind));
   const inventory = entries.map(({ content: _content, ...entry }) => entry);
   return {
     scopes,
@@ -171,7 +174,8 @@ export async function qualityInputInventory(projectRoot, targetPaths, runner, co
     if (qualityContentIsBinary(content)) continue;
     entries.push({ kind, path: logicalPath(root, filePath), sha256: sha256(content) });
   }
-  entries.sort((left, right) => left.path.localeCompare(right.path) || left.kind.localeCompare(right.kind));
+  entries.sort((left, right) => compareCodeUnits(left.path, right.path)
+    || compareCodeUnits(left.kind, right.kind));
   const commandInputs = commands.map((command, index) => {
     const executable = Array.isArray(command) ? process.execPath : command.executable;
     const version = Array.isArray(command) ? process.version : command.version;

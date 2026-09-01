@@ -4,6 +4,7 @@ import path from "node:path";
 import { analyzeQuality } from "./crap.js";
 import { captureQualityCheckpoint, normalizeQualityScopes } from "./inputs.js";
 import { analyzeMutation } from "./mutation.js";
+import { compareCodeUnits } from "./order.js";
 import { hashFileTree, writeTransaction } from "../transaction.js";
 
 const MODES = new Set(["light", "normal", "full"]);
@@ -28,8 +29,8 @@ function runnerEnvironment(report) {
     JSON.stringify([command.executable, command.version ?? null]),
     { executable: command.executable, version: command.version ?? null },
   ])).values()].sort((left, right) => (
-    left.executable.localeCompare(right.executable)
-      || JSON.stringify(left.version).localeCompare(JSON.stringify(right.version))
+    compareCodeUnits(left.executable, right.executable)
+      || compareCodeUnits(JSON.stringify(left.version), JSON.stringify(right.version))
   ));
   return {
     backend: report?.backend ?? null,
@@ -79,7 +80,7 @@ async function immutableFiles(root, relative = "") {
   const directory = relative ? path.join(root, ...relative.split("/")) : root;
   const files = [];
   for (const entry of (await readdir(directory, { withFileTypes: true }))
-    .sort((left, right) => left.name.localeCompare(right.name))) {
+    .sort((left, right) => compareCodeUnits(left.name, right.name))) {
     const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
     if (entry.isSymbolicLink()) throw new QualitySessionError(`Quality session contains a symbolic link: ${childRelative}`, 4);
     if (childRelative === "reports" || childRelative.startsWith("reports/")) continue;
@@ -146,7 +147,7 @@ export async function loadQualitySession(projectDirectory, id) {
     || !/^[a-f0-9]{64}$/.test(session.baseline?.sha256 ?? "")
     || session.environment === null || typeof session.environment !== "object"
     || Array.isArray(session.environment)
-    || JSON.stringify(Object.keys(session.environment).sort()) !== JSON.stringify(["arch", "node", "platform"])
+    || JSON.stringify(Object.keys(session.environment).sort(compareCodeUnits)) !== JSON.stringify(["arch", "node", "platform"])
     || typeof session.environment.node !== "string"
     || typeof session.environment.platform !== "string"
     || typeof session.environment.arch !== "string") {
@@ -164,9 +165,10 @@ export async function loadQualitySession(projectDirectory, id) {
   }
 
   const actualPaths = await immutableFiles(root);
-  const expectedPaths = [...integrity.files.map(({ path: filePath }) => filePath), "integrity.json"].sort();
+  const expectedPaths = [...integrity.files.map(({ path: filePath }) => filePath), "integrity.json"]
+    .sort(compareCodeUnits);
   if (expectedPaths.some((filePath) => !safeStoredPath(filePath))
-    || JSON.stringify(actualPaths.sort()) !== JSON.stringify(expectedPaths)) {
+    || JSON.stringify(actualPaths.sort(compareCodeUnits)) !== JSON.stringify(expectedPaths)) {
     throw new QualitySessionError("Quality session immutable inventory is corrupt", 4);
   }
   const payload = [];
@@ -200,7 +202,8 @@ export async function loadQualitySession(projectDirectory, id) {
     }
   }
   const normalizedInventory = [...inventory.entries]
-    .sort((left, right) => left.path.localeCompare(right.path));
+    .sort((left, right) => compareCodeUnits(left.path, right.path)
+      || compareCodeUnits(left.kind, right.kind));
   if (JSON.stringify(normalizedInventory) !== JSON.stringify(inventory.entries)
     || sha256(JSON.stringify({ scopes: inventory.scopes, entries: inventory.entries })) !== inventory.digest
     || session.checkpoint.files !== inventory.entries.length
@@ -218,8 +221,8 @@ export async function loadQualitySession(projectDirectory, id) {
     "checkpoint/inventory.json",
     "session.json",
     ...inventory.entries.map((entry) => `checkpoint/files/${entry.path}`),
-  ].sort();
-  const actualImmutablePayload = integrity.files.map((entry) => entry.path).sort();
+  ].sort(compareCodeUnits);
+  const actualImmutablePayload = integrity.files.map((entry) => entry.path).sort(compareCodeUnits);
   if (JSON.stringify(expectedImmutablePayload) !== JSON.stringify(actualImmutablePayload)) {
     throw new QualitySessionError("Quality session contains unowned immutable evidence", 4);
   }
@@ -374,7 +377,7 @@ export async function prepareQualitySession({ projectRoot: projectDirectory, mod
       path: `checkpoint/files/${entry.path}`,
       content: entry.content,
     })),
-  ].sort((left, right) => left.path.localeCompare(right.path));
+  ].sort((left, right) => compareCodeUnits(left.path, right.path));
   const integrity = {
     schemaVersion: 1,
     algorithm: "sha256",
@@ -398,7 +401,7 @@ export async function prepareQualitySession({ projectRoot: projectDirectory, mod
 function checkpointChanges(baselineEntries, currentEntries, scopes) {
   const baseline = new Map(baselineEntries.map((entry) => [entry.path, entry]));
   const current = new Map(currentEntries.map((entry) => [entry.path, entry]));
-  const paths = [...new Set([...baseline.keys(), ...current.keys()])].sort();
+  const paths = [...new Set([...baseline.keys(), ...current.keys()])].sort(compareCodeUnits);
   const changes = [];
   for (const file of paths) {
     const before = baseline.get(file);

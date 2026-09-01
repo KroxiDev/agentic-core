@@ -10,6 +10,7 @@ import {
   qualityContentIsBinary,
   qualityPathIsExcluded,
 } from "./inputs.js";
+import { compareCodeUnits } from "./order.js";
 import { executePythonCoverage, executePythonTests, findPython, generatePythonMutants } from "./python.js";
 
 const EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".py"]);
@@ -247,7 +248,7 @@ export async function analyzeMutation({
   await mkdir(temporaryRoot, { recursive: true });
   const config = await configuration(projectRoot);
   const paths = [...new Set((await Promise.all(targets.map((target) =>
-    sourceFiles(path.resolve(projectRoot, target), projectRoot)))).flat())].sort();
+    sourceFiles(path.resolve(projectRoot, target), projectRoot)))).flat())].sort(compareCodeUnits);
   const languages = new Set(paths.map((filePath) => path.extname(filePath).toLowerCase() === ".py"
     ? "python" : "javascript-typescript"));
   const language = languages.size > 1 ? "mixed" : languages.values().next().value ?? "javascript-typescript";
@@ -362,8 +363,10 @@ export async function analyzeMutation({
       restorationFailure ??= new Error(`Working tree changed during mutation analysis: ${file.file}`);
     }
   }
-  allDetails.sort((left, right) => left.file.localeCompare(right.file) || left.location.line - right.location.line
-    || left.location.column - right.location.column || left.id.localeCompare(right.id));
+  allDetails.sort((left, right) => compareCodeUnits(left.file, right.file)
+    || left.location.line - right.location.line
+    || left.location.column - right.location.column
+    || compareCodeUnits(left.id, right.id));
   const count = (status) => allDetails.filter((item) => item.status === status).length;
   const summary = {
     mutants: allDetails.length,

@@ -11,6 +11,7 @@ import { hashFileTree } from "../src/transaction.js";
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const qualityCli = path.join(repositoryRoot, "bin", "agentic-quality.js");
+const sourceRuntime = path.join(repositoryRoot, "src", "runtime-entry.mjs");
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), "agentic quality session "));
@@ -38,10 +39,10 @@ test("classifies both outcomes", () => {
   return root;
 }
 
-async function run(args, cwd, output = "human", extraEnv = {}) {
+async function run(args, cwd, output = "human", extraEnv = {}, entry = qualityCli) {
   const env = { ...process.env, ...extraEnv, AGENTIC_CORE_OUTPUT: output };
   try {
-    const result = await execFileAsync(process.execPath, [qualityCli, ...args], {
+    const result = await execFileAsync(process.execPath, [entry, ...args], {
       cwd,
       env,
       encoding: "utf8",
@@ -52,10 +53,20 @@ async function run(args, cwd, output = "human", extraEnv = {}) {
   }
 }
 
-async function prepare(root, mode = "normal", scopes = ["src/subject.js"], output = "human") {
+function runSource(args, cwd, output = "human", extraEnv = {}) {
+  return run(["agentic-quality", ...args], cwd, output, extraEnv, sourceRuntime);
+}
+
+async function prepare(
+  root,
+  mode = "normal",
+  scopes = ["src/subject.js"],
+  output = "human",
+  runQuality = run,
+) {
   const args = ["prepare", "--mode", mode];
   for (const scope of scopes) args.push("--scope", scope);
-  const result = await run(args, root, output);
+  const result = await runQuality(args, root, output);
   if (output === "json") return { result, body: JSON.parse(result.stdout) };
   return { result, id: result.stdout.match(/id=(q_[a-f0-9]+)/)?.[1] };
 }
@@ -68,6 +79,28 @@ async function recursiveFiles(directory, relative = "") {
     else files.push(child.split(path.sep).join("/"));
   }
   return files.sort();
+}
+
+async function rewriteInventoryEvidence(sessionRoot, mutate) {
+  const inventoryPath = path.join(sessionRoot, "checkpoint", "inventory.json");
+  const integrityPath = path.join(sessionRoot, "integrity.json");
+  const inventory = JSON.parse(await readFile(inventoryPath, "utf8"));
+  mutate(inventory);
+  const inventoryContent = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
+  const integrity = JSON.parse(await readFile(integrityPath, "utf8"));
+  const payload = await Promise.all(integrity.files.map(async (entry) => ({
+    path: entry.path,
+    content: entry.path === "checkpoint/inventory.json"
+      ? inventoryContent
+      : await readFile(path.join(sessionRoot, ...entry.path.split("/"))),
+  })));
+  integrity.files = payload.map((entry) => ({
+    path: entry.path,
+    sha256: createHash("sha256").update(entry.content).digest("hex"),
+  }));
+  integrity.payloadSha256 = hashFileTree(payload);
+  await writeFile(inventoryPath, inventoryContent);
+  await writeFile(integrityPath, `${JSON.stringify(integrity, null, 2)}\n`);
 }
 
 test("prepare creates one idempotent baseline session through the public CLI", async (t) => {
@@ -93,6 +126,93 @@ test("prepare creates one idempotent baseline session through the public CLI", a
   assert.equal(second.code, 0, second.stderr || second.stdout);
   assert.equal(second.stdout, first.stdout);
   assert.deepEqual(await readdir(path.join(root, ".agentic-core", "quality")), [sessionId]);
+});
+
+test("prepare and verify share code-unit checkpoint order across native processes", async (t) => {
+  const root = await fixture(t);
+  const adminPath = "schemas/admin.py";
+  const integrationPath = "schemas/admin_integration.py";
+  await mkdir(path.join(root, "schemas"));
+  await writeFile(path.join(root, ...adminPath.split("/")), "ADMIN = True\n");
+  await writeFile(path.join(root, ...integrationPath.split("/")), "ADMIN_INTEGRATION = True\n");
+
+  assert.equal(adminPath < integrationPath, true);
+  assert.ok(new Intl.Collator("en-US").compare(adminPath, integrationPath) > 0);
+
+  const prepared = await prepare(root, "light", ["src/subject.js"], "human", runSource);
+  assert.equal(prepared.result.code, 0, prepared.result.stderr || prepared.result.stdout);
+  const sessionRoot = path.join(root, ".agentic-core", "quality", prepared.id);
+  const inventory = JSON.parse(await readFile(
+    path.join(sessionRoot, "checkpoint", "inventory.json"),
+    "utf8",
+  ));
+  assert.equal(inventory.schemaVersion, 1);
+  const paths = inventory.entries.map((entry) => entry.path);
+  assert.ok(paths.indexOf(adminPath) < paths.indexOf(integrationPath));
+
+  const integrity = JSON.parse(await readFile(path.join(sessionRoot, "integrity.json"), "utf8"));
+  const immutableBefore = new Map(await Promise.all([
+    ...integrity.files.map((entry) => entry.path),
+    "integrity.json",
+  ].map(async (filePath) => [
+    filePath,
+    await readFile(path.join(sessionRoot, ...filePath.split("/"))),
+  ])));
+
+  const verified = await runSource(["verify", "--session", prepared.id], root);
+  assert.equal(verified.code, 0, verified.stderr || verified.stdout);
+  assert.match(verified.stdout, new RegExp(`^QUALITY_OK session=${prepared.id} `));
+  for (const [filePath, content] of immutableBefore) {
+    assert.deepEqual(await readFile(path.join(sessionRoot, ...filePath.split("/"))), content, filePath);
+  }
+
+  await writeFile(
+    path.join(sessionRoot, "checkpoint", "files", "src", "subject.js"),
+    "export const tampered = true;\n",
+  );
+  const tampered = await runSource(["verify", "--session", prepared.id], root);
+  assert.equal(tampered.code, 4, tampered.stderr || tampered.stdout);
+  assert.match(tampered.stderr, /hash mismatch|integrity/i);
+});
+
+test("verify rejects reordered, duplicated, and structurally corrupt checkpoint entries", async (t) => {
+  const cases = [
+    {
+      name: "reordered",
+      mutate(inventory) {
+        [inventory.entries[0], inventory.entries[1]] = [inventory.entries[1], inventory.entries[0]];
+      },
+      error: /checkpoint identity is invalid/i,
+    },
+    {
+      name: "duplicated",
+      mutate(inventory) {
+        inventory.entries.splice(1, 0, { ...inventory.entries[0] });
+      },
+      error: /checkpoint inventory is invalid/i,
+    },
+    {
+      name: "structurally corrupt",
+      mutate(inventory) {
+        inventory.entries[0] = { ...inventory.entries[0], kind: "unknown" };
+      },
+      error: /checkpoint inventory is invalid/i,
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async (subtest) => {
+      const root = await fixture(subtest);
+      const prepared = await prepare(root, "light", ["src/subject.js"], "human", runSource);
+      assert.equal(prepared.result.code, 0, prepared.result.stderr || prepared.result.stdout);
+      const sessionRoot = path.join(root, ".agentic-core", "quality", prepared.id);
+      await rewriteInventoryEvidence(sessionRoot, scenario.mutate);
+
+      const verified = await runSource(["verify", "--session", prepared.id], root);
+      assert.equal(verified.code, 4, verified.stderr || verified.stdout);
+      assert.match(verified.stderr, scenario.error);
+    });
+  }
 });
 
 test("invalid prepare arguments return usage without partial quality state", async (t) => {
