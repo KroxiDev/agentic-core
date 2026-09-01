@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -148,6 +148,7 @@ test("init installs the canonical direct-mode configuration and records ownershi
   assert.equal(manifest.configVersion, 2);
   assert.match(manifest.installationId, /^[0-9a-f-]{36}$/);
   assert.deepEqual(manifest.resources.map(({ path: resourcePath }) => resourcePath), [
+    ".agentic-core/.gitignore",
     ".agentic-core/config.json",
     ".agentic-core/config.schema.json",
     ".agentic-core/golden-rules.md",
@@ -183,6 +184,35 @@ test("init installs the canonical direct-mode configuration and records ownershi
   ]);
 });
 
+test("init keeps generated QualitySession evidence out of Git", async (t) => {
+  const project = await createProject(t);
+  await execFileAsync("git", ["init", "--quiet"], { cwd: project, encoding: "utf8" });
+
+  await runCore(["init", project, "--yes"]);
+
+  assert.equal(
+    await readFile(path.join(project, ".agentic-core", ".gitignore"), "utf8"),
+    "/quality/\n",
+  );
+  const sessionPath = ".agentic-core/quality/q_000000000000000000000000/session.json";
+  await mkdir(path.dirname(path.join(project, sessionPath)), { recursive: true });
+  await writeFile(path.join(project, sessionPath), "{}\n");
+  const ignored = await execFileAsync(
+    "git",
+    ["check-ignore", "--verbose", "--no-index", sessionPath],
+    { cwd: project, encoding: "utf8" },
+  );
+  assert.match(ignored.stdout, /^\.agentic-core\/\.gitignore:1:\/quality\//);
+  await assert.rejects(
+    execFileAsync(
+      "git",
+      ["check-ignore", "--no-index", ".agentic-core/config.json"],
+      { cwd: project, encoding: "utf8" },
+    ),
+    { code: 1 },
+  );
+});
+
 test("init never claims a pre-existing quality directory without ownership", async (t) => {
   const project = await createProject(t);
   const qualityPath = path.join(project, ".agentic-core", "quality");
@@ -212,6 +242,7 @@ test("init --dry-run reports its complete write plan without changing the destin
   assert.equal(plan.status, "ready");
   assert.equal(plan.manifest.product, "@kroxidev/agentic-core");
   assert.deepEqual(plan.actions.map(({ path: actionPath }) => actionPath), [
+    ".agentic-core/.gitignore",
     ".agentic-core/config.json",
     ".agentic-core/config.schema.json",
     ".agentic-core/golden-rules.md",
@@ -514,7 +545,10 @@ test("update migrates legacy orchestration ownership, removes its guard, and pre
   const configContent = Buffer.from(`${JSON.stringify(legacyConfig, null, 2)}\n`);
   await writeFile(path.join(productRoot, "config.json"), configContent);
   legacy.resources.find(({ path: resourcePath }) => resourcePath === ".agentic-core/config.json").sha256 = sha256(configContent);
-  legacy.resources = legacy.resources.filter(({ path: resourcePath }) => resourcePath !== ".agentic-core/runtime-launcher.mjs");
+  legacy.resources = legacy.resources.filter(({ path: resourcePath }) => (
+    ![".agentic-core/.gitignore", ".agentic-core/runtime-launcher.mjs"].includes(resourcePath)
+  ));
+  await rm(path.join(productRoot, ".gitignore"));
   const guardContent = Buffer.from("legacy guard\n");
   legacy.resources.splice(3, 0, {
     path: ".agentic-core/claude-read-command-guard.mjs",
@@ -738,7 +772,7 @@ test("init stops when another product owns a complete installation", async (t) =
 });
 
 test("a failure after any installation write restores the prior project byte for byte", async (t) => {
-  for (const failAfterWrite of Array.from({ length: 20 }, (_, index) => index + 1)) {
+  for (const failAfterWrite of Array.from({ length: 21 }, (_, index) => index + 1)) {
     await t.test(`write ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest);
       const productRoot = path.join(project, ".agentic-core");
@@ -806,6 +840,32 @@ test("a conflicting managed block is replaced only when explicitly authorized", 
   assert.deepEqual(replaced.subarray(replaced.length - suffix.length), suffix);
   assert.equal((replaced.toString("utf8").match(/AGENTIC_CORE_START/g) ?? []).length, 1);
   assert.match(replaced.toString("utf8"), /load and follow `.agents\/skills\/orquestar\/SKILL\.md`/);
+});
+
+test("update adds the managed quality ignore to an existing 0.2.0 installation", async (t) => {
+  const project = await createProject(t);
+  await runCore(["init", project, "--yes"]);
+  const productRoot = path.join(project, ".agentic-core");
+  const ignorePath = path.join(productRoot, ".gitignore");
+  const ownershipPath = path.join(productRoot, "ownership.json");
+  const ownership = JSON.parse(await readFile(ownershipPath, "utf8"));
+  ownership.resources = ownership.resources.filter(({ path: resourcePath }) => (
+    resourcePath !== ".agentic-core/.gitignore"
+  ));
+  await writeFile(ownershipPath, `${JSON.stringify(ownership, null, 2)}\n`);
+  await rm(ignorePath);
+  const evidencePath = path.join(productRoot, "quality", "q_existing", "report.json");
+  await mkdir(path.dirname(evidencePath), { recursive: true });
+  await writeFile(evidencePath, "preserve historical evidence\n");
+
+  await runCore(["update", project]);
+
+  assert.equal(await readFile(ignorePath, "utf8"), "/quality/\n");
+  assert.equal(await readFile(evidencePath, "utf8"), "preserve historical evidence\n");
+  const updated = JSON.parse(await readFile(ownershipPath, "utf8"));
+  assert.ok(updated.resources.some(({ path: resourcePath }) => (
+    resourcePath === ".agentic-core/.gitignore"
+  )));
 });
 
 test("update preserves quality configuration and legacy runs", async (t) => {
@@ -962,7 +1022,7 @@ test("update --dry-run returns a blocked plan for divergences until --force is e
 });
 
 test("a failure after any update mutation restores the installation byte for byte", async (t) => {
-  for (const failAfterWrite of Array.from({ length: 21 }, (_, index) => index + 1)) {
+  for (const failAfterWrite of Array.from({ length: 22 }, (_, index) => index + 1)) {
     await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest);
       await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");
@@ -1001,6 +1061,7 @@ test("uninstall dry-run reports exact owned resources and blocks without changin
   const result = await runCore(["uninstall", project, "--dry-run"]);
 
   assert.deepEqual(result.stdout.trim().split("\n"), [
+    "Would remove resource: .agentic-core/.gitignore",
     "Would remove resource: .agentic-core/config.json",
     "Would remove resource: .agentic-core/config.schema.json",
     "Would remove resource: .agentic-core/golden-rules.md",
@@ -1143,7 +1204,7 @@ test("uninstall removes owned state and keeps unknown resources and text", async
 
   assert.match(result.stdout, /Removed owned directory: \.agentic-core\/quality/);
   assert.match(result.stdout, /Preserved legacy directory: \.agentic-core\/runs/);
-  for (const ownedPath of ["config.json", "config.schema.json", "golden-rules.md", "ownership.json", "quality"]) {
+  for (const ownedPath of [".gitignore", "config.json", "config.schema.json", "golden-rules.md", "ownership.json", "quality"]) {
     await assert.rejects(stat(path.join(productRoot, ownedPath)), { code: "ENOENT" });
   }
   assert.deepEqual(await readFile(path.join(legacyRunRoot, "legacy.bin")), Buffer.from([0x01, 0xfe]));
@@ -1215,7 +1276,7 @@ test("uninstall never changes an installation owned by another product", async (
 });
 
 test("a failure after any uninstall mutation restores the project byte for byte", async (t) => {
-  for (const failAfterWrite of Array.from({ length: 28 }, (_, index) => index + 1)) {
+  for (const failAfterWrite of Array.from({ length: 29 }, (_, index) => index + 1)) {
     await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest);
       await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");

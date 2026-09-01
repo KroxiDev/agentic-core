@@ -78,7 +78,7 @@ Confirmar que no se acepta input JSON redactado por el modelo y que los comandos
 ## Migración y mantenimiento
 
 1. Actualizar una fixture legacy con `.agentic-core/runs` y confirmar que el directorio se preserva sin ser interpretado ni incluido en ownership nuevo.
-2. Confirmar que una instalación nueva no crea `runs` y registra `.agentic-core/quality` como directorio propio.
+2. Confirmar que una instalación nueva no crea `runs`, registra `.agentic-core/quality` como directorio propio y lo excluye mediante `.agentic-core/.gitignore` sin ocultar los demás recursos gestionados.
 3. Confirmar que `doctor` valida sesiones y recibos de calidad, e informa estado legacy sin borrarlo.
 4. Confirmar que `uninstall --dry-run` anuncia la eliminación de `quality` y la preservación de `runs`; la ejecución debe respetar esa decisión.
 5. Comprobar rollback inyectando un fallo transaccional en una fixture descartable.

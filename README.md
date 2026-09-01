@@ -21,7 +21,7 @@ npx.cmd --yes github:KroxiDev/agentic-core init . --yes
 
 La invocación resuelve una revisión de `KroxiDev/agentic-core`, valida el runtime y persiste un conjunto autocontenido bajo `.agentic-core/runtime`. El runtime final no conserva `_npx`, `node_modules`, `package.json` ni lockfiles del entorno efímero. Su manifiesto registra el inventario final, hashes por archivo y `treeSha256`; no necesita que el paquete esté publicado en npm.
 
-La instalación añade recursos gestionados para ambos hosts, un bloque breve en `AGENTS.md` y `CLAUDE.md`, y declara `.agentic-core/quality` como directorio propio generado. Una instalación nueva no crea `.agentic-core/runs`.
+La instalación añade recursos gestionados para ambos hosts, un bloque breve en `AGENTS.md` y `CLAUDE.md`, y declara `.agentic-core/quality` como directorio propio generado. El recurso gestionado `.agentic-core/.gitignore` excluye únicamente `/quality/` para que la evidencia local no entre accidentalmente en Git. Una instalación nueva no crea `.agentic-core/runs`.
 
 ## Actualización
 
@@ -128,6 +128,8 @@ QUALITY_OK session=q_<id> tests=approved crap_max=5.82 mutation=not_applicable r
 En `full`, `verify` ejecuta Mutation Testing en snapshots aislados y comprueba que el worktree relevante no cambió y que los snapshots fueron restaurados. En `light` y `normal`, registra Mutation Testing como `not_applicable` sin ejecutarlo.
 
 El reporte y su SHA-256 son la evidencia verificable. `reports/latest.json` identifica el único recibo vigente para el inventario actual; cualquier cambio posterior en código, tests, configuración, manifests, lockfiles o comandos del runner vuelve obsoleto el recibo anterior. `QUALITY_OK` nunca se emite si fallan tests, C.R.A.P., Mutation Testing, baseline, entorno o restauración. Ningún cambio ejecutable orquestado puede declararse completo sin un `QUALITY_OK` vigente.
+
+Las sesiones se conservan como evidencia local y permanecen ignoradas por Git. Una sesión pasada puede eliminarse manualmente como directorio completo cuando ya no se necesita auditar su baseline o recibo; borrar solo parte de su contenido deja evidencia corrupta.
 
 ### Códigos de salida
 

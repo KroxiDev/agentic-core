@@ -8,14 +8,20 @@ import { getVersion } from "./version.js";
 
 const PRODUCT = "@kroxidev/agentic-core";
 const CONFIG_VERSION = 2;
-const CORE_RESOURCE_PATHS = [
+const QUALITY_IGNORE_PATH = ".agentic-core/.gitignore";
+const PRE_QUALITY_IGNORE_CORE_RESOURCE_PATHS = [
   ".agentic-core/config.json",
   ".agentic-core/config.schema.json",
   ".agentic-core/golden-rules.md",
 ];
+const CORE_RESOURCE_PATHS = [QUALITY_IGNORE_PATH, ...PRE_QUALITY_IGNORE_CORE_RESOURCE_PATHS];
 const EXPECTED_RESOURCE_PATHS = [...CORE_RESOURCE_PATHS, ...HOST_RESOURCE_SPECS.map(({ target }) => target)];
+const PRE_QUALITY_IGNORE_EXPECTED_RESOURCE_PATHS = [
+  ...PRE_QUALITY_IGNORE_CORE_RESOURCE_PATHS,
+  ...HOST_RESOURCE_SPECS.map(({ target }) => target),
+];
 const LEGACY_EXPECTED_RESOURCE_PATHS = [
-  ...CORE_RESOURCE_PATHS,
+  ...PRE_QUALITY_IGNORE_CORE_RESOURCE_PATHS,
   ".agentic-core/claude-read-command-guard.mjs",
   ...HOST_RESOURCE_SPECS.map(({ target }) => target),
 ];
@@ -139,6 +145,7 @@ async function installationResources(config) {
     content: await readFile(packagedResource(source)),
   })));
   return [
+    { path: QUALITY_IGNORE_PATH, content: Buffer.from("/quality/\n") },
     { path: ".agentic-core/config.json", content: config },
     { path: ".agentic-core/config.schema.json", content: Buffer.from(json(CONFIG_SCHEMA)) },
     { path: ".agentic-core/golden-rules.md", content: await readFile(packagedResource("golden-rules.md")) },
@@ -261,7 +268,7 @@ export function validateOwnership(owner, action = "update") {
   }
   const expectedBlocks = ["AGENTS.md", "CLAUDE.md"];
   const expectedResourceLayouts = owner.configVersion === CONFIG_VERSION
-    ? [EXPECTED_RESOURCE_PATHS]
+    ? [EXPECTED_RESOURCE_PATHS, PRE_QUALITY_IGNORE_EXPECTED_RESOURCE_PATHS]
     : [LEGACY_EXPECTED_RESOURCE_PATHS, EARLY_LEGACY_EXPECTED_RESOURCE_PATHS];
   const resourcePathsValid = expectedResourceLayouts.some((expectedPaths) => (
     owner.resources.length === expectedPaths.length
@@ -367,7 +374,10 @@ export async function initialize(projectDirectory, {
     if (kind !== "missing") conflicts.push({ path: resource.path, kind, authorized: replaceConflicts });
   }
 
-  if (CORE_RESOURCE_PATHS.every((resourcePath) => conflicts.some(({ path: conflictPath }) => conflictPath === resourcePath))) {
+  const coreFootprints = [CORE_RESOURCE_PATHS, PRE_QUALITY_IGNORE_CORE_RESOURCE_PATHS];
+  if (coreFootprints.some((footprint) => footprint.every((resourcePath) => (
+    conflicts.some(({ path: conflictPath }) => conflictPath === resourcePath)
+  )))) {
     throw new Error("Foreign installation detected: the complete agentic-core footprint exists without a valid ownership manifest");
   }
 
