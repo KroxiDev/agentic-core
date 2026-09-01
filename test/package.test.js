@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -215,6 +215,9 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
     'test("identity", () => assert.equal(identity(7), 7));',
     "",
   ].join("\n"));
+  await mkdir(path.join(project, "schemas"));
+  await writeFile(path.join(project, "schemas", "admin.py"), "ADMIN = True\n");
+  await writeFile(path.join(project, "schemas", "admin_integration.py"), "ADMIN_INTEGRATION = True\n");
   const quality = await execFileAsync(process.execPath, [
     launcher,
     "agentic-quality",
@@ -236,6 +239,17 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
   ], { cwd: project, encoding: "utf8" });
   assert.match(prepared.stdout, /^QUALITY_SESSION id=(q_[a-f0-9]{24}) mode=normal baseline=[a-f0-9]{64}\n$/);
   const sessionId = prepared.stdout.match(/id=(q_[a-f0-9]{24})/)[1];
+  const inventory = JSON.parse(await readFile(path.join(
+    project,
+    ".agentic-core",
+    "quality",
+    sessionId,
+    "checkpoint",
+    "inventory.json",
+  ), "utf8"));
+  const inventoryPaths = inventory.entries.map((entry) => entry.path);
+  assert.ok(inventoryPaths.indexOf("schemas/admin.py")
+    < inventoryPaths.indexOf("schemas/admin_integration.py"));
   const verified = await execFileAsync(process.execPath, [
     launcher,
     "agentic-quality",
