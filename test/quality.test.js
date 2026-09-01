@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import { analyzeSource } from "../src/quality/ast.js";
-import { identityFor } from "../src/quality/crap.js";
+import { analyzeQuality, identityFor } from "../src/quality/crap.js";
 import { collectV8Coverage, runnerInvocation } from "../src/quality/coverage.js";
 
 const execFileAsync = promisify(execFile);
@@ -153,11 +152,11 @@ test("crap reports attributable zero coverage and fails above threshold seven", 
   assert.equal(uncovered.status, "failed");
 });
 
-test("scan and crap require exactly one run or explicit target", async () => {
+test("scan and crap require exactly one explicit target", async () => {
   const missing = await run(["scan"], repositoryRoot);
   assert.equal(missing.code, 4);
-  assert.match(missing.stderr, /Exactly one source/);
-  const duplicate = await run(["crap", "--target", "src", "--run", "abc"], repositoryRoot);
+  assert.match(missing.stderr, /Exactly one --target/);
+  const duplicate = await run(["crap", "--target", "src", "--target", "test"], repositoryRoot);
   assert.equal(duplicate.code, 4);
 });
 
@@ -195,102 +194,6 @@ test("source maps attribute transformed V8 ranges to the original TypeScript sym
   const key = path.resolve(targetPath).toLowerCase();
   assert.equal(result.attributable.has(key), true);
   assert.equal(result.coveredByFile.get(key).has(1), true);
-});
-
-test("--run reads persisted quality targets and limits analysis to declared symbols", async (t) => {
-  const root = await fixture(t);
-  const runDirectory = path.join(root, ".agentic-core", "runs", "run-1");
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
-    quality: { targets: [{ path: "src/subject.js", symbols: ["exercised"] }] },
-  }));
-  const result = await run(["scan", "--run", "run-1"], root);
-  assert.equal(result.code, 0, result.stderr || result.stdout);
-  const report = JSON.parse(result.stdout);
-  assert.equal(report.status, "approved");
-  assert.deepEqual(report.details.map(({ symbol }) => symbol), ["exercised"]);
-});
-
-test("--output persists the complete run C.R.A.P. report and returns its verified reference", async (t) => {
-  const root = await fixture(t);
-  const runDirectory = path.join(root, ".agentic-core", "runs", "artifact-run");
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
-    quality: { targets: [{ path: "src/subject.js", symbols: ["exercised"] }] },
-  }));
-
-  const result = await run([
-    "crap", "--run", "artifact-run", "--output", "artifacts/crap.json",
-  ], root);
-  assert.equal(result.code, 0, result.stderr || result.stdout);
-  const reference = JSON.parse(result.stdout);
-  assert.deepEqual(Object.keys(reference), ["path", "sha256"]);
-  assert.equal(reference.path, "artifacts/crap.json");
-  assert.match(reference.sha256, /^[a-f0-9]{64}$/);
-  const content = await readFile(path.join(runDirectory, "artifacts", "crap.json"));
-  assert.equal(createHash("sha256").update(content).digest("hex"), reference.sha256);
-  const report = JSON.parse(content);
-  assert.equal(report.tool, "crap");
-  assert.equal(report.status, "approved");
-
-  const production = await readFile(path.join(root, "src", "subject.js"), "utf8");
-  const escaped = await run([
-    "crap", "--run", "artifact-run", "--output", "../../src/report.json",
-  ], root);
-  assert.equal(escaped.code, 4);
-  assert.equal(await readFile(path.join(root, "src", "subject.js"), "utf8"), production);
-});
-
-test("run artifacts contain all quality workspaces when the host temp directory is not writable", async (t) => {
-  const root = await fixture(t);
-  const runDirectory = path.join(root, ".agentic-core", "runs", "restricted-run");
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
-    quality: { targets: [{ path: "src/subject.js", symbols: ["exercised"] }] },
-  }));
-  const blockedTemporaryPath = path.join(root, "blocked-temporary-path");
-  await writeFile(blockedTemporaryPath, "not a directory\n");
-  const restrictedEnvironment = {
-    ...process.env,
-    TMPDIR: blockedTemporaryPath,
-    TMP: blockedTemporaryPath,
-    TEMP: blockedTemporaryPath,
-  };
-
-  const crapResult = await run([
-    "crap", "--run", "restricted-run", "--output", "artifacts/crap.json",
-  ], root, restrictedEnvironment);
-  assert.equal(crapResult.code, 0, crapResult.stderr || crapResult.stdout);
-
-  const mutationResult = await run([
-    "mutate", "--run", "restricted-run", "--output", "artifacts/mutation.json",
-  ], root, restrictedEnvironment);
-
-  const artifactDirectory = path.join(runDirectory, "artifacts");
-  const mutationReport = JSON.parse(await readFile(path.join(artifactDirectory, "mutation.json"), "utf8"));
-  assert.ok([0, 1].includes(mutationResult.code), JSON.stringify({ mutationResult, mutationReport }));
-  assert.deepEqual((await readdir(artifactDirectory)).sort(), ["crap.json", "mutation.json"]);
-  assert.equal(JSON.parse(await readFile(path.join(artifactDirectory, "crap.json"), "utf8")).tool, "crap");
-  assert.equal(mutationReport.tool, "mutation");
-});
-
-test("a failed run quality analysis removes an artifact directory created only for temporary work", async (t) => {
-  const root = await fixture(t);
-  const runDirectory = path.join(root, ".agentic-core", "runs", "failed-run");
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
-    quality: { targets: [{ path: "src/subject.js", symbols: ["exercised"] }] },
-  }));
-  await writeFile(path.join(root, "test", "subject.test.js"), `
-import test from "node:test";
-test("fails", () => { throw new Error("expected baseline failure"); });
-`);
-
-  const result = await run([
-    "crap", "--run", "failed-run", "--output", "artifacts/crap.json",
-  ], root);
-  assert.equal(result.code, 5, result.stderr || result.stdout);
-  await assert.rejects(readdir(path.join(runDirectory, "artifacts")), { code: "ENOENT" });
 });
 
 test("Python AST and unittest coverage preserve the common CRAP report contract", async (t) => {
@@ -384,22 +287,6 @@ class First { same(value) { return value + 1; } }
     && symbol.qualifiedName && symbol.disambiguator));
 });
 
-test("explicit symbol selection that resolves nothing is an error", async (t) => {
-  const root = await fixture(t);
-  const runDirectory = path.join(
-    root, ".agentic-core", "runs", "missing-symbol",
-  );
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
-    quality: {
-      targets: [{ path: "src/subject.js", symbols: ["doesNotExist"] }],
-    },
-  }));
-  const result = await run(["crap", "--run", "missing-symbol"], root);
-  assert.equal(result.code, 4);
-  assert.match(result.stderr, /resolved no quality targets/i);
-});
-
 test("quality freshness inventories every relevant input class", async (t) => {
   const root = await fixture(t);
   await writeFile(
@@ -439,113 +326,22 @@ test("quality freshness inventories every relevant input class", async (t) => {
   );
 });
 
-test("differential CRAP preserves high debt and rejects regression from seven", async (t) => {
-  const highRoot = await fixture(t);
-  const highBaseline = JSON.parse((
-    await run(["crap", "--target", "src/subject.js"], highRoot)
-  ).stdout);
-  const highRun = path.join(
-    highRoot, ".agentic-core", "runs", "high-baseline",
-  );
-  await mkdir(highRun, { recursive: true });
-  await writeFile(path.join(highRun, "state.json"), JSON.stringify({
-    quality: {
-      targets: [{ path: "src/subject.js", symbols: ["uncovered"] }],
-      baselineReport: highBaseline,
-    },
-  }));
-  const inherited = await run(
-    ["crap", "--run", "high-baseline"], highRoot,
-  );
-  assert.equal(inherited.code, 0, inherited.stderr || inherited.stdout);
-  const inheritedDetail = JSON.parse(inherited.stdout).details[0];
-  assert.ok(inheritedDetail.current.crap > 7);
-  assert.equal(inheritedDetail.delta, 0);
-  assert.equal(
-    inheritedDetail.rule,
-    "existing_above_seven_must_not_worsen",
-  );
-
-  const lowRoot = await fixture(t);
-  const lowBaseline = JSON.parse((
-    await run(["crap", "--target", "src/subject.js"], lowRoot)
-  ).stdout);
-  const sourcePath = path.join(lowRoot, "src", "subject.js");
-  const source = await readFile(sourcePath, "utf8");
-  await writeFile(
-    sourcePath,
-    source.replace(
-      "if (value === 6) value += 1;",
-      "if (value === 6) value += 1;\n  if (value === 7) value += 1;",
-    ),
-  );
-  const lowRun = path.join(
-    lowRoot, ".agentic-core", "runs", "low-baseline",
-  );
-  await mkdir(lowRun, { recursive: true });
-  await writeFile(path.join(lowRun, "state.json"), JSON.stringify({
-    quality: {
-      targets: [{ path: "src/subject.js", symbols: ["boundary"] }],
-      baselineReport: lowBaseline,
-    },
-  }));
-  const regressed = await run(
-    ["crap", "--run", "low-baseline"], lowRoot,
-  );
-  assert.equal(regressed.code, 1);
-  const detail = JSON.parse(regressed.stdout).details[0];
-  assert.equal(detail.baseline.crap, 7);
-  assert.ok(detail.current.crap > 7);
-  assert.ok(detail.delta > 0);
-});
-
-test("new symbols use seven and missing baselines never invent zero", async (t) => {
+test("a non-attributable baseline never invents zero", async (t) => {
   const root = await fixture(t);
-  const baseline = JSON.parse((
-    await run(["crap", "--target", "src/subject.js"], root)
-  ).stdout);
-  const sourcePath = path.join(root, "src", "subject.js");
-  await writeFile(
-    sourcePath,
-    `${await readFile(sourcePath, "utf8")}
-export function added(value) { return value; }
-`,
-  );
-  const newRun = path.join(
-    root, ".agentic-core", "runs", "new-symbol",
-  );
-  await mkdir(newRun, { recursive: true });
-  await writeFile(path.join(newRun, "state.json"), JSON.stringify({
-    quality: {
-      targets: [{ path: "src/subject.js", symbols: ["added"] }],
-      baselineReport: baseline,
+  const report = await analyzeQuality({
+    projectRoot: root,
+    targets: ["src/subject.js"],
+    tool: "crap",
+    baseline: {
+      details: [],
+      inputInventory: { entries: [] },
+      declaredScopes: [],
     },
-  }));
-  const added = await run(["crap", "--run", "new-symbol"], root);
-  assert.equal(added.code, 0, added.stderr || added.stdout);
-  const addedDetail = JSON.parse(added.stdout).details[0];
-  assert.equal(addedDetail.baseline.status, "new_symbol");
-  assert.equal(addedDetail.rule, "new_symbol_at_or_below_seven");
-
-  const unknownRun = path.join(
-    root, ".agentic-core", "runs", "unknown-baseline",
-  );
-  await mkdir(unknownRun, { recursive: true });
-  await writeFile(path.join(unknownRun, "state.json"), JSON.stringify({
-    quality: {
-      targets: [{ path: "src/subject.js", symbols: ["uncovered"] }],
-      baselineReport: {
-        details: [],
-        inputInventory: { entries: [] },
-      },
-    },
-  }));
-  const unknown = await run(
-    ["crap", "--run", "unknown-baseline"], root,
-  );
-  assert.equal(unknown.code, 0, unknown.stderr || unknown.stdout);
-  const unknownDetail = JSON.parse(unknown.stdout).details[0];
-  assert.equal(unknownDetail.baseline.status, "not_attributable");
-  assert.equal(unknownDetail.delta, null);
-  assert.notEqual(unknownDetail.baseline.crap, 0);
+  });
+  const unknown = report.details.find(({ symbol }) => symbol === "uncovered");
+  assert.equal(report.status, "approved");
+  assert.equal(unknown.baseline.status, "not_attributable");
+  assert.equal(unknown.delta, null);
+  assert.equal("crap" in unknown.baseline, false);
+  assert.equal(unknown.rule, "non_blocking_missing_baseline");
 });

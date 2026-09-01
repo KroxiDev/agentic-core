@@ -11,6 +11,17 @@ const executionOptions = (projectRoot, timeout, env = process.env) => ({
   cwd: projectRoot, env, encoding: "utf8", maxBuffer: 10 * 1024 * 1024, timeout, windowsHide: true,
 });
 function normalized(filePath) { return path.resolve(filePath).toLowerCase(); }
+function recordedCommand(runtime, args, replacements) {
+  return {
+    executable: runtime.executable,
+    version: runtime.version,
+    args,
+    recordedArgs: args.map((argument) => replacements.reduce(
+      (value, [actual, token]) => value.replaceAll(actual, token),
+      argument,
+    )),
+  };
+}
 async function succeeds(executable, args, options) {
   try { await execFileAsync(executable, args, options); return true; } catch { return false; }
 }
@@ -122,20 +133,29 @@ export async function executePythonCoverage(runtime, projectRoot, files, {
     const hasCoverage = process.env.AGENTIC_CORE_PYTHON_BACKEND !== "trace"
       && await succeeds(runtime.executable, [...runtime.prefix, "-c", "import coverage"], executionOptions(projectRoot, timeout));
     if (hasCoverage) {
+      const runArgs = await coverageInvocation(runtime, projectRoot, dataFile, runner);
+      const reportArgs = [...runtime.prefix, "-m", "coverage", "json",
+        `--data-file=${dataFile}`, "--fail-under=0", "-o", outputFile];
       try {
-        await execFileAsync(runtime.executable, await coverageInvocation(runtime, projectRoot, dataFile, runner), executionOptions(projectRoot, timeout));
-        await execFileAsync(runtime.executable, [...runtime.prefix, "-m", "coverage", "json",
-          `--data-file=${dataFile}`, "--fail-under=0", "-o", outputFile], executionOptions(projectRoot, timeout));
+        await execFileAsync(runtime.executable, runArgs, executionOptions(projectRoot, timeout));
+        await execFileAsync(runtime.executable, reportArgs, executionOptions(projectRoot, timeout));
       } catch (error) { throw testFailure(error); }
       return { ...resultFromCoverage(JSON.parse(await readFile(outputFile, "utf8")), files, projectRoot),
-        backend: "coverage.py", runner };
+        backend: "coverage.py", runner, commands: [
+          recordedCommand(runtime, runArgs, [[dataFile, "<quality-data>"]]),
+          recordedCommand(runtime, reportArgs, [
+            [dataFile, "<quality-data>"],
+            [outputFile, "<quality-report>"],
+          ]),
+        ] };
     }
+    const traceArgs = [...runtime.prefix, pythonHelper, "trace", "--output", outputFile,
+      "--runner", runner, "--targets", JSON.stringify(files.map(({ path: filePath }) => filePath))];
     try {
-      await execFileAsync(runtime.executable, [...runtime.prefix, pythonHelper, "trace", "--output", outputFile,
-        "--runner", runner, "--targets", JSON.stringify(files.map(({ path: filePath }) => filePath))],
-      executionOptions(projectRoot, timeout));
+      await execFileAsync(runtime.executable, traceArgs, executionOptions(projectRoot, timeout));
     } catch (error) { throw testFailure(error); }
-    return { ...resultFromTrace(JSON.parse(await readFile(outputFile, "utf8")), files), backend: "stdlib-trace", runner };
+    return { ...resultFromTrace(JSON.parse(await readFile(outputFile, "utf8")), files), backend: "stdlib-trace", runner,
+      commands: [recordedCommand(runtime, traceArgs, [[outputFile, "<quality-report>"]])] };
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 

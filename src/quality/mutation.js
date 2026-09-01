@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { analyzeSource } from "./ast.js";
 import { executeCoverage, executeTests } from "./coverage.js";
+import {
+  captureQualityCheckpoint,
+  qualityContentIsBinary,
+  qualityPathIsExcluded,
+} from "./inputs.js";
 import { executePythonCoverage, executePythonTests, findPython, generatePythonMutants } from "./python.js";
 
 const EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".py"]);
@@ -135,18 +140,28 @@ export function generateMutants(filePath, source, selectedSymbols) {
   return mutants;
 }
 
-async function sourceFiles(targetPath) {
-  const details = await lstat(targetPath);
+async function sourceFiles(targetPath, projectRoot) {
+  if (qualityPathIsExcluded(logicalPath(projectRoot, targetPath))) return [];
+  let details;
+  try {
+    details = await lstat(targetPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
   if (details.isFile()) {
-    return EXTENSIONS.has(path.extname(targetPath).toLowerCase()) && !excludedFile(targetPath) ? [targetPath] : [];
+    if (!EXTENSIONS.has(path.extname(targetPath).toLowerCase()) || excludedFile(targetPath)) return [];
+    return qualityContentIsBinary(await readFile(targetPath)) ? [] : [targetPath];
   }
   if (!details.isDirectory()) return [];
   const files = [];
   for (const entry of await readdir(targetPath, { withFileTypes: true })) {
     if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
     const child = path.join(targetPath, entry.name);
-    if (entry.isDirectory()) files.push(...await sourceFiles(child));
-    else if (entry.isFile() && EXTENSIONS.has(path.extname(entry.name).toLowerCase()) && !excludedFile(child)) files.push(child);
+    if (entry.isDirectory()) files.push(...await sourceFiles(child, projectRoot));
+    else if (entry.isFile() && EXTENSIONS.has(path.extname(entry.name).toLowerCase()) && !excludedFile(child)) {
+      files.push(...await sourceFiles(child, projectRoot));
+    }
   }
   return files;
 }
@@ -163,18 +178,13 @@ async function configuration(projectRoot) {
     throw error;
   }
 }
-async function copySnapshot(projectRoot, destination) {
-  const ignored = new Set(["node_modules", ".git", ".agentic-core", "coverage", ".venv", "venv",
-    "__pycache__", ".pytest_cache"]);
+async function copySnapshot(projectRoot, destination, targets) {
   await mkdir(destination, { recursive: true });
-  for (const entry of await readdir(projectRoot, { withFileTypes: true })) {
-    if (ignored.has(entry.name)) continue;
-    const source = path.join(projectRoot, entry.name);
-    await cp(source, path.join(destination, entry.name), {
-      recursive: true,
-      filter: (candidate) => !path.relative(projectRoot, candidate).split(path.sep)
-        .some((part) => ignored.has(part)),
-    });
+  const checkpoint = await captureQualityCheckpoint(projectRoot, targets);
+  for (const entry of checkpoint.entries) {
+    const target = path.join(destination, ...entry.path.split("/"));
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, entry.content, { flag: "wx" });
   }
   const dependencies = path.join(projectRoot, "node_modules");
   try {
@@ -237,7 +247,7 @@ export async function analyzeMutation({
   await mkdir(temporaryRoot, { recursive: true });
   const config = await configuration(projectRoot);
   const paths = [...new Set((await Promise.all(targets.map((target) =>
-    sourceFiles(path.resolve(projectRoot, target))))).flat())].sort();
+    sourceFiles(path.resolve(projectRoot, target), projectRoot)))).flat())].sort();
   const languages = new Set(paths.map((filePath) => path.extname(filePath).toLowerCase() === ".py"
     ? "python" : "javascript-typescript"));
   const language = languages.size > 1 ? "mixed" : languages.values().next().value ?? "javascript-typescript";
@@ -267,8 +277,10 @@ export async function analyzeMutation({
   }
   const allDetails = [];
   let restorationFailure;
+  let snapshotBaselineFailure;
   let evidencePath;
   let workingTreeUntouched = true;
+  let snapshotEnvironmentValidated = false;
   for (const file of files) {
     const coveredMutants = [];
     for (const mutant of file.mutants) {
@@ -289,8 +301,22 @@ export async function analyzeMutation({
     try {
       for (let index = 0; index < Math.min(config.mutationWorkers, coveredMutants.length); index += 1) {
         const snapshot = path.join(snapshotRoot, `worker-${index}`);
-        await copySnapshot(projectRoot, snapshot);
+        await copySnapshot(projectRoot, snapshot, targets);
         snapshots.push(snapshot);
+      }
+      if (!snapshotEnvironmentValidated) {
+        const timeout = testTimeout("AGENTIC_CORE_TEST_BASELINE_TIMEOUT_MS", 30_000);
+        try {
+          if (language === "python") {
+            await executePythonTests(runtime, snapshots[0], { runner: coverage.runner, timeout });
+          } else {
+            await executeTests(snapshots[0], { timeout });
+          }
+          snapshotEnvironmentValidated = true;
+        } catch (error) {
+          snapshotBaselineFailure = new Error(`Mutation snapshot baseline failed: ${error.message}`);
+          break;
+        }
       }
       const results = await mapLimit(coveredMutants, snapshots.length, async (mutant, _index, workerIndex) => {
         const snapshot = snapshots[workerIndex];
@@ -348,6 +374,7 @@ export async function analyzeMutation({
     equivalent: count("equivalent"),
   };
   const status = restorationFailure ? "restoration_failure"
+    : snapshotBaselineFailure ? "baseline_failed"
     : summary.survived > 0 || summary.uncovered > 0 ? "failed"
       : summary.mutants === 0 ? "not_applicable" : "approved";
   return {
@@ -368,11 +395,13 @@ export async function analyzeMutation({
     details: allDetails,
     restoration: {
       workingTreeUntouched,
-      snapshotsVerified: !restorationFailure,
+      snapshotsVerified: !restorationFailure && !snapshotBaselineFailure,
       evidencePreserved: Boolean(restorationFailure),
       ...(evidencePath ? { evidencePath } : {}),
     },
-    ...(restorationFailure ? { error: restorationFailure.message } : {}),
+    ...(restorationFailure || snapshotBaselineFailure
+      ? { error: (restorationFailure ?? snapshotBaselineFailure).message }
+      : {}),
     durationMs: Number((Number(process.hrtime.bigint() - started) / 1_000_000).toFixed(3)),
   };
 }

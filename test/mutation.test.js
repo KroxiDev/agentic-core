@@ -162,37 +162,6 @@ class SubjectTest(unittest.TestCase):
   assert.ok(JSON.parse(mutant.stdout).summary.killedByTimeout > 0);
 });
 
-test("Python --run limits mutation to declared symbols", async (t) => {
-  const root = await pythonFixture(t, {
-    source: `def chosen(value):
-    return value + 0
-
-def ignored(value):
-    return value == 2
-`,
-    tests: `import unittest
-from src.subject import chosen, ignored
-
-class SubjectTest(unittest.TestCase):
-    def test_subjects(self):
-        self.assertEqual(chosen(1), 1)
-        self.assertEqual(chosen(0), 0)
-        self.assertTrue(ignored(2))
-        self.assertFalse(ignored(0))
-`,
-  });
-  const runDirectory = path.join(root, ".agentic-core", "runs", "run-1");
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
-    quality: { targets: [{ path: "src/subject.py", symbols: ["chosen"] }] },
-  }));
-  const result = await run(["mutate", "--run", "run-1"], root);
-  assert.ok([0, 1].includes(result.code), result.stderr || result.stdout);
-  const report = JSON.parse(result.stdout);
-  assert.ok(report.details.length > 0);
-  assert.deepEqual(new Set(report.details.map(({ symbol }) => symbol)), new Set(["chosen"]));
-});
-
 test("Python mutation reports an unavailable interpreter explicitly", async (t) => {
   const root = await pythonFixture(t);
   const result = await run(["mutate", "--target", "src/subject.py"], root, {
@@ -285,47 +254,6 @@ test("zero", () => assert.equal(countdown(0), 0));
   assert.ok(JSON.parse(result.stdout).summary.killedByTimeout > 0);
 });
 
-test("--run applies differential symbol selection", async (t) => {
-  const root = await fixture(t, {
-    source: `export function chosen(value) { return value + 0; }
-export function ignored(value) { return value === 2; }
-`,
-    tests: `import assert from "node:assert/strict";
-import test from "node:test";
-import { chosen, ignored } from "../src/subject.js";
-test("subjects", () => {
-  assert.equal(chosen(1), 1);
-  assert.equal(chosen(0), 0);
-  assert.equal(ignored(2), true);
-  assert.equal(ignored(0), false);
-});
-`,
-  });
-  const source = await readFile(path.join(root, "src", "subject.js"), "utf8");
-  const [equivalent] = generateMutants("src/subject.js", source, new Set(["chosen"]));
-  const runDirectory = path.join(root, ".agentic-core", "runs", "run-1");
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
-    quality: {
-      targets: [{ path: "src/subject.js", symbols: ["chosen"] }],
-      equivalents: [{
-        file: "src/subject.js",
-        symbol: equivalent.symbol,
-        mutation: equivalent.mutation,
-        location: equivalent.location,
-        reason: "Adding or subtracting zero yields the same numeric result.",
-        staticProof: "For every JavaScript number x used by this symbol, x + 0 equals x - 0.",
-      }],
-    },
-  }));
-  const result = await run(["mutate", "--run", "run-1"], root);
-  assert.ok([0, 1].includes(result.code), result.stderr || result.stdout);
-  const report = JSON.parse(result.stdout);
-  assert.ok(report.details.length > 0);
-  assert.deepEqual(new Set(report.details.map(({ symbol }) => symbol)), new Set(["chosen"]));
-  assert.equal(report.details.find(({ id }) => id === equivalent.id).status, "equivalent");
-});
-
 test("mutation worker configuration is strictly limited to four", async (t) => {
   const root = await fixture(t);
   await mkdir(path.join(root, ".agentic-core"));
@@ -352,39 +280,4 @@ test("a restoration failure preserves the isolated evidence and returns exit cod
   assert.ok(report.restoration.evidencePath);
   assert.equal(sha256(await readFile(sourcePath)), before);
   await rm(report.restoration.evidencePath, { recursive: true, force: true });
-});
-
-test("in-run mutation evidence is ignored by later Node test discovery", async (t) => {
-  const root = await fixture(t, {
-    tests: `import assert from "node:assert/strict";
-import path from "node:path";
-import test from "node:test";
-import { choose } from "../src/subject.js";
-test("runs only from the active project", () => {
-  assert.equal(import.meta.dirname, path.join(process.cwd(), "test"));
-  assert.equal(choose(1), true);
-});
-`,
-  });
-  const runDirectory = path.join(root, ".agentic-core", "runs", "evidence-run");
-  await mkdir(runDirectory, { recursive: true });
-  await writeFile(path.join(runDirectory, "state.json"), JSON.stringify({
-    quality: { targets: [{ path: "src/subject.js", symbols: ["choose"] }] },
-  }));
-
-  const mutation = await run([
-    "mutate", "--run", "evidence-run", "--output", "artifacts/mutation.json",
-  ], root, {
-    env: { ...process.env, NODE_ENV: "test", AGENTIC_CORE_TEST_FAIL_MUTANT_RESTORE: "1" },
-  });
-  assert.equal(mutation.code, 5, mutation.stderr || mutation.stdout);
-  const artifactDirectory = path.join(runDirectory, "artifacts");
-  const report = JSON.parse(await readFile(path.join(artifactDirectory, "mutation.json"), "utf8"));
-  const relativeEvidence = path.relative(artifactDirectory, report.restoration.evidencePath);
-  assert.equal(relativeEvidence.startsWith("..") || path.isAbsolute(relativeEvidence), false);
-
-  const crap = await run([
-    "crap", "--run", "evidence-run", "--output", "artifacts/crap.json",
-  ], root);
-  assert.equal(crap.code, 0, crap.stderr || crap.stdout);
 });

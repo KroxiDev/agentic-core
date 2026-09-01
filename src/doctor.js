@@ -12,6 +12,11 @@ import {
 } from "./init.js";
 import { analyzeSource } from "./quality/ast.js";
 import { analyzePythonSource, choosePythonRunner, findPython, pythonHelper } from "./quality/python.js";
+import {
+  inspectLatestQualityReceipt,
+  loadQualitySession,
+  qualitySessionIdIsValid,
+} from "./quality/session.js";
 import { inspectPersistedRuntime } from "./runtime.js";
 import { hashDirectory, writeTransaction } from "./transaction.js";
 
@@ -113,24 +118,15 @@ function configurationErrors(value) {
     return unknown.length === 0 && missing.length === 0;
   };
 
-  exactKeys(value, ["$schema", "schemaVersion", "orchestration", "quality"], "configuration");
+  exactKeys(value, ["$schema", "schemaVersion", "coordination", "quality"], "configuration");
   if (value.$schema !== "./config.schema.json") errors.push("configuration.$schema must be ./config.schema.json");
-  if (value.schemaVersion !== 1) errors.push("configuration.schemaVersion must be 1");
+  if (value.schemaVersion !== 2) errors.push("configuration.schemaVersion must be 2");
 
-  if (exactKeys(value.orchestration,
-    ["explicitActivationOnly", "defaultMode", "briefMaxBytes", "handoffMaxBytes"], "orchestration")) {
-    if (value.orchestration.explicitActivationOnly !== true) {
-      errors.push("orchestration.explicitActivationOnly must be true");
+  if (exactKeys(value.coordination, ["explicitActivationOnly", "defaultMode"], "coordination")) {
+    if (value.coordination.explicitActivationOnly !== true) {
+      errors.push("coordination.explicitActivationOnly must be true");
     }
-    if (value.orchestration.defaultMode !== "normal") errors.push("orchestration.defaultMode must be normal");
-    if (!Number.isInteger(value.orchestration.briefMaxBytes)
-      || value.orchestration.briefMaxBytes < 1 || value.orchestration.briefMaxBytes > 16_384) {
-      errors.push("orchestration.briefMaxBytes must be an integer from 1 through 16384");
-    }
-    if (!Number.isInteger(value.orchestration.handoffMaxBytes)
-      || value.orchestration.handoffMaxBytes < 1 || value.orchestration.handoffMaxBytes > 32_768) {
-      errors.push("orchestration.handoffMaxBytes must be an integer from 1 through 32768");
-    }
+    if (value.coordination.defaultMode !== "normal") errors.push("coordination.defaultMode must be normal");
   }
 
   if (exactKeys(value.quality, ["crapThreshold", "mutationWorkers"], "quality")) {
@@ -162,9 +158,6 @@ function repairPlan() {
     actions,
     addWrite(targetPath, content, action) {
       addOperation({ path: targetPath, content }, action);
-    },
-    addDelete(targetPath, action) {
-      addOperation({ path: targetPath, type: "delete" }, action);
     },
     addAction(action) {
       actions.push(action);
@@ -267,13 +260,13 @@ async function addResourceChecks({ checks, definition, owner, projectRoot, curre
     id: "configuration.schema",
     component: "configuration",
     status: "ok",
-    message: "Configuration satisfies schema version 1",
+    message: "Configuration satisfies schema version 2",
     evidence: { path: ".agentic-core/config.json", schemaVersion: configInspection.value.schemaVersion },
   } : {
     id: "configuration.schema",
     component: "configuration",
     status: "error",
-    message: "Configuration does not satisfy schema version 1",
+    message: "Configuration does not satisfy schema version 2",
     evidence: { path: ".agentic-core/config.json", kind: configInspection.kind, errors: configInspection.errors },
     remediation: configurationRepairable
       ? "Run agentic-core doctor --repair to restore the canonical configuration."
@@ -425,172 +418,79 @@ async function addManagedBlockChecks({ checks, definition, owner, projectRoot, c
   }
 }
 
-function processIsAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
-}
-
-async function addRunCheck(checks, projectRoot) {
-  const runsPath = path.join(projectRoot, ".agentic-core", "runs");
-  const kind = await fileKind(runsPath);
+async function addQualityCheck(checks, projectRoot) {
+  const qualityPath = path.join(projectRoot, ".agentic-core", "quality");
+  const kind = await fileKind(qualityPath);
   if (kind === "missing") {
-    checks.push(check({ id: "operations.runs", component: "operations", status: "ok",
-      message: "No persisted runs are present", evidence: { path: ".agentic-core/runs", count: 0 } }));
+    checks.push(check({
+      id: "operations.quality", component: "operations", status: "ok",
+      message: "No QualitySession has been created yet",
+      evidence: { path: ".agentic-core/quality", sessions: [] },
+    }));
     return;
   }
   if (kind !== "directory") {
     checks.push(check({
-      id: "operations.runs", component: "operations", status: "error",
-      message: `The persisted-runs path is ${kind}`,
-      evidence: { path: ".agentic-core/runs", kind },
-      remediation: "Resolve the incompatible path manually; doctor will not delete it.",
+      id: "operations.quality", component: "operations", status: "error",
+      message: `The owned quality path is ${kind}`,
+      evidence: { path: ".agentic-core/quality", kind },
+      remediation: "Resolve the incompatible path manually; doctor will not replace or delete it.",
     }));
     return;
   }
-  const entries = await readdir(runsPath, { withFileTypes: true });
-  const runs = [];
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const runPath = path.join(runsPath, entry.name);
-    const statePath = path.join(runPath, "state.json");
-    const record = { runId: entry.name, kind: entry.isDirectory() ? "directory" : "unexpected" };
-    if (entry.isDirectory() && await fileKind(statePath) === "file") {
-      try {
-        const state = JSON.parse(await readFile(statePath, "utf8"));
-        record.status = typeof state.status === "string" ? state.status : "invalid";
-        record.mode = typeof state.mode === "string" ? state.mode : null;
-        record.currentRole = typeof state.currentRole?.name === "string" ? state.currentRole.name : null;
-      } catch (error) {
-        record.status = "invalid";
-        record.error = error.message;
-      }
-    } else if (entry.isDirectory()) {
-      record.status = "missing_state";
-    }
-    runs.push(record);
-  }
-  const incomplete = runs.filter((run) => !["failed", "blocked"].includes(run.status));
-  const terminal = runs.filter((run) => ["failed", "blocked"].includes(run.status));
-  checks.push(check(incomplete.length === 0 ? {
-    id: "operations.runs", component: "operations", status: "ok",
-    message: terminal.length === 0 ? "No persisted runs are present" : "No incomplete run is present; terminal evidence is retained",
-    evidence: { path: ".agentic-core/runs", incomplete, terminal },
-  } : {
-    id: "operations.runs", component: "operations", status: "error",
-    message: "Persisted incomplete runs require an explicit resume or cleanup decision",
-    evidence: { path: ".agentic-core/runs", incomplete, terminal },
-    remediation: "Resume the intended run explicitly or remove it only after deciding its persisted evidence is no longer needed.",
-  }));
-}
-
-async function workerRecord(workerPath) {
-  if (await fileKind(workerPath) !== "directory") return undefined;
-  const metadataPath = path.join(workerPath, "worker.json");
-  if (await fileKind(metadataPath) !== "file") return undefined;
-  try {
-    const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
-    if (!plainObject(metadata) || metadata.schemaVersion !== 1 || !Number.isInteger(metadata.pid) || metadata.pid <= 0
-      || typeof metadata.runId !== "string" || metadata.runId.length === 0) return undefined;
-    return metadata;
-  } catch {
-    return undefined;
-  }
-}
-
-async function workerRunIsActive(projectRoot, runId) {
-  const statePath = path.join(projectRoot, ".agentic-core", "runs", runId, "state.json");
-  if (await fileKind(statePath) !== "file") return false;
-  try {
-    const state = JSON.parse(await readFile(statePath, "utf8"));
-    return state?.id === runId && state?.status === "running";
-  } catch {
-    return false;
-  }
-}
-
-async function addWorkerCheck({ checks, projectRoot, plan }) {
-  const workersPath = path.join(projectRoot, ".agentic-core", "workers");
-  const kind = await fileKind(workersPath);
-  if (kind === "missing") {
-    checks.push(check({ id: "operations.workers", component: "operations", status: "ok",
-      message: "No worker records are present", evidence: { path: ".agentic-core/workers", active: [], abandoned: [] } }));
-    return;
-  }
-  if (kind !== "directory") {
-    checks.push(check({
-      id: "operations.workers", component: "operations", status: "error",
-      message: `The owned workers path is ${kind}`,
-      evidence: { path: ".agentic-core/workers", kind },
-      remediation: "Resolve the incompatible path manually; doctor will not replace it.",
-    }));
-    return;
-  }
-  const entries = await readdir(workersPath, { withFileTypes: true });
-  const active = [];
-  const abandoned = [];
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const targetPath = path.join(workersPath, entry.name);
-    const targetKind = await fileKind(targetPath);
-    const metadata = await workerRecord(targetPath);
-    if (metadata && await workerRunIsActive(projectRoot, metadata.runId) && processIsAlive(metadata.pid)) {
-      active.push({ name: entry.name, pid: metadata.pid, runId: metadata.runId ?? null });
+  const sessions = [];
+  const invalid = [];
+  for (const entry of (await readdir(qualityPath, { withFileTypes: true }))
+    .sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || !qualitySessionIdIsValid(entry.name)) {
+      invalid.push({ id: entry.name, reason: "unexpected_entry" });
       continue;
     }
-    const record = { name: entry.name, kind: targetKind, pid: metadata?.pid ?? null, runId: metadata?.runId ?? null };
-    abandoned.push(record);
-    if (targetKind === "file" || targetKind === "directory") {
-      plan.addDelete(targetPath, {
-        checkId: "operations.workers", action: "remove_abandoned_worker", path: projectPath(projectRoot, targetPath),
-      });
+    try {
+      const loaded = await loadQualitySession(projectRoot, entry.name);
+      const inspected = await inspectLatestQualityReceipt(loaded);
+      const latest = inspected === null ? null : {
+        status: inspected.receipt.status,
+        report: inspected.receipt.report,
+        sha256: inspected.receipt.sha256,
+      };
+      sessions.push({ id: entry.name, mode: loaded.session.mode, latest });
+    } catch (error) {
+      invalid.push({ id: entry.name, reason: error.message });
     }
   }
-  checks.push(check(abandoned.length === 0 ? {
-    id: "operations.workers", component: "operations", status: "ok",
-    message: active.length === 0 ? "No worker records are present" : "All recorded workers have live processes",
-    evidence: { path: ".agentic-core/workers", active, abandoned },
+  checks.push(check(invalid.length === 0 ? {
+    id: "operations.quality", component: "operations", status: "ok",
+    message: "QualitySession state and latest receipts are coherent",
+    evidence: { path: ".agentic-core/quality", sessions, invalid },
   } : {
-    id: "operations.workers", component: "operations", status: "error",
-    message: "Abandoned worker records were detected",
-    evidence: { path: ".agentic-core/workers", active, abandoned },
-    remediation: "Run agentic-core doctor --repair to remove only abandoned entries in the manifest-owned workers directory.",
-    repair: abandoned.some((item) => item.kind === "file" || item.kind === "directory")
-      ? { available: true, action: "remove abandoned owned worker records" } : { available: false },
+    id: "operations.quality", component: "operations", status: "error",
+    message: "QualitySession state is corrupt or contains unowned entries",
+    evidence: { path: ".agentic-core/quality", sessions, invalid },
+    remediation: "Preserve the evidence and resolve the invalid session manually; doctor will not rewrite quality history.",
   }));
 }
 
-async function addTransactionCheck(checks, projectRoot) {
-  const transactionsPath = path.join(projectRoot, ".agentic-core", "transactions");
-  const kind = await fileKind(transactionsPath);
-  if (kind === "missing") {
-    checks.push(check({ id: "operations.transactions", component: "operations", status: "ok",
-      message: "No pending transaction records are present",
-      evidence: { path: ".agentic-core/transactions", pending: [] } }));
-    return;
+async function addLegacyStateCheck(checks, projectRoot) {
+  const legacy = [];
+  for (const logicalPath of [
+    ".agentic-core/runs",
+    ".agentic-core/reports",
+    ".agentic-core/workers",
+    ".agentic-core/transactions",
+  ]) {
+    const kind = await fileKind(path.join(projectRoot, ...logicalPath.split("/")));
+    if (kind !== "missing") legacy.push({ path: logicalPath, kind });
   }
-  if (kind !== "directory") {
-    checks.push(check({
-      id: "operations.transactions", component: "operations", status: "error",
-      message: `The owned transactions path is ${kind}`,
-      evidence: { path: ".agentic-core/transactions", kind },
-      remediation: "Resolve the incompatible path manually; doctor will not replace it.",
-    }));
-    return;
-  }
-  const entries = await readdir(transactionsPath, { withFileTypes: true });
-  const pending = entries.sort((left, right) => left.name.localeCompare(right.name))
-    .map((entry) => ({ name: entry.name, kind: entry.isDirectory() ? "directory" : entry.isFile() ? "file" : "other" }));
-  checks.push(check(pending.length === 0 ? {
-    id: "operations.transactions", component: "operations", status: "ok",
-    message: "No pending transaction records are present",
-    evidence: { path: ".agentic-core/transactions", pending },
+  checks.push(check(legacy.length === 0 ? {
+    id: "operations.legacy_state", component: "operations", status: "ok",
+    message: "No legacy orchestration state is present",
+    evidence: { legacy },
   } : {
-    id: "operations.transactions", component: "operations", status: "error",
-    message: "Pending transaction evidence requires explicit recovery",
-    evidence: { path: ".agentic-core/transactions", pending },
-    remediation: "Inspect or recover the recorded transaction; doctor will not discard recovery evidence automatically.",
+    id: "operations.legacy_state", component: "operations", status: "not_applicable",
+    message: "Legacy orchestration state is preserved but no longer interpreted",
+    evidence: { legacy },
+    remediation: "Keep or remove legacy state only through an explicit user-managed decision.",
   }));
 }
 
@@ -800,7 +700,7 @@ async function addAdapterChecks({ checks, definition, hostAgentProbe }) {
     const resourcePaths = definition.resources.map(({ path: resourcePath }) => resourcePath).filter((resourcePath) => (
       host === "codex"
         ? resourcePath.startsWith(".codex/") || resourcePath.startsWith(".agents/")
-        : resourcePath.startsWith(".claude/") || resourcePath === ".agentic-core/claude-read-command-guard.mjs"
+        : resourcePath.startsWith(".claude/")
     ));
     const blockPath = host === "codex" ? "AGENTS.md#agentic-core" : "CLAUDE.md#agentic-core";
     const checkIds = [
@@ -848,14 +748,14 @@ async function addAdapterChecks({ checks, definition, hostAgentProbe }) {
         id: `adapter.${host}.agent_creation`, component: "adapter_capability", status: "error",
         message: `The active host could not create a real ${host} agent`,
         evidence: { host, created: false, detail: result?.evidence ?? null },
-        remediation: "Inspect the native host permissions and adapter profile reported by the probe.",
+        remediation: "Inspect the native host capability and adapter discovery reported by the probe.",
       }));
     } catch (error) {
       checks.push(check({
         id: `adapter.${host}.agent_creation`, component: "adapter_capability", status: "error",
         message: `The native ${host} agent-creation probe failed`,
         evidence: { host, error: error.message },
-        remediation: "Inspect the native host permissions and adapter profile reported by the probe.",
+        remediation: "Inspect the native host capability and adapter discovery reported by the probe.",
       }));
     }
   }
@@ -868,9 +768,8 @@ function addOwnershipBlockedChecks(checks) {
     ["managed-blocks.integrity", "managed_block", "Managed-block checks are blocked"],
     ["adapter.codex", "adapter", "Codex adapter ownership cannot be established"],
     ["adapter.claude", "adapter", "Claude adapter ownership cannot be established"],
-    ["operations.runs", "operations", "Persisted-run ownership cannot be established"],
-    ["operations.workers", "operations", "Worker ownership cannot be established"],
-    ["operations.transactions", "operations", "Transaction ownership cannot be established"],
+    ["operations.quality", "operations", "QualitySession ownership cannot be established"],
+    ["operations.legacy_state", "operations", "Legacy-state preservation cannot be established"],
     ["runtime.persistence", "runtime", "Persisted-runtime ownership cannot be established"],
   ]) {
     checks.push(check({
@@ -936,15 +835,18 @@ async function diagnose(projectRoot, definition, hostAgentProbe) {
     },
   }));
 
-  const currentVersion = owner.version === definition.version;
+  const currentVersion = owner.version === definition.version
+    && owner.configVersion === definition.configVersion;
   checks.push(check(currentVersion ? {
     id: "installation.version", component: "manifest", status: "ok",
-    message: "The installed version matches the running package",
-    evidence: { installed: owner.version, running: definition.version },
+    message: "The installed package and configuration versions match the running package",
+    evidence: { installed: owner.version, running: definition.version,
+      installedConfig: owner.configVersion, runningConfig: definition.configVersion },
   } : {
     id: "installation.version", component: "manifest", status: "error",
-    message: "The installed version differs from the running package",
-    evidence: { installed: owner.version, running: definition.version },
+    message: "The installed package or configuration version differs from the running package",
+    evidence: { installed: owner.version, running: definition.version,
+      installedConfig: owner.configVersion, runningConfig: definition.configVersion },
     remediation: "Run agentic-core update with the intended package version; doctor will not perform an implicit update.",
   }));
 
@@ -952,9 +854,8 @@ async function diagnose(projectRoot, definition, hostAgentProbe) {
   await addResourceChecks({ checks, definition, owner, projectRoot, currentVersion, plan, updatedOwner });
   await addManagedBlockChecks({ checks, definition, owner, projectRoot, currentVersion, plan, updatedOwner });
   await addRuntimePersistenceCheck(checks, projectRoot, owner);
-  await addRunCheck(checks, projectRoot);
-  await addWorkerCheck({ checks, projectRoot, plan });
-  await addTransactionCheck(checks, projectRoot);
+  await addQualityCheck(checks, projectRoot);
+  await addLegacyStateCheck(checks, projectRoot);
   await addAdapterChecks({ checks, definition, hostAgentProbe });
   await addBackendChecks(checks, projectRoot);
 

@@ -7,6 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { doctorInstallation } from "../src/doctor.js";
+import { prepareQualitySession, verifyQualitySession } from "../src/quality/session.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -100,6 +101,52 @@ test("doctor reports a complete healthy installation with actionable runtime evi
   assert.equal(report.projectRoot, path.resolve(project));
 });
 
+test("doctor rejects a self-hashed latest report that does not belong to its session", async (t) => {
+  const project = await createProject(t);
+  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  await mkdir(path.join(project, "src"));
+  await mkdir(path.join(project, "test"));
+  await writeFile(path.join(project, "package.json"), `${JSON.stringify({
+    type: "module",
+    scripts: { test: "node --test" },
+  }, null, 2)}\n`);
+  await writeFile(path.join(project, "src", "subject.js"), "export const identity = (value) => value;\n");
+  await writeFile(path.join(project, "test", "subject.test.js"), [
+    'import assert from "node:assert/strict";',
+    'import test from "node:test";',
+    'import { identity } from "../src/subject.js";',
+    'test("identity", () => assert.equal(identity(3), 3));',
+    "",
+  ].join("\n"));
+  const prepared = await prepareQualitySession({
+    projectRoot: project,
+    mode: "normal",
+    scopes: ["src/subject.js"],
+  });
+  await verifyQualitySession({ projectRoot: project, id: prepared.id });
+  const reportsRoot = path.join(project, ".agentic-core", "quality", prepared.id, "reports");
+  const latestPath = path.join(reportsRoot, "latest.json");
+  const latest = JSON.parse(await readFile(latestPath, "utf8"));
+  const validReport = JSON.parse(await readFile(path.join(
+    project, ".agentic-core", "quality", prepared.id, ...latest.report.split("/"),
+  ), "utf8"));
+  validReport.session = "q_000000000000000000000000";
+  const forgedContent = Buffer.from(`${JSON.stringify(validReport, null, 2)}\n`);
+  const forgedHash = sha256(forgedContent);
+  await writeFile(path.join(reportsRoot, `${forgedHash}.json`), forgedContent);
+  await writeFile(latestPath, `${JSON.stringify({
+    ...latest,
+    report: `reports/${forgedHash}.json`,
+    sha256: forgedHash,
+  }, null, 2)}\n`);
+
+  const result = await doctorInstallation(project);
+  assert.equal(result.exitCode, 1);
+  const quality = findCheck(result.report.diagnosis, "operations.quality");
+  assert.equal(quality.status, "error");
+  assert.match(quality.evidence.invalid[0].reason, /report.*session/i);
+});
+
 test("doctor repairs only registered resources and block boundaries while preserving foreign content", async (t) => {
   const project = await createProject(t);
   assert.equal((await runCore(["init", project, "--yes"])).code, 0);
@@ -157,9 +204,6 @@ test("doctor --dry-run and --repair --dry-run return the same repair preview wit
   assert.equal((await runCore(["init", project, "--yes"])).code, 0);
   await writeFile(path.join(project, ".agentic-core", "golden-rules.md"), "corrupt rules\r\n");
   await rm(path.join(project, ".codex", "agents", "agentic-read.toml"));
-  const workerRoot = path.join(project, ".agentic-core", "workers", ".abandoned");
-  await mkdir(workerRoot, { recursive: true });
-  await writeFile(path.join(workerRoot, "state.bin"), Buffer.from([0x00, 0xff]));
   const before = await snapshotTree(project);
 
   const previewOnly = await runCore(["doctor", project, "--dry-run"]);
@@ -177,7 +221,6 @@ test("doctor --dry-run and --repair --dry-run return the same repair preview wit
     actions: preview.repair.actions,
   });
   assert.ok(preview.repair.actions.some((action) => action.action === "restore_resource"));
-  assert.ok(preview.repair.actions.some((action) => action.action === "remove_abandoned_worker"));
   assertSameSnapshot(await snapshotTree(project), before);
 
   const appliedResult = await runCore(["doctor", project, "--repair"]);
@@ -208,7 +251,7 @@ test("doctor --dry-run detects a divergent persisted runtime without replacing o
   }));
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
     name: "@kroxidev/agentic-core",
-    version: "0.1.0",
+    version: "0.2.0",
     bin: { "agentic-core": "bin/agentic-core.js", "agentic-quality": "bin/agentic-quality.js" },
   }));
   await writeFile(path.join(packageRoot, "bin", "agentic-core.js"), "export {};\n");
@@ -239,14 +282,10 @@ test("doctor --dry-run detects a divergent persisted runtime without replacing o
   assertSameSnapshot(await snapshotTree(project), before);
 });
 
-test("doctor previews and repairs the launcher missing from a legacy ownership manifest", async (t) => {
+test("doctor previews and repairs a missing currently owned launcher", async (t) => {
   const project = await createProject(t);
   assert.equal((await runCore(["init", project, "--yes"])).code, 0);
   const productRoot = path.join(project, ".agentic-core");
-  const manifestPath = path.join(productRoot, "ownership.json");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  manifest.resources = manifest.resources.filter(({ path: resourcePath }) => resourcePath !== ".agentic-core/runtime-launcher.mjs");
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   await rm(path.join(productRoot, "runtime-launcher.mjs"));
   const before = await snapshotTree(project);
 
@@ -292,12 +331,10 @@ test("doctor restores an invalid owned configuration to the canonical schema", a
   assert.equal(findCheck(report.postRepair, "configuration.schema").status, "ok");
   assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
     $schema: "./config.schema.json",
-    schemaVersion: 1,
-    orchestration: {
+    schemaVersion: 2,
+    coordination: {
       explicitActivationOnly: true,
       defaultMode: "normal",
-      briefMaxBytes: 16_384,
-      handoffMaxBytes: 32_768,
     },
     quality: { crapThreshold: 7, mutationWorkers: 4 },
   });
@@ -360,7 +397,7 @@ test("doctor refuses ambiguous blocks and incompatible owned path types", async 
   assertSameSnapshot(await snapshotTree(project), before);
 });
 
-test("doctor gates Python only when needed and reports operational residue without discarding recovery evidence", async (t) => {
+test("doctor gates Python only when needed and preserves legacy orchestration residue", async (t) => {
   const project = await createProject(t);
   assert.equal((await runCore(["init", project, "--yes"])).code, 0);
   const missingPython = path.join(project, "missing-python");
@@ -381,22 +418,25 @@ test("doctor gates Python only when needed and reports operational residue witho
   await mkdir(transactionRoot, { recursive: true });
   await writeFile(path.join(transactionRoot, "pending.json"), "transaction recovery evidence\r\n");
 
-  const result = await runCore(["doctor", project, "--repair"], { env: environment });
+  const result = await runCore(["doctor", project], { env: environment });
   const report = reportOf(result);
 
   assert.equal(result.code, 1);
-  assert.equal(report.status, "partially_repaired");
+  assert.equal(report.status, "unhealthy");
   assert.equal(findCheck(report.diagnosis, "runtime.python").status, "error");
   assert.equal(findCheck(report.diagnosis, "backend.python").status, "blocked");
-  assert.equal(findCheck(report.diagnosis, "operations.runs").evidence.incomplete[0].status, "running");
-  assert.equal(findCheck(report.diagnosis, "operations.workers").evidence.abandoned[0].name, "abandoned-worker");
-  assert.equal(findCheck(report.diagnosis, "operations.transactions").evidence.pending[0].name, "pending.json");
-  await assert.rejects(lstat(workerRoot), { code: "ENOENT" });
+  const legacy = findCheck(report.diagnosis, "operations.legacy_state");
+  assert.equal(legacy.status, "not_applicable");
+  assert.deepEqual(legacy.evidence.legacy.map(({ path: legacyPath }) => legacyPath), [
+    ".agentic-core/runs",
+    ".agentic-core/workers",
+    ".agentic-core/transactions",
+  ]);
+  assert.equal(await readFile(path.join(workerRoot, "partial.bin"), "utf8"), "owned worker residue\r\n");
   assert.equal(await readFile(path.join(runRoot, "state.json"), "utf8"),
     `${JSON.stringify({ schemaVersion: 1, mode: "light", status: "running" })}\n`);
   assert.equal(await readFile(path.join(transactionRoot, "pending.json"), "utf8"),
     "transaction recovery evidence\r\n");
-  assert.equal(findCheck(report.postRepair, "operations.workers").status, "ok");
 });
 
 test("doctor validates the Python analyzer, runner and coverage backend when Python source requires them", async (t) => {

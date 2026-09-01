@@ -10,7 +10,6 @@ export const RUNTIME_BINS = Object.freeze({
 });
 
 export const HOST_RESOURCE_SPECS = [
-  { source: "src/claude-read-command-guard.mjs", target: ".agentic-core/claude-read-command-guard.mjs" },
   { source: "src/runtime-launcher.mjs", target: ".agentic-core/runtime-launcher.mjs" },
   ...["read", "production", "tests", "docs"].flatMap((profile) => [
     { source: `adapters/codex/agents/agentic-${profile}.toml`, target: `.codex/agents/agentic-${profile}.toml` },

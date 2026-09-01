@@ -3,45 +3,27 @@ const EMPTY_ITEM = "Ninguna.";
 const STATUS_LABELS = new Map([
   ["approved", "aprobado"],
   ["blocked", "bloqueado"],
-  ["completed", "completado"],
-  ["completed_with_warnings", "completado con advertencias"],
-  ["context_missing", "falta contexto"],
   ["error", "error"],
-  ["escalated", "escalado"],
   ["failed", "fallido"],
   ["healthy", "saludable"],
-  ["needs_input", "requiere información"],
-  ["needs_mode_change", "requiere cambio de modo"],
   ["not_applicable", "no aplicable"],
   ["partially_repaired", "reparado parcialmente"],
-  ["protocol_retry", "reintento de protocolo"],
   ["ready", "listo"],
   ["repair_blocked", "reparación bloqueada"],
   ["repair_failed", "reparación fallida"],
   ["repair_preview", "vista previa de reparación"],
   ["repaired", "reparado"],
-  ["resumed", "reanudado"],
-  ["running", "en ejecución"],
-  ["selection_required", "requiere selección"],
   ["unsupported_environment", "entorno no soportado"],
   ["unsupported_language", "lenguaje no soportado"],
   ["unhealthy", "no saludable"],
   ["baseline_failed", "baseline fallido"],
   ["restoration_failure", "fallo de restauración"],
-  ["started", "iniciado"],
-  ["changes_required", "requiere cambios"],
-  ["documentation_retry", "reintento de documentación"],
 ]);
 
 const DOCTOR_ACTION_LABELS = new Map([
   ["publish_repaired_hashes", "actualizar hashes reparados"],
-  ["remove_abandoned_worker", "eliminar worker abandonado"],
   ["restore_managed_block", "restaurar bloque gestionado"],
   ["restore_resource", "restaurar recurso"],
-]);
-
-const TERMINAL_ORCHESTRATION_STATUSES = new Set([
-  "blocked", "completed", "completed_with_warnings", "failed",
 ]);
 
 function cleanText(value) {
@@ -244,92 +226,6 @@ export function formatMaintenanceResult(command, result) {
   throw new TypeError(`Unsupported maintenance output command: ${command}`);
 }
 
-function describeRole(result) {
-  const role = result.role ?? result.brief?.role;
-  if (!role) return undefined;
-  const sequence = role.sequence === undefined ? "" : ` #${role.sequence}`;
-  return `${role.name}${sequence}`;
-}
-
-function findingText(finding) {
-  if (typeof finding === "string") return finding;
-  return finding.summary ?? finding.message ?? finding.description ?? JSON.stringify(finding);
-}
-
-function orchestrationFindings(result) {
-  const candidates = [
-    ...(result.findings ?? []),
-    ...(result.handoff?.payload?.findings ?? []),
-    ...(result.lastHandoff?.payload?.findings ?? []),
-  ];
-  return candidates.map(findingText);
-}
-
-function orchestrationQuestions(result) {
-  return [
-    ...(result.questions ?? []),
-    ...(result.handoff?.payload?.questions ?? []),
-    ...(result.lastHandoff?.payload?.questions ?? []),
-  ].map((question) => typeof question === "string" ? question : findingText(question));
-}
-
-export function formatOrchestrationResult(command, result) {
-  const role = describeRole(result);
-  const overview = [
-    `Comando: ${command}.`,
-    `Estado: ${statusLabel(result.status)}.`,
-    result.runId ? `Ejecución: ${result.runId}.` : undefined,
-    result.mode ? `Modo: ${result.mode}.` : undefined,
-    role ? `Rol: ${role}.` : undefined,
-    Number.isInteger(result.reworkCount) ? `Retrabajos consumidos: ${result.reworkCount}.` : undefined,
-  ];
-  const warnings = [...(result.warnings ?? []).map(findingText)];
-  const findings = orchestrationFindings(result);
-  if (["blocked", "failed"].includes(result.status)) {
-    warnings.push(result.error?.message ?? result.reason ?? result.summary ?? `La ejecución terminó como ${result.status}.`);
-  }
-  if (result.status === "protocol_retry") warnings.push("El hand-off no cumplió el protocolo y consumió el único reintento permitido.");
-  if (result.status === "completed_with_warnings") warnings.push(...findings);
-
-  const pending = orchestrationQuestions(result);
-  if (result.status === "selection_required") {
-    pending.push(...(result.runs ?? []).map((run) => (
-      `Reanudar ${run.id} con \`agentic-core resume --run ${run.id}\`.`
-    )));
-  }
-  if (result.status === "needs_mode_change") {
-    const requestedMode = result.requestedMode
-      ?? result.handoff?.payload?.requestedMode
-      ?? result.lastHandoff?.payload?.requestedMode;
-    if (requestedMode && result.runId) {
-      pending.push(`Decidir si se aprueba \`agentic-core approve-mode-change --run ${result.runId} --to ${requestedMode}\`.`);
-    }
-  }
-  if (role && result.brief && !TERMINAL_ORCHESTRATION_STATUSES.has(result.status)) {
-    pending.push(`Entregar el brief devuelto al rol ${role}.`);
-  }
-  if (["blocked", "failed"].includes(result.status)) pending.push("Resolver el bloqueo reportado antes de continuar.");
-
-  const ready = [
-    result.status === "selection_required"
-      ? `${countLabel((result.runs ?? []).length, "ejecución reanudable")} encontrada${(result.runs ?? []).length === 1 ? "" : "s"}.`
-      : "Resultado calculado y estado persistido según el contrato del runtime.",
-  ];
-  const sections = [{ title: "RESULTADO", items: overview }];
-  if ((result.runs ?? []).length > 0) {
-    sections.push({
-      title: "EJECUCIONES DISPONIBLES",
-      items: result.runs.map((run) => `${run.id}: ${statusLabel(run.status)}${run.mode ? `, modo ${run.mode}` : ""}`),
-    });
-  }
-  sections.push(
-    { title: "LISTO", items: ready },
-    { title: "ADVERTENCIAS", items: warnings },
-    { title: "ACCIONES MANUALES PENDIENTES", items: pending },
-  );
-  return renderSections(sections);
-}
-
 function displayValue(value) {
   if (Array.isArray(value)) return value.length === 0 ? "ninguno" : value.map(displayValue).join(", ");
   if (value && typeof value === "object") return JSON.stringify(value);
@@ -347,15 +243,6 @@ function qualityDetail(detail) {
 }
 
 export function formatQualityResult(command, result) {
-  if (result.path && result.sha256 && result.status === undefined) {
-    return renderSections([
-      { title: "ARTEFACTO", items: [`Ruta: ${result.path}.`, `SHA-256: ${result.sha256}.`] },
-      { title: "LISTO", items: ["Reporte escrito de forma transaccional."] },
-      { title: "ADVERTENCIAS", items: [] },
-      { title: "ACCIONES MANUALES PENDIENTES", items: [] },
-    ]);
-  }
-
   const overview = [
     `Comando: ${command}.`,
     `Estado: ${statusLabel(result.status)}.`,

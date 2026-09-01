@@ -35,7 +35,6 @@ const expectedInventory = [
   "dist/runtime/resources/skills/agentic-grilling/SKILL.md",
   "dist/runtime/resources/skills/agentic-tdd/SKILL.md",
   "dist/runtime/resources/skills/orquestar/SKILL.md",
-  "dist/runtime/resources/src/claude-read-command-guard.mjs",
   "dist/runtime/resources/src/runtime-launcher.mjs",
   "dist/runtime/THIRD_PARTY_NOTICES.md",
   "dist/runtime/third_party/@jridgewell/resolve-uri/LICENSE",
@@ -89,7 +88,7 @@ test("npm pack contains exactly the production runtime inventory", async (t) => 
   const [pack] = JSON.parse(stdout);
 
   assert.equal(pack.name, "@kroxidev/agentic-core");
-  assert.equal(pack.version, "0.1.0");
+  assert.equal(pack.version, "0.2.0");
   assert.deepEqual(pack.files.map(({ path: filePath }) => filePath), expectedInventory);
 });
 
@@ -119,7 +118,7 @@ test("both CLI entry points work from an installed package", async (t) => {
     "agentic-core": "bin/agentic-core.js",
     "agentic-quality": "bin/agentic-quality.js",
   });
-  assert.match(await readFile(path.join(installedRoot, "README.md"), "utf8"), /Implementador → Tester/);
+  assert.match(await readFile(path.join(installedRoot, "README.md"), "utf8"), /QualitySession/);
   assert.match(await readFile(path.join(installedRoot, "THIRD_PARTY_NOTICES.md"), "utf8"), /typescript/);
 
   for (const [binary, helpPattern] of [
@@ -131,7 +130,7 @@ test("both CLI entry points work from an installed package", async (t) => {
       cwd: consumer,
       encoding: "utf8",
     });
-    assert.equal(result.stdout.trim(), "0.1.0");
+    assert.equal(result.stdout.trim(), "0.2.0");
     const help = await execFileAsync(process.execPath, [binaryPath, "--help"], {
       cwd: consumer,
       encoding: "utf8",
@@ -189,7 +188,7 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
 
   const project = await temporaryDirectory(t, "agentic core bootstrap consumer ");
   const initialized = await runCandidate(project, ["init", ".", "--yes"]);
-  assert.match(initialized.stdout, /Installed agentic-core 0\.1\.0/);
+  assert.match(initialized.stdout, /Installed agentic-core 0\.2\.0/);
   for (const rootPackageFile of ["package.json", "package-lock.json", "node_modules"]) {
     await assert.rejects(lstat(path.join(project, rootPackageFile)), { code: "ENOENT" });
   }
@@ -202,7 +201,7 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
     cwd: project,
     encoding: "utf8",
   });
-  assert.equal(version.stdout.trim(), "0.1.0");
+  assert.equal(version.stdout.trim(), "0.2.0");
   const help = await execFileAsync(process.execPath, [launcher, "agentic-quality", "--help"], {
     cwd: project,
     encoding: "utf8",
@@ -226,4 +225,23 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
   const qualityReport = JSON.parse(quality.stdout);
   assert.equal(qualityReport.status, "approved");
   assert.equal(qualityReport.details.length, 1);
+  const prepared = await execFileAsync(process.execPath, [
+    launcher,
+    "agentic-quality",
+    "prepare",
+    "--mode",
+    "normal",
+    "--scope",
+    "quality-smoke.mjs",
+  ], { cwd: project, encoding: "utf8" });
+  assert.match(prepared.stdout, /^QUALITY_SESSION id=(q_[a-f0-9]{24}) mode=normal baseline=[a-f0-9]{64}\n$/);
+  const sessionId = prepared.stdout.match(/id=(q_[a-f0-9]{24})/)[1];
+  const verified = await execFileAsync(process.execPath, [
+    launcher,
+    "agentic-quality",
+    "verify",
+    "--session",
+    sessionId,
+  ], { cwd: project, encoding: "utf8" });
+  assert.match(verified.stdout, new RegExp(`^QUALITY_OK session=${sessionId} tests=approved `));
 });

@@ -158,7 +158,7 @@ async function run() {
   }
   const child = spawn(process.execPath, [invocation.binary, ...invocation.argsPrefix, ...args], {
     cwd: projectRoot,
-    env: { ...process.env, AGENTIC_CORE_OUTPUT: "json" },
+    env: process.env,
     stdio: "inherit",
     windowsHide: true,
   });

@@ -5,7 +5,6 @@ import path from "node:path";
 import test from "node:test";
 import {
   formatMaintenanceResult,
-  formatOrchestrationResult,
   formatQualityResult,
   writeCommandResult,
 } from "../src/cli-output.js";
@@ -54,7 +53,7 @@ test("command output selects human sections only for an interactive terminal", (
 test("maintenance plans use the common readable sections without dumping the manifest", () => {
   const output = formatMaintenanceResult("init", {
     projectRoot: "C:\\project",
-    version: "0.1.0",
+    version: "0.2.0",
     dryRun: true,
     plan: {
       status: "ready",
@@ -121,18 +120,7 @@ test("maintenance diagnostics and uninstall previews expose warnings and pending
   assert.match(uninstall, /Revisar manualmente divergent resource: AGENTS\.md\./);
 });
 
-test("orchestration and quality results share the common terminal format", () => {
-  const orchestration = formatOrchestrationResult("resume", {
-    status: "selection_required",
-    runs: [{ id: "run-1", status: "running", mode: "light" }],
-  });
-  assert.match(orchestration, /^RESULTADO/);
-  assert.match(orchestration, /EJECUCIONES DISPONIBLES/);
-  assert.match(orchestration, /agentic-core resume --run run-1/);
-  assert.match(orchestration, /LISTO/);
-  assert.match(orchestration, /ADVERTENCIAS/);
-  assert.match(orchestration, /ACCIONES MANUALES PENDIENTES/);
-
+test("independent quality results use the common terminal format", () => {
   const quality = formatQualityResult("crap", {
     status: "failed",
     tool: "crap",
@@ -144,10 +132,6 @@ test("orchestration and quality results share the common terminal format", () =>
   assert.match(quality, /^ANÁLISIS DE CALIDAD/);
   assert.match(quality, /HALLAZGOS\n\n- choose — fallido — C\.R\.A\.P\. 8/);
   assert.match(quality, /Revisar los símbolos o mutantes fallidos/);
-
-  const artifact = formatQualityResult("crap", { path: "artifacts/crap.json", sha256: "a".repeat(64) });
-  assert.match(artifact, /^ARTEFACTO/);
-  assert.match(artifact, /Reporte escrito de forma transaccional/);
 });
 
 test("all maintenance commands render human output while captured JSON remains compatible", async (t) => {
@@ -165,7 +149,7 @@ test("all maintenance commands render human output while captured JSON remains c
   const init = capturedIo(true);
   assert.equal(await runMaintenanceCli(["init", project, "--yes"], init.io), 0);
   assert.match(init.stdout(), /^ACCIONES/);
-  assert.match(init.stdout(), /agentic-core 0\.1\.0 instalado/);
+  assert.match(init.stdout(), /agentic-core 0\.2\.0 instalado/);
 
   const update = capturedIo(true);
   assert.equal(await runMaintenanceCli(["update", project, "--dry-run"], update.io), 0);

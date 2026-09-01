@@ -7,20 +7,22 @@ import { writeTransaction } from "./transaction.js";
 import { getVersion } from "./version.js";
 
 const PRODUCT = "@kroxidev/agentic-core";
-const CONFIG_VERSION = 1;
+const CONFIG_VERSION = 2;
 const CORE_RESOURCE_PATHS = [
   ".agentic-core/config.json",
   ".agentic-core/config.schema.json",
   ".agentic-core/golden-rules.md",
 ];
 const EXPECTED_RESOURCE_PATHS = [...CORE_RESOURCE_PATHS, ...HOST_RESOURCE_SPECS.map(({ target }) => target)];
-const LEGACY_EXPECTED_RESOURCE_PATHS = EXPECTED_RESOURCE_PATHS
+const LEGACY_EXPECTED_RESOURCE_PATHS = [
+  ...CORE_RESOURCE_PATHS,
+  ".agentic-core/claude-read-command-guard.mjs",
+  ...HOST_RESOURCE_SPECS.map(({ target }) => target),
+];
+const EARLY_LEGACY_EXPECTED_RESOURCE_PATHS = LEGACY_EXPECTED_RESOURCE_PATHS
   .filter((resourcePath) => resourcePath !== ".agentic-core/runtime-launcher.mjs");
 const OWNED_DIRECTORIES = [
-  ".agentic-core/runs",
-  ".agentic-core/reports",
-  ".agentic-core/workers",
-  ".agentic-core/transactions",
+  ".agentic-core/quality",
   ".agents/skills/orquestar",
   ".agents/skills/agentic-tdd",
   ".agents/skills/agentic-grilling",
@@ -28,22 +30,31 @@ const OWNED_DIRECTORIES = [
   ".claude/skills/agentic-tdd",
   ".claude/skills/agentic-grilling",
 ];
+const LEGACY_OWNED_DIRECTORIES = [
+  ".agentic-core/runs",
+  ".agentic-core/reports",
+  ".agentic-core/workers",
+  ".agentic-core/transactions",
+  ...OWNED_DIRECTORIES.slice(1),
+];
 const MANAGED_BLOCK = `<!-- AGENTIC_CORE_START -->
 ## agentic-core
 
 Follow the canonical policy in \`.agentic-core/golden-rules.md\`.
 
-Requests without an explicit \`Orquesta\`, \`/orquestar\`, or \`$orquestar\` trigger run directly. In direct execution, no coordinator, run state, or subagents are used; load only \`.agentic-core/golden-rules.md\` as agentic-core policy.
+If a request begins with \`Orquesta\`, \`/orquestar\`, or \`$orquestar\`, load and follow \`.agents/skills/orquestar/SKILL.md\`. \`Orquesta\` without a mode means \`normal\`.
+
+Never declare an orchestrated executable change complete without a current \`QUALITY_OK\` receipt from \`agentic-quality verify\`.
+
+Requests without one of those activators run directly.
 <!-- AGENTIC_CORE_END -->`;
 
 const CONFIG = {
   $schema: "./config.schema.json",
   schemaVersion: CONFIG_VERSION,
-  orchestration: {
+  coordination: {
     explicitActivationOnly: true,
     defaultMode: "normal",
-    briefMaxBytes: 16_384,
-    handoffMaxBytes: 32_768,
   },
   quality: {
     crapThreshold: 7,
@@ -57,19 +68,17 @@ const CONFIG_SCHEMA = {
   title: "agentic-core configuration",
   type: "object",
   additionalProperties: false,
-  required: ["$schema", "schemaVersion", "orchestration", "quality"],
+  required: ["$schema", "schemaVersion", "coordination", "quality"],
   properties: {
     $schema: { const: "./config.schema.json" },
     schemaVersion: { const: CONFIG_VERSION },
-    orchestration: {
+    coordination: {
       type: "object",
       additionalProperties: false,
-      required: ["explicitActivationOnly", "defaultMode", "briefMaxBytes", "handoffMaxBytes"],
+      required: ["explicitActivationOnly", "defaultMode"],
       properties: {
         explicitActivationOnly: { const: true },
         defaultMode: { const: "normal" },
-        briefMaxBytes: { type: "integer", minimum: 1, maximum: 16_384 },
-        handoffMaxBytes: { type: "integer", minimum: 1, maximum: 32_768 },
       },
     },
     quality: {
@@ -196,23 +205,43 @@ function assertObject(value, label) {
   }
 }
 
+function assertKnownKeys(value, keys, label) {
+  const unknown = Object.keys(value).filter((key) => !keys.includes(key));
+  if (unknown.length > 0) throw new Error(`Cannot update: ${label} contains unknown keys: ${unknown.join(", ")}`);
+}
+
 function mergeConfig(value) {
   assertObject(value, "configuration");
-  if (value.orchestration !== undefined) assertObject(value.orchestration, "orchestration configuration");
+  assertKnownKeys(value, ["$schema", "schemaVersion", "orchestration", "coordination", "quality"], "configuration");
+  if (value.orchestration !== undefined && value.coordination !== undefined) {
+    throw new Error("Cannot update: configuration mixes legacy orchestration with coordination");
+  }
+  if (value.orchestration !== undefined) {
+    assertObject(value.orchestration, "legacy orchestration configuration");
+    assertKnownKeys(value.orchestration,
+      ["explicitActivationOnly", "defaultMode", "briefMaxBytes", "handoffMaxBytes"],
+      "legacy orchestration configuration");
+  }
+  if (value.coordination !== undefined) {
+    assertObject(value.coordination, "coordination configuration");
+    assertKnownKeys(value.coordination, ["explicitActivationOnly", "defaultMode"], "coordination configuration");
+  }
   if (value.quality !== undefined) assertObject(value.quality, "quality configuration");
+  if (value.quality !== undefined) {
+    assertKnownKeys(value.quality, ["crapThreshold", "mutationWorkers"], "quality configuration");
+  }
   const merged = {
-    ...CONFIG,
-    ...value,
     $schema: CONFIG.$schema,
     schemaVersion: CONFIG_VERSION,
-    orchestration: { ...CONFIG.orchestration, ...value.orchestration },
+    coordination: { ...CONFIG.coordination, ...value.coordination },
     quality: { ...CONFIG.quality, ...value.quality },
   };
-  const { orchestration, quality } = merged;
-  if (orchestration.explicitActivationOnly !== true || orchestration.defaultMode !== "normal"
-    || !Number.isInteger(orchestration.briefMaxBytes) || orchestration.briefMaxBytes < 1 || orchestration.briefMaxBytes > 16_384
-    || !Number.isInteger(orchestration.handoffMaxBytes) || orchestration.handoffMaxBytes < 1 || orchestration.handoffMaxBytes > 32_768
-    || typeof quality.crapThreshold !== "number" || quality.crapThreshold < 0
+  const legacy = value.orchestration;
+  const { coordination, quality } = merged;
+  if ((legacy?.explicitActivationOnly !== undefined && legacy.explicitActivationOnly !== true)
+    || (legacy?.defaultMode !== undefined && legacy.defaultMode !== "normal")
+    || coordination.explicitActivationOnly !== true || coordination.defaultMode !== "normal"
+    || typeof quality.crapThreshold !== "number" || !Number.isFinite(quality.crapThreshold) || quality.crapThreshold < 0
     || !Number.isInteger(quality.mutationWorkers) || quality.mutationWorkers < 1 || quality.mutationWorkers > 4) {
     throw new Error("Cannot update: configuration does not satisfy the current schema");
   }
@@ -225,21 +254,27 @@ export function validateOwnership(owner, action = "update") {
   }
   if (owner.schemaVersion !== 1 || owner.product !== PRODUCT || typeof owner.version !== "string"
     || owner.version.length === 0 || typeof owner.installationId !== "string"
-    || owner.installationId.length === 0 || owner.configVersion !== CONFIG_VERSION
+    || owner.installationId.length === 0 || ![1, CONFIG_VERSION].includes(owner.configVersion)
     || !Array.isArray(owner.resources) || !Array.isArray(owner.managedBlocks)
     || !Array.isArray(owner.ownedDirectories)) {
     throw new Error(`Cannot ${action}: ownership manifest is not a recognized agentic-core installation`);
   }
   const expectedBlocks = ["AGENTS.md", "CLAUDE.md"];
-  const resourcePathsValid = [EXPECTED_RESOURCE_PATHS, LEGACY_EXPECTED_RESOURCE_PATHS].some((expectedPaths) => (
+  const expectedResourceLayouts = owner.configVersion === CONFIG_VERSION
+    ? [EXPECTED_RESOURCE_PATHS]
+    : [LEGACY_EXPECTED_RESOURCE_PATHS, EARLY_LEGACY_EXPECTED_RESOURCE_PATHS];
+  const resourcePathsValid = expectedResourceLayouts.some((expectedPaths) => (
     owner.resources.length === expectedPaths.length
       && owner.resources.every((resource, index) => resource?.path === expectedPaths[index]
         && /^[0-9a-f]{64}$/.test(resource?.sha256))
   ));
+  const expectedOwnedDirectories = owner.configVersion === CONFIG_VERSION
+    ? OWNED_DIRECTORIES
+    : LEGACY_OWNED_DIRECTORIES;
   if (!resourcePathsValid
     || owner.managedBlocks.length !== expectedBlocks.length
-    || owner.ownedDirectories.length !== OWNED_DIRECTORIES.length
-    || owner.ownedDirectories.some((directory, index) => directory !== OWNED_DIRECTORIES[index])
+    || owner.ownedDirectories.length !== expectedOwnedDirectories.length
+    || owner.ownedDirectories.some((directory, index) => directory !== expectedOwnedDirectories[index])
     || owner.managedBlocks.some((block, index) => block?.path !== expectedBlocks[index]
       || block?.id !== "agentic-core"
       || block?.startMarker !== "<!-- AGENTIC_CORE_START -->"
@@ -319,6 +354,10 @@ export async function initialize(projectDirectory, {
       throw new Error(`Foreign installation detected: ${String(owner.product ?? "unknown product")} owns .agentic-core`);
     }
     throw new Error("agentic-core is already installed; use agentic-core update");
+  }
+
+  if (await fileKind(path.join(productRoot, "quality")) !== "missing") {
+    throw new Error("Foreign installation detected: .agentic-core/quality exists without proven ownership");
   }
 
   const conflicts = [];
@@ -461,6 +500,11 @@ export async function updateInstallation(projectDirectory, {
   }
   validateOwnership(owner);
 
+  if (owner.configVersion === 1
+    && await fileKind(path.join(productRoot, "quality")) !== "missing") {
+    throw new Error("Cannot update: .agentic-core/quality exists without proven ownership");
+  }
+
   const configPath = path.join(productRoot, "config.json");
   if (await fileKind(configPath) !== "file") throw new Error("Cannot update: configuration is not a file");
   let existingConfig;
@@ -488,6 +532,17 @@ export async function updateInstallation(projectDirectory, {
     if (kind !== "file" || sha256(await readFile(targetPath)) !== recorded.sha256) {
       divergences.push(resource.path);
     }
+  }
+  const currentResourcePaths = new Set(resources.map((resource) => resource.path));
+  const retiredResources = [];
+  for (const recorded of owner.resources) {
+    if (currentResourcePaths.has(recorded.path)) continue;
+    const targetPath = path.join(projectRoot, ...recorded.path.split("/"));
+    const kind = await fileKind(targetPath);
+    if (kind === "missing") continue;
+    const matches = kind === "file" && sha256(await readFile(targetPath)) === recorded.sha256;
+    if (!matches) divergences.push(recorded.path);
+    retiredResources.push({ path: recorded.path, targetPath, matches });
   }
 
   const hostWrites = [];
@@ -551,10 +606,10 @@ export async function updateInstallation(projectDirectory, {
     ownedDirectories: OWNED_DIRECTORIES,
     ...(runtime ? { runtime: runtime.manifest } : owner.runtime ? { runtime: owner.runtime } : {}),
   };
-  const runsPath = path.join(productRoot, "runs");
-  const runsKind = await fileKind(runsPath);
-  if (runsKind !== "missing" && runsKind !== "directory") {
-    throw new Error("Cannot update: persisted runs path is not a directory");
+  const legacyState = [];
+  for (const legacyDirectory of LEGACY_OWNED_DIRECTORIES.slice(0, 4)) {
+    const kind = await fileKind(path.join(projectRoot, ...legacyDirectory.split("/")));
+    if (kind !== "missing") legacyState.push({ path: legacyDirectory, kind });
   }
   const operations = [
     ...resources.map((resource) => ({
@@ -562,7 +617,9 @@ export async function updateInstallation(projectDirectory, {
       content: resource.content,
     })),
     ...hostWrites,
-    ...(runsKind === "missing" ? [] : [{ path: runsPath, type: "delete" }]),
+    ...retiredResources
+      .filter(({ matches }) => matches || force)
+      .map(({ targetPath }) => ({ path: targetPath, type: "delete" })),
     ...(runtime ? [{
       path: runtimePath,
       type: "replace_directory",
@@ -590,7 +647,14 @@ export async function updateInstallation(projectDirectory, {
         path: path.relative(projectRoot, hostWrite.path).replaceAll("\\", "/"),
         sha256: sha256(hostWrite.content),
       })),
-      ...(runsKind === "missing" ? [] : [{ action: "delete_owned_directory", path: ".agentic-core/runs" }]),
+      ...retiredResources
+        .filter(({ matches }) => matches || force)
+        .map(({ path: resourcePath }) => ({ action: "remove_retired_resource", path: resourcePath })),
+      ...legacyState.map(({ path: legacyPath, kind }) => ({
+        action: "preserve_legacy_state",
+        path: legacyPath,
+        kind,
+      })),
       ...(runtime ? [{
         action: "persist_runtime",
         path: runtime.manifest.path,
@@ -706,6 +770,12 @@ export async function uninstallInstallation(projectDirectory, {
   }
 
   for (const ownedDirectory of owner.ownedDirectories) {
+    if (ownedDirectory === ".agentic-core/runs") {
+      if (await fileKind(path.join(projectRoot, ...ownedDirectory.split("/"))) !== "missing") {
+        preserved.push(`legacy directory: ${ownedDirectory}`);
+      }
+      continue;
+    }
     const targetPath = path.join(projectRoot, ...ownedDirectory.split("/"));
     const kind = await fileKind(targetPath);
     if (kind === "missing") continue;
@@ -715,6 +785,10 @@ export async function uninstallInstallation(projectDirectory, {
     }
     operations.push({ path: targetPath, type: "delete" });
     actions.push(`owned directory: ${ownedDirectory}`);
+  }
+  if (!owner.ownedDirectories.includes(".agentic-core/runs")
+    && await fileKind(path.join(productRoot, "runs")) !== "missing") {
+    preserved.push("legacy directory: .agentic-core/runs");
   }
   operations.push({ path: ownershipPath, type: "delete" });
   actions.push("manifest: .agentic-core/ownership.json");

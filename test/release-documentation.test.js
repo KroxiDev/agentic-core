@@ -6,38 +6,20 @@ import test from "node:test";
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const read = (file) => readFile(path.join(repositoryRoot, file), "utf8");
 
-test("the shipped README covers the complete operational lifecycle", async () => {
+test("the README documents the maintained lifecycle and self-contained runtime", async () => {
   const readme = await read("README.md");
-
-  for (const expected of [
+  for (const heading of [
     "## Instalación",
     "## Actualización",
     "## Diagnóstico",
     "## Desinstalación",
     "## Formato de salida",
     "## Activación explícita y modo directo",
-    "## Reanudación y escaladas",
-    "## Blockers y advisory",
-    "## Calidad",
-    "## Requisitos y soporte",
-    "## Licencia",
-    "agentic-core resume",
-    "agentic-core approve-mode-change",
-  ]) {
-    assert.ok(readme.includes(expected), `README is missing ${expected}`);
-  }
+    "## QualitySession",
+    "## Comandos independientes de calidad",
+    "## Migración desde el runtime determinista anterior",
+  ]) assert.ok(readme.includes(heading), `README is missing ${heading}`);
 
-  assert.match(readme, /Windows 10 y Windows 11 son las únicas plataformas con soporte oficial/);
-  assert.match(readme, /CodeGraph y Engram son integraciones opcionales/);
-  assert.match(readme, /`coverage\.py` es opcional/);
-  assert.match(readme, /PLAN \(sin escrituras\)[\s\S]*LISTO[\s\S]*ADVERTENCIAS[\s\S]*ACCIONES MANUALES PENDIENTES/);
-  assert.match(readme, /Cuando la salida se captura, canaliza o redirige, se conserva la representación anterior/);
-  assert.match(readme, /launcher gestionado fuerza además esa salida estructurada/);
-  assert.match(readme, /solicitud sin activador[\s\S]*no crea coordinador, run, estado ni subagentes/);
-});
-
-test("the README documents only the verified one-shot GitHub maintenance flow", async () => {
-  const readme = await read("README.md");
   for (const command of [
     "npx.cmd --yes github:KroxiDev/agentic-core init . --yes",
     "npx.cmd --yes github:KroxiDev/agentic-core init . --yes --dry-run",
@@ -48,59 +30,78 @@ test("the README documents only the verified one-shot GitHub maintenance flow", 
     "npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair",
     "npx.cmd --yes github:KroxiDev/agentic-core uninstall . --dry-run",
     "npx.cmd --yes github:KroxiDev/agentic-core uninstall .",
-  ]) {
-    assert.ok(readme.includes(command), `README is missing ${command}`);
-  }
+  ]) assert.ok(readme.includes(command), `README is missing ${command}`);
+
   assert.match(readme, /\.agentic-core\/runtime/);
-  assert.match(readme, /no necesita estar publicado en npm/i);
-  assert.doesNotMatch(readme, /npm\.cmd install --save-dev github:KroxiDev\/agentic-core/);
-  assert.doesNotMatch(readme, /npm\.cmd uninstall @kroxidev\/agentic-core/);
+  assert.match(readme, /inventario final, hashes por archivo y `treeSha256`/);
+  assert.match(readme, /no necesita que el paquete esté publicado en npm/i);
+  assert.match(readme, /Windows 10 y Windows 11 son las únicas plataformas con soporte oficial/);
 });
 
-test("the documented graphs, budgets and automatic quality gates match the runtime", async () => {
+test("the README fixes semantic routing, roles, and permission boundaries", async () => {
   const readme = await read("README.md");
-
-  const rows = [
-    "| `light` | Implementador → Tester | 1; el segundo `changes_required` bloquea | No |",
-    "| `normal` | Planificador → Implementador → Verificador → Documentador | 2; el tercero bloquea | No |",
-    "| `full` | Explorador → Planificador → Implementador → Refactor → Tester → Evaluador → Documentador | 2; el tercero bloquea | Sí, únicamente en Evaluador |",
-  ];
-  for (const row of rows) assert.ok(readme.includes(row), `README graph drift: ${row}`);
-
-  assert.match(readme, /Documentador siempre se crea como agente nuevo en `normal` y `full`/);
-  assert.match(readme, /No existe un presupuesto global adicional de duración, cantidad de agentes, gates o invocaciones/);
-  assert.match(readme, /Mutation Testing es obligatorio únicamente para el Evaluador de `full`/);
-  assert.match(readme, /`direct`, `light` y `normal` no lo solicitan ni lo validan/);
+  for (const activator of ["`Orquesta`", "`/orquestar`", "`$orquestar`"]) {
+    assert.ok(readme.includes(activator));
+  }
+  assert.match(readme, /debe cargar y seguir la skill instalada `\.agents\/skills\/orquestar\/SKILL\.md`/);
+  assert.match(readme, /`Orquesta` sin modo significa `normal`/);
+  assert.match(readme, /solicitud sin esos activadores se ejecuta directamente/);
+  assert.match(readme, /como máximo un agente activo/);
+  assert.match(readme, /Planificador solo ante una decisión HOW material/);
+  assert.match(readme, /máximo dos ciclos de corrección/);
+  assert.match(readme, /Documentador solo si corresponde/);
+  assert.match(readme, /Planificador, Verificador y Evaluador solo leen producción/);
+  assert.match(readme, /políticas semánticas[\s\S]*no ACLs, sandboxes ni aislamiento técnico demostrado/);
+  assert.match(readme, /Operaciones destructivas, commit, push, publicación y cambios remotos requieren autorización explícita/);
 });
 
-test("the README fixes the closed contracts for materiality, isolation, state and differential CRAP", async () => {
+test("the README documents the complete prepare and verify contract", async () => {
   const readme = await read("README.md");
-
-  for (const state of [
-    "completed",
-    "completed_with_warnings",
-    "changes_required",
-    "needs_input",
-    "needs_mode_change",
-    "context_missing",
-    "failed",
-    "blocked",
-  ]) assert.match(readme, new RegExp(`\\b${state}\\b`));
+  for (const command of [
+    "agentic-quality prepare --mode normal --scope src --scope test",
+    "agentic-quality verify --session q_<id>",
+    "agentic-quality scan --target src",
+    "agentic-quality crap --target src",
+    "agentic-quality mutate --target src",
+    "agentic-quality mutation --target src",
+  ]) assert.ok(readme.includes(command), `README is missing ${command}`);
 
   for (const contract of [
-    /máximo configurable de 16 KiB/,
-    /máximo es 32 KiB/,
-    /exactamente un objeto JSON UTF-8/,
-    /primer hand-off inválido[\s\S]*`protocol_retry`[\s\S]*segundo termina como `failed`/,
-    /Autoridad concreta/,
-    /Alcance `changed` o `direct_dependency`/,
-    /Evidencia reproducible o prueba estática localizada/,
-    /Impacto material descrito/,
-    /Corrección mínima dentro del alcance/,
+    /QUALITY_SESSION id=q_<id> mode=normal baseline=<sha256>/,
+    /QUALITY_OK session=q_<id> tests=approved/,
+    /antes de modificar producción o tests/,
+    /cambios preexistentes y archivos relevantes no trackeados/,
+    /Excluye `.env`, secretos, datos personales, caches, binarios/,
+    /Repetir entradas idénticas reutiliza de forma segura la misma sesión/,
+    /símbolo nuevo debe permanecer en `C\.R\.A\.P\. <= 7`/,
     /deuda heredada `> 7` no puede empeorar/,
-    /archivo lógico, nombre cualificado, contenedor, tipo de declaración y desambiguador determinista/,
-    /tests descubiertos, configuración y comandos del runner, manifests y lockfiles/,
+    /baseline no atribuible nunca se sustituye por cero/,
+    /En `full`[\s\S]*Mutation Testing/,
+    /En `light` y `normal`, registra Mutation Testing como `not_applicable` sin ejecutarlo/,
+    /`reports\/latest\.json` identifica el único recibo vigente/,
+    /Ningún cambio ejecutable orquestado puede declararse completo sin un `QUALITY_OK` vigente/,
   ]) assert.match(readme, contract);
+
+  for (const exitCode of ["`0`", "`1`", "`2`", "`3`", "`4`", "`5`"]) {
+    assert.ok(readme.includes(`| ${exitCode} |`));
+  }
+  assert.match(readme, /AGENTIC_CORE_OUTPUT=json/);
+  assert.match(readme, /modelo nunca redacta ni entrega un payload JSON de entrada/);
+});
+
+test("the README explicitly documents the migration boundary", async () => {
+  const readme = await read("README.md");
+  for (const retired of [
+    "agentic-core start",
+    "agentic-core resume",
+    "agentic-core approve-mode-change",
+    "agentic-core submit-handoff",
+    "`protocol_retry`",
+  ]) assert.ok(readme.includes(retired), `README migration is missing ${retired}`);
+  assert.match(readme, /pérdida de replay, reanudación y aislamiento técnico es deliberada/);
+  assert.match(readme, /`runs` existentes se preservan como evidencia legacy/);
+  assert.match(readme, /no se cargan ni se crean en instalaciones nuevas/);
+  assert.match(readme, /Se conservan `init`, `update`, `doctor`, `uninstall`, transacciones y rollback/);
 });
 
 test("third-party notices exactly match the bundled runtime dependency inventory", async () => {
@@ -132,61 +133,34 @@ test("third-party notices exactly match the bundled runtime dependency inventory
   assert.match(notices, /ThirdPartyNoticeText\.txt/);
 });
 
-test("the native release checklist contains all six host and mode runs", async () => {
+test("manual validation covers both hosts without claiming security enforcement", async () => {
   const checklist = await read("adapters/manual-validation.md");
-  const expected = [
-    ["Codex", "light", "Implementador → Tester"],
-    ["Codex", "normal", "Planificador → Implementador → Verificador → Documentador"],
-    ["Codex", "full", "Explorador → Planificador → Implementador → Refactor → Tester → Evaluador → Documentador"],
-    ["Claude Code", "light", "Implementador → Tester"],
-    ["Claude Code", "normal", "Planificador → Implementador → Verificador → Documentador"],
-    ["Claude Code", "full", "Explorador → Planificador → Implementador → Refactor → Tester → Evaluador → Documentador"],
-  ];
-
-  for (const [host, mode, graph] of expected) {
-    assert.ok(
-      checklist.includes(`| ${host} | \`${mode}\` | ${graph} |`),
-      `manual validation is missing ${host} ${mode}`,
-    );
+  for (const host of ["Codex", "Claude Code"]) {
+    for (const mode of ["light", "normal", "full"]) {
+      assert.ok(checklist.includes(`| ${host} | \`${mode}\` |`), `missing ${host} ${mode}`);
+    }
   }
   assert.equal((checklist.match(/\| (?:Codex|Claude Code) \| `(?:light|normal|full)` \|/gu) ?? []).length, 6);
-  assert.match(checklist, /same candidate commit and tarball SHA-256/);
-  assert.match(checklist, /package inventory must contain exactly the intended 33 files/);
-  for (const command of [
-    "node .agentic-core/runtime-launcher.mjs agentic-core start",
-    "node .agentic-core/runtime-launcher.mjs agentic-core submit-handoff",
-    "node .agentic-core/runtime-launcher.mjs agentic-quality crap",
-    "node .agentic-core/runtime-launcher.mjs agentic-quality mutate",
-  ]) {
-    assert.ok(checklist.includes(command), `manual validation is missing ${command}`);
-  }
+  assert.match(checklist, /`Orquesta normal`[\s\S]*carga explícitamente `\.agents\/skills\/orquestar\/SKILL\.md`/);
+  assert.match(checklist, /no se acepta input JSON redactado por el modelo/);
+  assert.match(checklist, /No atribuir a estas frases aislamiento técnico, permisos efectivos/);
+  assert.match(checklist, /preservación de `runs`/);
+  assert.doesNotMatch(checklist, /agentic-core (?:start|resume|approve-mode-change|submit-handoff)/);
 });
 
-test("the orchestration skill prevents duplicate runtime transitions and transport leaks", async () => {
-  const [skill, readme] = await Promise.all([
+test("the architecture spec and skills agree on semantic coordination", async () => {
+  const [spec, orchestrationSkill, tddSkill] = await Promise.all([
+    read("agentic-core-spec.md"),
     read("skills/orquestar/SKILL.md"),
-    read("README.md"),
+    read("skills/agentic-tdd/SKILL.md"),
   ]);
-
-  assert.match(skill, /Capture and use stdout from that same invocation as the runtime result/);
-  assert.match(skill, /`intention` is never text/);
-  assert.match(skill, /never call `start` as a payload preflight/);
-  assert.match(skill, /never call `start` again/);
-  assert.match(skill, /never re-invoke the agent or seam/);
-  assert.match(skill, /\.agentic-core\/workers\/transport\//);
-  assert.match(skill, /delete it immediately after the command/);
-  for (const [role, profile] of [
-    ["Explorador", "agentic-read"],
-    ["Planificador", "agentic-read"],
-    ["Implementador", "agentic-production"],
-    ["Verificador", "agentic-tests"],
-    ["Refactor", "agentic-read"],
-    ["Tester", "agentic-tests"],
-    ["Evaluador", "agentic-read"],
-    ["Documentador", "agentic-docs"],
-  ]) {
-    assert.match(skill, new RegExp(`\\b${role}\\b[^\\n]*\\b${profile}\\b`));
-    assert.ok(readme.includes(`| ${role} | \`${profile}\` |`), `${role} profile mapping is undocumented`);
-  }
-  assert.match(skill, /Never infer a different profile from the current brief permissions/);
+  assert.match(spec, /Separar dos responsabilidades/);
+  assert.match(spec, /`QualitySession`: baseline previo, tests reales, C\.R\.A\.P\. diferencial/);
+  assert.match(spec, /No existe un port nuevo de host/);
+  assert.match(spec, /runtime distribuido se construye primero como conjunto canónico completo/);
+  assert.match(orchestrationSkill, /`light`: Implementador; TDD cuando corresponda; `verify` obligatorio/);
+  assert.match(orchestrationSkill, /solo lee producción; no la modifiques/);
+  assert.match(orchestrationSkill, /nunca briefs, handoffs ni protocolo JSON/);
+  assert.doesNotMatch(orchestrationSkill, /agentic-core (?:start|resume|approve-mode-change|submit-handoff)/);
+  assert.match(tddSkill, /No exige reproducir retrospectivamente el rojo/);
 });

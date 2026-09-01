@@ -1,6 +1,6 @@
 ---
 name: agentic-tdd
-description: Test-first workflow loaded only for an agentic-core Implementador whose brief changes executable behavior.
+description: Contrato test-first para un Implementador que cambia comportamiento ejecutable.
 ---
 
-Use the public seam approved by the brief. The brief permissions remain the authority for production and tests; this skill changes workflow, not scope. Produce a valid failing test, implement the minimum behavior, make it green, refactor, and rerun relevant validation. Follow `.agentic-core/golden-rules.md`; do not broaden the brief or select another role.
+Dentro del alcance autorizado, escribe primero una prueba válida que falle por el comportamiento ausente, ejecuta esa prueba, implementa lo mínimo para volverla verde, refactoriza si aporta claridad y repite la validación pertinente. El Implementador puede modificar únicamente producción y tests dentro del alcance. No exige reproducir retrospectivamente el rojo contra una copia de la producción anterior ni duplica la suite. Sigue `.agentic-core/golden-rules.md`.

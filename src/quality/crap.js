@@ -3,7 +3,11 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { analyzeSource } from "./ast.js";
 import { executeCoverage } from "./coverage.js";
-import { qualityInputInventory } from "./inputs.js";
+import {
+  qualityContentIsBinary,
+  qualityInputInventory,
+  qualityPathIsExcluded,
+} from "./inputs.js";
 import {
   analyzePythonSource,
   executePythonCoverage,
@@ -30,22 +34,28 @@ function logicalPath(projectRoot, filePath) {
 function crap(complexity, coverage) {
   return complexity ** 2 * (1 - coverage / 100) ** 3 + complexity;
 }
-async function sourceFiles(targetPath) {
-  const details = await lstat(targetPath);
+async function sourceFiles(targetPath, projectRoot) {
+  if (qualityPathIsExcluded(logicalPath(projectRoot, targetPath))) return [];
+  let details;
+  try {
+    details = await lstat(targetPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
   if (details.isFile()) {
-    return EXTENSIONS.has(path.extname(targetPath).toLowerCase())
-      ? [targetPath]
-      : [];
+    if (!EXTENSIONS.has(path.extname(targetPath).toLowerCase())) return [];
+    return qualityContentIsBinary(await readFile(targetPath)) ? [] : [targetPath];
   }
   if (!details.isDirectory()) return [];
   const files = [];
   for (const entry of await readdir(targetPath, { withFileTypes: true })) {
     if (entry.isDirectory() && IGNORED.has(entry.name)) continue;
     const child = path.join(targetPath, entry.name);
-    if (entry.isDirectory()) files.push(...await sourceFiles(child));
+    if (entry.isDirectory()) files.push(...await sourceFiles(child, projectRoot));
     else if (entry.isFile()
       && EXTENSIONS.has(path.extname(entry.name).toLowerCase())
-      && !entry.name.endsWith(".d.ts")) files.push(child);
+      && !entry.name.endsWith(".d.ts")) files.push(...await sourceFiles(child, projectRoot));
   }
   return files;
 }
@@ -88,8 +98,10 @@ function baselineDetail(baseline, stableId) {
     && typeof (detail.current?.crap ?? detail.crap) === "number");
 }
 function baselineHasFile(baseline, file) {
-  return baseline?.inputInventory?.entries?.some((entry) =>
-    entry.kind === "target_code" && entry.path === file);
+  if (baseline?.inputInventory?.entries?.some((entry) =>
+    entry.kind === "target_code" && entry.path === file)) return true;
+  return baseline?.declaredScopes?.some((scope) =>
+    scope === "." || file === scope || file.startsWith(`${scope}/`)) ?? false;
 }
 function differential(current, prior, baseline, file) {
   if (!baseline) {
@@ -139,19 +151,10 @@ function differential(current, prior, baseline, file) {
     rule: "non_blocking_missing_baseline",
   };
 }
-function selected(selection, file, symbol, stableId) {
-  const requested = selection?.get(file);
-  if (!requested?.size) return true;
-  return requested.has(symbol.name)
-    || requested.has(symbol.qualifiedName)
-    || requested.has(stableId);
-}
-
 export async function analyzeQuality({
   projectRoot,
   targets,
   tool,
-  selection,
   baseline,
   temporaryRoot,
 }) {
@@ -160,7 +163,7 @@ export async function analyzeQuality({
   const paths = [
     ...new Set((
       await Promise.all(targets.map((target) =>
-        sourceFiles(path.resolve(projectRoot, target))))
+        sourceFiles(path.resolve(projectRoot, target), projectRoot)))
     ).flat()),
   ].sort();
   const languages = new Set(paths.map((filePath) =>
@@ -188,22 +191,6 @@ export async function analyzeQuality({
       symbols,
     };
   }));
-  let resolvedSelections = 0;
-  for (const file of files) {
-    for (const symbol of file.symbols) {
-      const { stableId } = identityFor(file.file, symbol);
-      if (selected(selection, file.file, symbol, stableId)) {
-        resolvedSelections += 1;
-      }
-    }
-  }
-  if (selection?.size && resolvedSelections === 0) {
-    const error = new Error(
-      "Explicit symbol selection resolved no quality targets",
-    );
-    error.code = "selection_empty";
-    throw error;
-  }
   const coverage = language === "python" && runtime
     ? await executePythonCoverage(runtime, projectRoot, files, { temporaryRoot })
     : language === "javascript-typescript"
@@ -232,9 +219,6 @@ export async function analyzeQuality({
     const coveredLines = coverage.coveredByFile.get(key) ?? new Set();
     for (const symbol of file.symbols) {
       const identity = identityFor(file.file, symbol);
-      if (!selected(selection, file.file, symbol, identity.stableId)) {
-        continue;
-      }
       const covered = symbol.executableLines.filter((line) =>
         coveredLines.has(line)).length;
       const percentage = symbol.executableLines.length === 0
