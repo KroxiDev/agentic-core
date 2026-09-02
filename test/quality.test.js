@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,21 +9,19 @@ import test from "node:test";
 import { analyzeSource } from "../src/quality/ast.js";
 import { analyzeQuality, identityFor } from "../src/quality/crap.js";
 import { collectV8Coverage, runnerInvocation } from "../src/quality/coverage.js";
+import { createTestProject } from "./project-builder.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const qualityCli = path.join(repositoryRoot, "bin", "agentic-quality.js");
 
-async function fixture(t) {
-  const root = await mkdtemp(path.join(tmpdir(), "agentic quality "));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(path.join(root, "src"));
-  await mkdir(path.join(root, "test"));
-  await writeFile(path.join(root, "package.json"), JSON.stringify({
+const qualityJavaScriptProject = {
+  manifest: {
     type: "module",
     scripts: { test: "node --test" },
-  }));
-  await writeFile(path.join(root, "src", "subject.js"), `
+  },
+  files: {
+    "src/subject.js": `
 export function exercised(value) {
   if (value > 0) {
     return "positive";
@@ -45,8 +43,8 @@ export function uncovered(left, right) {
   }
   return right;
 }
-`);
-  await writeFile(path.join(root, "test", "subject.test.js"), `
+`,
+    "test/subject.test.js": `
 import assert from "node:assert/strict";
 import test from "node:test";
 import { boundary, exercised } from "../src/subject.js";
@@ -55,9 +53,10 @@ test("exercises both outcomes", () => {
   assert.equal(exercised(0), "other");
   assert.equal(boundary(0), 0);
 });
-`);
-  return root;
-}
+`,
+  },
+};
+
 async function run(args, cwd, env = process.env) {
   try {
     const result = await execFileAsync(process.execPath, [qualityCli, ...args], { cwd, env, encoding: "utf8" });
@@ -86,12 +85,9 @@ test("Jest and Vitest invocations exclude preserved agentic-core evidence", () =
   assert.equal(activeWorkerTest.test(path.join(workerRoot, ".agentic-core", "runs", "nested.test.js")), false);
 });
 
-async function pythonFixture(t, testSource) {
-  const root = await mkdtemp(path.join(tmpdir(), "agentic python quality "));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(path.join(root, "src"));
-  await mkdir(path.join(root, "tests"));
-  await writeFile(path.join(root, "src", "subject.py"), `
+const qualityPythonProject = {
+  files: {
+    "src/subject.py": `
 def exercised(value):
     if value > 0:
         return "positive"
@@ -110,8 +106,8 @@ def uncovered(left, right):
     if left and right:
         return left
     return right
-`);
-  await writeFile(path.join(root, "tests", "test_subject.py"), testSource ?? `
+`,
+    "tests/test_subject.py": `
 import unittest
 from src.subject import boundary, exercised
 
@@ -120,9 +116,9 @@ class SubjectTest(unittest.TestCase):
         self.assertEqual(exercised(1), "positive")
         self.assertEqual(exercised(0), "other")
         self.assertEqual(boundary(0), 0)
-`);
-  return root;
-}
+`,
+  },
+};
 
 test("TypeScript AST analysis matches JavaScript decisions and excludes type-only declarations", () => {
   const javascript = analyzeSource("subject.js", "function choose(a, b) { if (a && b) return a; return b; }");
@@ -133,7 +129,7 @@ test("TypeScript AST analysis matches JavaScript decisions and excludes type-onl
 });
 
 test("crap reports attributable zero coverage and fails above threshold seven", async (t) => {
-  const root = await fixture(t);
+  const root = await createTestProject(t, qualityJavaScriptProject);
   const result = await run(["crap", "--target", "src/subject.js"], root);
   assert.equal(result.code, 1, result.stderr || result.stdout);
   const report = JSON.parse(result.stdout);
@@ -161,7 +157,7 @@ test("scan and crap require exactly one explicit target", async () => {
 });
 
 test("a target with no attributable coverage is unsupported rather than zero", async (t) => {
-  const root = await fixture(t);
+  const root = await createTestProject(t, qualityJavaScriptProject);
   await writeFile(path.join(root, "src", "unused.js"), "export function unused() { return 1; }\n");
   const result = await run(["scan", "--target", "src/unused.js"], root);
   assert.equal(result.code, 2, result.stderr);
@@ -197,7 +193,7 @@ test("source maps attribute transformed V8 ranges to the original TypeScript sym
 });
 
 test("Python AST and unittest coverage preserve the common CRAP report contract", async (t) => {
-  const root = await pythonFixture(t);
+  const root = await createTestProject(t, qualityPythonProject);
   const result = await run(["crap", "--target", "src/subject.py"], root);
   if (/Python 3\.10/i.test(result.stderr)) return t.skip(result.stderr);
   assert.equal(result.code, 1, result.stderr || result.stdout);
@@ -217,7 +213,7 @@ test("Python AST and unittest coverage preserve the common CRAP report contract"
 });
 
 test("Python falls back to the standard-library tracer without installing dependencies", async (t) => {
-  const root = await pythonFixture(t);
+  const root = await createTestProject(t, qualityPythonProject);
   const env = { ...process.env, AGENTIC_CORE_PYTHON_BACKEND: "trace" };
   const result = await run(["scan", "--target", "src/subject.py"], root, env);
   if (/Python 3\.10/i.test(result.stderr)) return t.skip(result.stderr);
@@ -228,14 +224,20 @@ test("Python falls back to the standard-library tracer without installing depend
 });
 
 test("pytest is selected when the project explicitly uses it", async (t) => {
-  const root = await pythonFixture(t, `
+  const root = await createTestProject(t, {
+    ...qualityPythonProject,
+    files: {
+      ...qualityPythonProject.files,
+      "tests/test_subject.py": `
 import pytest
 from src.subject import exercised
 
 def test_exercised():
     assert exercised(1) == "positive"
     assert exercised(0) == "other"
-`);
+`,
+    },
+  });
   const result = await run(["scan", "--target", "src/subject.py"], root);
   if (/Python 3\.10/i.test(result.stderr) || /No module named pytest/i.test(result.stderr)) return t.skip(result.stderr);
   assert.equal(result.code, 1, result.stderr || result.stdout);
@@ -246,7 +248,7 @@ def test_exercised():
 });
 
 test("missing Python is explicit and does not affect JavaScript quality", async (t) => {
-  const pythonRoot = await pythonFixture(t);
+  const pythonRoot = await createTestProject(t, qualityPythonProject);
   const env = { ...process.env, AGENTIC_CORE_PYTHON: path.join(pythonRoot, "missing-python") };
   const unsupported = await run(["scan", "--target", "src/subject.py"], pythonRoot, env);
   assert.equal(unsupported.code, 2, unsupported.stderr || unsupported.stdout);
@@ -255,7 +257,7 @@ test("missing Python is explicit and does not affect JavaScript quality", async 
   assert.equal(report.backend, "unavailable");
   assert.deepEqual(report.summary.unsupportedFiles, ["src/subject.py"]);
 
-  const javascriptRoot = await fixture(t);
+  const javascriptRoot = await createTestProject(t, qualityJavaScriptProject);
   const javascript = await run(["scan", "--target", "src/subject.js"], javascriptRoot, env);
   assert.notEqual(javascript.code, 2, javascript.stderr || javascript.stdout);
 });
@@ -288,7 +290,7 @@ class First { same(value) { return value + 1; } }
 });
 
 test("quality freshness inventories every relevant input class", async (t) => {
-  const root = await fixture(t);
+  const root = await createTestProject(t, qualityJavaScriptProject);
   await writeFile(
     path.join(root, "package-lock.json"),
     JSON.stringify({ lockfileVersion: 3 }),
@@ -327,7 +329,7 @@ test("quality freshness inventories every relevant input class", async (t) => {
 });
 
 test("a non-attributable baseline never invents zero", async (t) => {
-  const root = await fixture(t);
+  const root = await createTestProject(t, qualityJavaScriptProject);
   const report = await analyzeQuality({
     projectRoot: root,
     targets: ["src/subject.js"],
