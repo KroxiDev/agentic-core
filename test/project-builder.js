@@ -49,7 +49,7 @@ async function findPython(root) {
 }
 
 export async function createTestProject(t, { files = {}, manifest, pythonVenv = false } = {}) {
-  const root = await mkdtemp(path.join(tmpdir(), "agentic-core-test-project-"));
+  const root = await mkdtemp(path.join(tmpdir(), "agentic core test project "));
   const cleanup = () => rm(root, { recursive: true, force: true });
 
   try {
