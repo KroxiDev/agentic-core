@@ -7,6 +7,12 @@ import { promisify } from "node:util";
 import { TraceMap, eachMapping } from "@jridgewell/trace-mapping";
 
 const execFileAsync = promisify(execFile);
+
+function testTimeout(variable, fallback) {
+  if (process.env.NODE_ENV !== "test") return fallback;
+  const value = Number.parseInt(process.env[variable] ?? "", 10);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
 function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 // A positional Jest filter narrows discovery without replacing the project's configured ignore patterns.
 function activeProjectTestPath(projectRoot) {
@@ -127,7 +133,7 @@ export async function executeTests(projectRoot, { timeout = 30_000 } = {}) {
   return { runner: invocation.runner };
 }
 export async function executeCoverage(projectRoot, files, {
-  timeout = 30_000,
+  timeout = testTimeout("AGENTIC_CORE_TEST_BASELINE_TIMEOUT_MS", 30_000),
   temporaryRoot = tmpdir(),
 } = {}) {
   await mkdir(temporaryRoot, { recursive: true });
