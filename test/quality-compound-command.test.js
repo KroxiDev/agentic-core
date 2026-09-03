@@ -68,6 +68,10 @@ if (classify(1) !== "positive" || classify(0) !== "other") {
     JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).scripts.test,
     declaredTestCommand,
   );
+  // Positive control: both fixtures that would leave a trace are present, so
+  // the absences below record the analysis skipping them, not fixture rot.
+  await access(path.join(root, "scripts", "prepare-tests.js"));
+  await access(path.join(root, "vitest.config.mjs"));
   await assert.rejects(
     access(path.join(root, "pretest-ran.txt")),
     { code: "ENOENT" },
