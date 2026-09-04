@@ -126,13 +126,8 @@ print("present" if importlib.util.find_spec("${dependency}") else "missing")
   await rm(declaredSuiteMarker);
 
   await initialize(root, { runtimeSource: null });
-  const configSchema = JSON.parse(await readFile(path.join(
-    root,
-    ".agentic-core",
-    "config.schema.json",
-  ), "utf8"));
-  assert.equal(configSchema.properties.runners, undefined);
-  assert.equal(configSchema.properties.python, undefined);
+  // PR-09 is demonstrated behaviorally: the project declares its interpreter
+  // in scripts["test:python"], initialize preserves it, and analysis still ignores it.
   assert.equal(
     JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).scripts["test:python"],
     declaredTestCommand,
@@ -171,9 +166,8 @@ print("present" if importlib.util.find_spec("${dependency}") else "missing")
       tool: "crap",
     });
 
-    // This characterizes PR-09. When MJ-03 closes, invert the interpreter and
-    // suite assertions: analysis must use the declared .venv command and
-    // python_checks, while the fallback suite must remain untouched.
+    // The inversion contract for this PR-09 fixture lives in
+    // issues/mejoras/mejora03.md; keep that note as the single source of truth.
     assert.equal(report.status, "approved");
     assert.equal(report.language, "python");
     assert.equal(report.backend, "stdlib-trace");

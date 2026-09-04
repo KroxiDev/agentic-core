@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { createTestProject } from "./project-builder.js";
+import { createTestProject, isMissingVenvModule } from "./project-builder.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -80,6 +80,21 @@ test("rejects every path that could escape or target the project root", async (t
     );
   }
   await assert.rejects(access(outside), { code: "ENOENT" });
+});
+
+test("classifies only missing venv module diagnostics as Python unavailable", () => {
+  assert.equal(isMissingVenvModule({
+    stderr: "/usr/bin/python3: No module named venv\n",
+  }), true);
+  assert.equal(isMissingVenvModule(new Error(
+    "The virtual environment was not created successfully because ensurepip is not available.",
+  )), true);
+  assert.equal(isMissingVenvModule({
+    stderr: "Error: [Errno 13] Permission denied: '/workspace/.venv'\n",
+  }), false);
+  assert.equal(isMissingVenvModule({
+    stderr: "/usr/bin/python3: No module named venv_support\n",
+  }), false);
 });
 
 test("creates a minimal real Python virtual environment when Python is available", async (t) => {

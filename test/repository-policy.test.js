@@ -16,11 +16,22 @@ test("repository GitHub policy is portable and preserves remote-write safety", a
     repositoryFile(".gitignore"),
   ]);
   const managedBlockStart = agents.indexOf("<!-- AGENTIC_CORE_START -->");
+  const withoutCarriageReturns = (value) => value.replace(/\r\n/gu, "\n").trimEnd();
+
+  assert.equal(withoutCarriageReturns("shared\r\npolicy"), withoutCarriageReturns("shared\npolicy"));
+  assert.notEqual(withoutCarriageReturns("shared\npolicy"), withoutCarriageReturns("changed\npolicy"));
 
   assert.notEqual(managedBlockStart, -1);
-  assert.equal(agents.slice(managedBlockStart).trimEnd(), claude.trimEnd());
+  assert.equal(
+    withoutCarriageReturns(agents.slice(managedBlockStart)),
+    withoutCarriageReturns(claude),
+  );
 
   const sharedPolicy = agents.slice(0, managedBlockStart);
+  // The ticket 13 requirement: the concrete personal server leaves the shared policy.
+  assert.doesNotMatch(sharedPolicy, /github_personal/);
+  // Deliberately broader tripwire: any MCP mention here requires conscious review,
+  // even when portable and not itself a personal-configuration leak.
   assert.doesNotMatch(sharedPolicy, /MCP/);
   assert.match(sharedPolicy, /La cuenta GitHub exclusiva de este repositorio es `KroxiDev`/);
   assert.match(sharedPolicy, /El repositorio remoto canónico es `KroxiDev\/agentic-core`/);
