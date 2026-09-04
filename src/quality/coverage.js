@@ -8,7 +8,8 @@ import { TraceMap, eachMapping } from "@jridgewell/trace-mapping";
 
 const execFileAsync = promisify(execFile);
 
-function testTimeout(variable, fallback) {
+// Test-only seam: outside NODE_ENV=test every caller keeps its hard-coded fallback.
+export function testTimeout(variable, fallback) {
   if (process.env.NODE_ENV !== "test") return fallback;
   const value = Number.parseInt(process.env[variable] ?? "", 10);
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
