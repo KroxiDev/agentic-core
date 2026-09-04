@@ -101,6 +101,37 @@ test("doctor reports a complete healthy installation with actionable runtime evi
   assert.equal(report.projectRoot, path.resolve(project));
 });
 
+test("doctor reports an outdated canonical skill until update installs the packaged revision", async (t) => {
+  const project = await createProject(t);
+  assert.equal((await runCore(["init", project])).code, 0);
+  const skillRelativePath = ".agents/skills/orquestar/SKILL.md";
+  const skillPath = path.join(project, ...skillRelativePath.split("/"));
+  const manifestPath = path.join(project, ".agentic-core", "ownership.json");
+  const packagedSkill = await readFile(path.join(repositoryRoot, "skills", "orquestar", "SKILL.md"));
+  const previousPackagedSkill = Buffer.from("previous packaged orquestar skill\n");
+  await writeFile(skillPath, previousPackagedSkill);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const recordedSkill = manifest.resources.find(({ path: resourcePath }) => resourcePath === skillRelativePath);
+  assert.ok(recordedSkill);
+  recordedSkill.sha256 = sha256(previousPackagedSkill);
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  const diagnosisResult = await runCore(["doctor", project]);
+  const diagnosis = reportOf(diagnosisResult);
+  assert.equal(diagnosisResult.code, 1);
+  const skillCheck = findCheck(diagnosis.diagnosis, `resource:${skillRelativePath}`);
+  assert.equal(skillCheck.status, "error");
+  assert.match(skillCheck.message, /differs from the current packaged resource/);
+  assert.deepEqual(await readFile(skillPath), previousPackagedSkill);
+
+  assert.equal((await runCore(["update", project])).code, 0);
+  assert.deepEqual(await readFile(skillPath), packagedSkill);
+  const currentResult = await runCore(["doctor", project]);
+  const current = reportOf(currentResult);
+  assert.equal(currentResult.code, 0);
+  assert.equal(findCheck(current.diagnosis, `resource:${skillRelativePath}`).status, "ok");
+});
+
 test("doctor rejects a self-hashed latest report that does not belong to its session", async (t) => {
   const project = await createProject(t);
   assert.equal((await runCore(["init", project])).code, 0);

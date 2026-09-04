@@ -37,6 +37,20 @@ test("orquestar is semantic, mode-complete, and has no retired protocol", async 
   for (const role of ["Planificador", "Implementador", "Verificador", "Evaluador", "Documentador"]) {
     assert.match(skill, new RegExp(role));
   }
+  const roleProfiles = new Map([
+    ["Planificador", "agentic-read"],
+    ["Evaluador", "agentic-read"],
+    ["Implementador", "agentic-production"],
+    ["Verificador", "agentic-tests"],
+    ["Documentador", "agentic-docs"],
+  ]);
+  const skillLines = skill.split(/\r?\n/u);
+  for (const [role, profile] of roleProfiles) {
+    assert.ok(
+      skillLines.some((line) => line.includes(role) && line.includes(`\`${profile}\``)),
+      `${role} must map explicitly to ${profile}`,
+    );
+  }
   assert.match(skill, /como máximo un agente activo/);
   assert.match(skill, /agentic-quality prepare/);
   assert.match(skill, /agentic-quality verify/);
@@ -44,6 +58,13 @@ test("orquestar is semantic, mode-complete, and has no retired protocol", async 
   assert.match(skill, /QUALITY_OK/);
   assert.doesNotMatch(skill, /agentic-core (?:start|resume|approve-mode-change|submit-handoff)/);
   assert.doesNotMatch(skill, /protocol_retry|sandbox_mode|HOST_SANDBOX|request_permissions|raw final/i);
+});
+
+test("Claude discovery keeps the shared orquestar skill as its sole canonical source", async () => {
+  const shim = await text("adapters/claude/skills/orquestar/SKILL.md");
+  assert.match(shim, /Read and follow `.agents\/skills\/orquestar\/SKILL\.md` as the sole canonical skill/);
+  assert.doesNotMatch(shim, /Planificador|Implementador|Verificador|Evaluador|Documentador/);
+  assert.doesNotMatch(shim, /agentic-(?:read|production|tests|docs)/);
 });
 
 test("Codex and Claude profiles share the same semantic responsibilities", async () => {
