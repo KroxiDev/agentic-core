@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { analyzeSource } from "./ast.js";
-import { executeCoverage, executeTests } from "./coverage.js";
+import { executeCoverage, executeTests, testTimeout } from "./coverage.js";
 import {
   captureQualityCheckpoint,
   qualityContentIsBinary,
@@ -45,11 +45,6 @@ const BINARY_MUTATIONS = new Map([
 ]);
 
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
-function testTimeout(variable, fallback) {
-  if (process.env.NODE_ENV !== "test") return fallback;
-  const value = Number.parseInt(process.env[variable] ?? "", 10);
-  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
 function logicalPath(root, filePath) { return path.relative(root, filePath).split(path.sep).join("/"); }
 function scriptKind(filePath) {
   const extension = path.extname(filePath).toLowerCase();
