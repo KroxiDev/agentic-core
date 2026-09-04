@@ -129,9 +129,23 @@ La coordinación mantiene como máximo un agente activo. Los roles reciben alcan
 
 El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Planificador, Verificador y Evaluador solo leen producción y no la modifican. El Documentador modifica únicamente documentación.
 
-Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Los adapters Codex y Claude traducen discovery y formato nativos, pero comparten la misma política. Operaciones destructivas, commit, push, publicación y cambios remotos requieren autorización explícita.
+Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Los adapters Codex y Claude traducen discovery y formato nativos, pero comparten la misma política.
 
 El mapping rol → perfil vive en la skill canónica `.agents/skills/orquestar/SKILL.md`; el shim de discovery de Claude solo remite a ella. Si el paquete en ejecución contiene una revisión distinta de ese recurso instalado, `doctor` informa la divergencia hasta que `agentic-core update` instala transaccionalmente la revisión del paquete. El perfil `agentic-docs` mantiene “solo documentación” como instrucción semántica, pero todavía no impone una restricción técnica de escritura por ruta; reforzar ese límite queda pendiente.
+
+### Límites de permisos
+
+Las operaciones marcadas requieren autorización explícita del usuario; la coordinación no las ejecuta por iniciativa propia.
+
+| Operación | Requiere autorización explícita |
+| --- | --- |
+| Lectura y análisis | No |
+| Edición dentro del alcance | No |
+| Operaciones destructivas | Sí |
+| `commit` | Sí |
+| `push` | Sí |
+| Publicación | Sí |
+| Cambios remotos | Sí |
 
 ## QualitySession
 

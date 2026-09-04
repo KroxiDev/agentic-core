@@ -204,8 +204,8 @@ function receiptFields(section, receipt) {
 Literal coverage replaced here remains traceable as follows:
 - lifecycle, bootstrap, runtime, and platform wording -> command headings, CLI tables,
   support table, parser probes, plus behavioral coverage in cli/init/package/transaction tests;
-- routing, roles, and permission wording -> activation identifiers and mode table here,
-  plus behavioral coverage in semantic-coordination.test.js;
+- routing, roles, and permission wording -> activation identifiers, mode table, and the
+  authorization-boundary table here, plus behavioral coverage in semantic-coordination.test.js;
 - QualitySession wording -> command schemas, receipt fields, exit-code table, and
   quality-session.test.js behavior;
 - migration wording -> retired/maintained identifier sets here and negative CLI plus
@@ -324,6 +324,19 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
     "verify",
     "not_applicable",
   ], "mode contract");
+
+  assert.deepEqual(markdownTable(
+    headingSection(readme, "Límites de permisos"),
+    ["Operación", "Requiere autorización explícita"],
+  ), [
+    ["Lectura y análisis", "No"],
+    ["Edición dentro del alcance", "No"],
+    ["Operaciones destructivas", "Sí"],
+    ["commit", "Sí"],
+    ["push", "Sí"],
+    ["Publicación", "Sí"],
+    ["Cambios remotos", "Sí"],
+  ]);
 
   const quality = headingSection(readme, "QualitySession");
   assert.deepEqual(receiptFields(quality, "QUALITY_SESSION"), ["id", "mode", "baseline"]);
