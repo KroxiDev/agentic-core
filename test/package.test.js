@@ -139,7 +139,7 @@ test("both CLI entry points work from an installed package", async (t) => {
   }
 
   const maintenanceBinary = path.join(installedRoot, "bin", "agentic-core.js");
-  await execFileAsync(process.execPath, [maintenanceBinary, "init", consumer, "--yes"], {
+  await execFileAsync(process.execPath, [maintenanceBinary, "init", consumer], {
     cwd: consumer,
     encoding: "utf8",
   });
@@ -181,13 +181,13 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
 
   const previewProject = await temporaryDirectory(t, "agentic core bootstrap preview ");
   await writeFile(path.join(previewProject, ".hidden"), Buffer.from([0x00, 0xff]));
-  const preview = JSON.parse((await runCandidate(previewProject, ["init", ".", "--yes", "--dry-run"])).stdout);
+  const preview = JSON.parse((await runCandidate(previewProject, ["init", ".", "--dry-run"])).stdout);
   assert.equal(preview.status, "ready");
   assert.deepEqual(await readdir(previewProject), [".hidden"]);
   assert.deepEqual(await readFile(path.join(previewProject, ".hidden")), Buffer.from([0x00, 0xff]));
 
   const project = await temporaryDirectory(t, "agentic core bootstrap consumer ");
-  const initialized = await runCandidate(project, ["init", ".", "--yes"]);
+  const initialized = await runCandidate(project, ["init", "."]);
   assert.match(initialized.stdout, /Installed agentic-core 0\.2\.0/);
   for (const rootPackageFile of ["package.json", "package-lock.json", "node_modules"]) {
     await assert.rejects(lstat(path.join(project, rootPackageFile)), { code: "ENOENT" });

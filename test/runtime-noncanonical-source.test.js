@@ -123,14 +123,14 @@ test("PR-10: a non-canonical ephemeral source succeeds before prepare fails with
   await copyRunnablePackage(packageRoot);
 
   const previewResult = await runPackage(packageRoot, [
-    "init", project, "--yes", "--dry-run",
+    "init", project, "--dry-run",
   ], bootstrap);
   const preview = JSON.parse(previewResult.stdout);
   assert.equal(preview.status, "ready");
   assert.equal(Object.hasOwn(preview, "runtime"), false);
   assert.equal(Object.hasOwn(preview.manifest, "runtime"), false);
 
-  const installed = await runPackage(packageRoot, ["init", project, "--yes"], bootstrap);
+  const installed = await runPackage(packageRoot, ["init", project], bootstrap);
   assert.match(installed.stdout, /Installed agentic-core 0\.2\.0/u);
   assert.equal(installed.stderr, "");
 
@@ -170,14 +170,14 @@ test("PR-10: a project-local dependency masks the non-autonomous installation mo
   await copyRunnablePackage(packageRoot);
 
   const previewResult = await runPackage(packageRoot, [
-    "init", project, "--yes", "--dry-run",
+    "init", project, "--dry-run",
   ], project);
   const preview = JSON.parse(previewResult.stdout);
   assert.equal(preview.status, "ready");
   assert.equal(Object.hasOwn(preview, "runtime"), false);
   assert.equal(Object.hasOwn(preview.manifest, "runtime"), false);
 
-  const installed = await runPackage(packageRoot, ["init", project, "--yes"], project);
+  const installed = await runPackage(packageRoot, ["init", project], project);
   assert.match(installed.stdout, /Installed agentic-core 0\.2\.0/u);
   assert.equal(installed.stderr, "");
 

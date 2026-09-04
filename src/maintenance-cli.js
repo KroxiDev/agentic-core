@@ -8,7 +8,7 @@ import { initialize, uninstallInstallation, updateInstallation } from "./init.js
 import { getVersion } from "./version.js";
 
 const HELP = `Usage:
-  agentic-core init [directory] [--yes] [--replace-conflicts] [--dry-run]
+  agentic-core init [directory] [--replace-conflicts] [--dry-run]
   agentic-core update [directory] [--force] [--dry-run]
   agentic-core uninstall [directory] [--dry-run] [--force]
   agentic-core doctor [directory] [--repair] [--dry-run]
@@ -34,7 +34,7 @@ export async function runMaintenanceCli(args, io = process) {
       return 2;
     }
     for (const option of options) {
-      if (option !== "--yes" && option !== "--replace-conflicts" && option !== "--dry-run") {
+      if (option !== "--replace-conflicts" && option !== "--dry-run") {
         io.stderr.write(`Unknown option: ${option}\n`);
         return 2;
       }
