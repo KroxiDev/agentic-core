@@ -26,7 +26,7 @@ export function isMissingVenvModule(error) {
   const diagnostic = stderr || (error && typeof error === "object" && typeof error.message === "string"
     ? error.message
     : "");
-  return /(?:No module named venv|ensurepip is not available)(?:[.\s]|$)/u.test(diagnostic);
+  return /(?:No module named venv|ensurepip is not\s+available)(?:[.\s]|$)/u.test(diagnostic);
 }
 
 function resolveProjectPath(root, relativePath) {

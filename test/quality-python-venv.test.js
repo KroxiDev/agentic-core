@@ -166,8 +166,9 @@ print("present" if importlib.util.find_spec("${dependency}") else "missing")
       tool: "crap",
     });
 
-    // The inversion contract for this PR-09 fixture lives in
-    // issues/mejoras/mejora03.md; keep that note as the single source of truth.
+    // This characterizes PR-09. When MJ-03 closes, invert the interpreter and
+    // suite assertions: analysis must use the declared .venv command and
+    // python_checks, while the fallback suite must remain untouched.
     assert.equal(report.status, "approved");
     assert.equal(report.language, "python");
     assert.equal(report.backend, "stdlib-trace");

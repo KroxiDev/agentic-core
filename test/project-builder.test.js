@@ -90,6 +90,20 @@ test("classifies only missing venv module diagnostics as Python unavailable", ()
     "The virtual environment was not created successfully because ensurepip is not available.",
   )), true);
   assert.equal(isMissingVenvModule({
+    stderr: [
+      "The virtual environment was not created successfully because ensurepip is not",
+      "available.  On Debian/Ubuntu systems, you need to install the python3-venv",
+      "package using the following command.",
+      "",
+      "    apt install python3.10-venv",
+      "",
+      "You may need to use sudo with that command.  After installing the python3-venv",
+      "package, recreate your virtual environment.",
+      "",
+      "Failing command: ['/tmp/x/.venv/bin/python3', '-Im', 'ensurepip', '--upgrade', '--default-pip']",
+    ].join("\n"),
+  }), true);
+  assert.equal(isMissingVenvModule({
     stderr: "Error: [Errno 13] Permission denied: '/workspace/.venv'\n",
   }), false);
   assert.equal(isMissingVenvModule({

@@ -138,12 +138,12 @@ function fencedLines(content) {
 }
 
 function assertIncludesEach(actual, expected, label) {
-  assert.ok(Array.isArray(actual), `${label ?? "actual"} must be an array`);
+  assert.ok(Array.isArray(actual), `${label} must be an array`);
   for (const value of expected) assert.ok(actual.includes(value), `${label} is missing ${value}`);
 }
 
 function assertContainsEach(haystack, expected, label) {
-  assert.equal(typeof haystack, "string", `${label ?? "haystack"} must be a string`);
+  assert.equal(typeof haystack, "string", `${label} must be a string`);
   for (const value of expected) assert.ok(haystack.includes(value), `${label} is missing ${value}`);
 }
 
@@ -495,10 +495,6 @@ test("manual validation covers both hosts without claiming security enforcement"
 });
 
 test("the architecture spec and skills agree on semantic coordination", async () => {
-  assert.throws(
-    () => assertIncludesEach("highlight", ["light"], "element inclusion"),
-    /element inclusion must be an array/u,
-  );
   const [spec, orchestrationSkill, tddSkill] = await Promise.all([
     read("agentic-core-spec.md"),
     read("skills/orquestar/SKILL.md"),
@@ -545,4 +541,11 @@ test("the architecture spec and skills agree on semantic coordination", async ()
   assert.equal(tddSkill.match(/^name:\s*(\S+)\s*$/mu)?.[1], "agentic-tdd");
   assertIncludesEach(inlineCode(tddSkill), [".agentic-core/golden-rules.md"], "TDD identifiers");
   assert.doesNotMatch(orchestrationSkill, /agentic-core (?:start|resume|approve-mode-change|submit-handoff)/);
+});
+
+test("assertIncludesEach rejects a string in place of an array", () => {
+  assert.throws(
+    () => assertIncludesEach("highlight", ["light"], "element inclusion"),
+    /element inclusion must be an array/u,
+  );
 });

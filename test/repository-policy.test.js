@@ -9,6 +9,15 @@ async function repositoryFile(relativePath) {
   return readFile(path.join(repositoryRoot, relativePath), "utf8");
 }
 
+function withoutCarriageReturns(value) {
+  return value.replace(/\r\n/gu, "\n").trimEnd();
+}
+
+test("line-ending normalization equates CRLF and LF but preserves content differences", () => {
+  assert.equal(withoutCarriageReturns("shared\r\npolicy"), withoutCarriageReturns("shared\npolicy"));
+  assert.notEqual(withoutCarriageReturns("shared\npolicy"), withoutCarriageReturns("changed\npolicy"));
+});
+
 test("repository GitHub policy is portable and preserves remote-write safety", async () => {
   const [agents, claude, gitignore] = await Promise.all([
     repositoryFile("AGENTS.md"),
@@ -16,10 +25,6 @@ test("repository GitHub policy is portable and preserves remote-write safety", a
     repositoryFile(".gitignore"),
   ]);
   const managedBlockStart = agents.indexOf("<!-- AGENTIC_CORE_START -->");
-  const withoutCarriageReturns = (value) => value.replace(/\r\n/gu, "\n").trimEnd();
-
-  assert.equal(withoutCarriageReturns("shared\r\npolicy"), withoutCarriageReturns("shared\npolicy"));
-  assert.notEqual(withoutCarriageReturns("shared\npolicy"), withoutCarriageReturns("changed\npolicy"));
 
   assert.notEqual(managedBlockStart, -1);
   assert.equal(
