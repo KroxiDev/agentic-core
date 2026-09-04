@@ -10,6 +10,7 @@ __pycache__/
 *.py[cod]
 
 # Local configuration and logs
+CLAUDE.local.md
 .env
 .env.*
 !.env.example
