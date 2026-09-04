@@ -133,6 +133,10 @@ async function runCrap(root, target) {
   }
 }
 
+// This characterizes PR-17. When MJ-13 closes, invert both characterizations
+// below: each procedural file must expose a measured <module> symbol and a
+// measured verdict; move the zero-symbol warning expectation to a truly empty
+// scope.
 function assertSilentNotApplicable(result, {
   backends,
   language,
@@ -168,36 +172,30 @@ function assertSilentNotApplicable(result, {
   );
 }
 
-test("PR-17: procedural files pass silently without any measured symbol", async (t) => {
-  const javaScriptRoot = await createTestProject(t, javaScriptProject);
-  const javaScriptResult = await runCrap(
-    javaScriptRoot,
-    "src/procedural-subject.js",
-  );
+test("PR-17: a JavaScript procedural file passes silently without any measured symbol", async (t) => {
+  const root = await createTestProject(t, javaScriptProject);
+  const result = await runCrap(root, "src/procedural-subject.js");
 
-  // This characterizes PR-17. When MJ-13 closes, invert this characterization:
-  // each procedural file must expose a measured <module> symbol and a measured
-  // verdict; move the zero-symbol warning expectation to a truly empty scope.
-  assertSilentNotApplicable(javaScriptResult, {
+  assertSilentNotApplicable(result, {
     backends: ["v8"],
     language: "javascript-typescript",
     runner: "node:test",
     target: "src/procedural-subject.js",
   });
+});
 
-  const pythonRoot = await createTestProject(t, pythonProject);
-  if (await findPython(pythonRoot)) {
-    const pythonResult = await runCrap(
-      pythonRoot,
-      "src/procedural_subject.py",
-    );
-    assertSilentNotApplicable(pythonResult, {
-      backends: ["coverage.py", "stdlib-trace"],
-      language: "python",
-      runner: "unittest",
-      target: "src/procedural_subject.py",
-    });
-  } else {
-    t.diagnostic("Python 3.10 or newer is unavailable; optional backend coverage skipped");
-  }
+// The Python backend shares the defect, so it is characterized on its own test:
+// an unavailable interpreter must show up as a skip, never as a silent pass.
+test("PR-17: a Python procedural file passes silently without any measured symbol", async (t) => {
+  const root = await createTestProject(t, pythonProject);
+  if (!await findPython(root)) return t.skip("Python 3.10 or newer is unavailable");
+
+  const result = await runCrap(root, "src/procedural_subject.py");
+
+  assertSilentNotApplicable(result, {
+    backends: ["coverage.py", "stdlib-trace"],
+    language: "python",
+    runner: "unittest",
+    target: "src/procedural_subject.py",
+  });
 });
