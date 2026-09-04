@@ -3,6 +3,7 @@ node_modules/
 
 # Generated output and local artifacts
 .codex-temp/
+.agentic-core/quality/
 coverage/
 dist/
 *.tgz

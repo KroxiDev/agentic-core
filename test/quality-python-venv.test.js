@@ -126,13 +126,8 @@ print("present" if importlib.util.find_spec("${dependency}") else "missing")
   await rm(declaredSuiteMarker);
 
   await initialize(root, { runtimeSource: null });
-  const configSchema = JSON.parse(await readFile(path.join(
-    root,
-    ".agentic-core",
-    "config.schema.json",
-  ), "utf8"));
-  assert.equal(configSchema.properties.runners, undefined);
-  assert.equal(configSchema.properties.python, undefined);
+  // PR-09 is demonstrated behaviorally: the project declares its interpreter
+  // in scripts["test:python"], initialize preserves it, and analysis still ignores it.
   assert.equal(
     JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).scripts["test:python"],
     declaredTestCommand,

@@ -137,8 +137,14 @@ function fencedLines(content) {
     .flatMap((match) => match[1].split(/\r?\n/u));
 }
 
-function assertIncludesEvery(actual, expected, label) {
+function assertIncludesEach(actual, expected, label) {
+  assert.ok(Array.isArray(actual), `${label} must be an array`);
   for (const value of expected) assert.ok(actual.includes(value), `${label} is missing ${value}`);
+}
+
+function assertContainsEach(haystack, expected, label) {
+  assert.equal(typeof haystack, "string", `${label} must be a string`);
+  for (const value of expected) assert.ok(haystack.includes(value), `${label} is missing ${value}`);
 }
 
 function compareCodeUnits(left, right) {
@@ -262,7 +268,7 @@ test("the README keeps lifecycle, support, and runtime commitments as structure"
   const topLevelHeadings = markdownSections(readme)
     .filter(({ level }) => level === 2)
     .map(({ title }) => title);
-  assertIncludesEvery(topLevelHeadings, [
+  assertIncludesEach(topLevelHeadings, [
     "Requisitos y soporte",
     "Instalación",
     "Actualización",
@@ -283,7 +289,7 @@ test("the README keeps lifecycle, support, and runtime commitments as structure"
 
   const installation = commandSection(readme, "agentic-core init");
   const identifiers = inlineCode(installation.body);
-  assertIncludesEvery(identifiers, [
+  assertIncludesEach(identifiers, [
     "--yes",
     "npx",
     "agentic-core init",
@@ -303,7 +309,7 @@ test("the README keeps lifecycle, support, and runtime commitments as structure"
 test("the README keeps coordination and QualitySession contracts as identifiers and schemas", async () => {
   const { readme } = await loadCliDocumentation();
   const activation = headingSection(readme, "Activación explícita y modo directo");
-  assertIncludesEvery(inlineCode(activation.body), [
+  assertIncludesEach(inlineCode(activation.body), [
     "Orquesta",
     "/orquestar",
     "$orquestar",
@@ -314,7 +320,7 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
   const modes = headingSection(readme, "Modos y roles");
   const modeRows = markdownTable(modes, ["Modo", "Coordinación semántica", "Gate determinista"]);
   assert.deepEqual(modeRows.map(([mode]) => mode), ["light", "normal", "full"]);
-  assertIncludesEvery(modeRows.flat().join("\n"), [
+  assertContainsEach(modeRows.flat().join("\n"), [
     "Implementador",
     "Planificador",
     "Verificador",
@@ -348,7 +354,7 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
     "report",
     "sha256",
   ]);
-  assertIncludesEvery(inlineCode(quality.body), [
+  assertIncludesEach(inlineCode(quality.body), [
     ".env",
     "C.R.A.P. <= 7",
     "> 7",
@@ -362,7 +368,7 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
     ["Código", "Significado"],
   ).map(([code]) => code);
   assert.deepEqual(exitCodes, ["0", "1", "2", "3", "4", "5"]);
-  assertIncludesEvery(
+  assertIncludesEach(
     inlineCode(headingSection(readme, "Formato de salida").body),
     ["AGENTIC_CORE_OUTPUT=json"],
     "output contract",
@@ -372,7 +378,7 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
 test("the README keeps retired and maintained interfaces as explicit identifier sets", async () => {
   const { readme } = await loadCliDocumentation();
   const migration = headingSection(readme, "Migración desde el runtime determinista anterior");
-  assertIncludesEvery(inlineCode(migration.body), [
+  assertIncludesEach(inlineCode(migration.body), [
     "agentic-core start",
     "agentic-core resume",
     "agentic-core approve-mode-change",
@@ -390,7 +396,7 @@ test("the changelog records the incompatible CLI change structurally", async () 
   const changelog = await read("CHANGELOG.md");
   assert.ok(headingSection(changelog, "Unreleased"));
   const incompatible = headingSection(changelog, "Incompatible");
-  assertIncludesEvery(inlineCode(incompatible.body), [
+  assertIncludesEach(inlineCode(incompatible.body), [
     "agentic-core init --yes",
     "Unknown option: --yes",
     "--replace-conflicts",
@@ -424,7 +430,7 @@ test("third-party notices exactly match the bundled runtime dependency inventory
   assert.deepEqual(documented, expected);
   assert.equal(packageJson.devDependencies.esbuild, "0.28.2");
   assert.equal(documented.some(({ name }) => name === "esbuild"), false);
-  assertIncludesEvery(inlineCode(notices), [
+  assertIncludesEach(inlineCode(notices), [
     "@kroxidev/agentic-core",
     "node_modules",
     "third_party/",
@@ -434,7 +440,7 @@ test("third-party notices exactly match the bundled runtime dependency inventory
   const noticeHeadings = markdownSections(notices)
     .filter(({ level }) => level === 2)
     .map(({ title }) => title);
-  assertIncludesEvery(noticeHeadings, [
+  assertIncludesEach(noticeHeadings, [
     "@jridgewell/trace-mapping 0.3.31",
     "@jridgewell/resolve-uri 3.1.2",
     "@jridgewell/sourcemap-codec 1.5.5",
@@ -445,7 +451,7 @@ test("third-party notices exactly match the bundled runtime dependency inventory
 test("manual validation covers both hosts without claiming security enforcement", async () => {
   const checklist = await read("adapters/manual-validation.md");
   const headings = markdownSections(checklist).filter(({ level }) => level === 2).map(({ title }) => title);
-  assertIncludesEvery(headings, [
+  assertIncludesEach(headings, [
     "Límites de evidencia",
     "Preparación común",
     "Routing visible",
@@ -479,7 +485,7 @@ test("manual validation covers both hosts without claiming security enforcement"
     ["model-input", "program-generated-json-only"],
     ["legacy-runs", "preserve"],
   ]);
-  assertIncludesEvery(inlineCode(headingSection(checklist, "Routing visible").body), [
+  assertIncludesEach(inlineCode(headingSection(checklist, "Routing visible").body), [
     "Orquesta normal",
     ".agents/skills/orquestar/SKILL.md",
     "/orquestar light",
@@ -495,7 +501,7 @@ test("the architecture spec and skills agree on semantic coordination", async ()
     read("skills/agentic-tdd/SKILL.md"),
   ]);
   const specHeadings = markdownSections(spec).map(({ title }) => title.replaceAll("`", ""));
-  assertIncludesEvery(specHeadings, [
+  assertIncludesEach(specHeadings, [
     "Decisión",
     "Superficie pública",
     "Coordinación semántica",
@@ -504,7 +510,7 @@ test("the architecture spec and skills agree on semantic coordination", async ()
     "Mantenimiento y migración",
     "Estrategia de testing",
   ], "architecture headings");
-  assertIncludesEvery(inlineCode(spec), [
+  assertIncludesEach(inlineCode(spec), [
     "QualitySession",
     "init",
     "update",
@@ -518,7 +524,9 @@ test("the architecture spec and skills agree on semantic coordination", async ()
     "QUALITY_OK",
     "treeSha256",
   ], "architecture identifiers");
-  assertIncludesEvery(inlineCode(orchestrationSkill).join("\n"), [
+  // These identifiers occur inside complete launcher commands, for example
+  // `node .agentic-core/runtime-launcher.mjs agentic-quality prepare --mode <modo>`.
+  assertContainsEach(inlineCode(orchestrationSkill).join("\n"), [
     "light",
     "normal",
     "full",
@@ -531,6 +539,13 @@ test("the architecture spec and skills agree on semantic coordination", async ()
     "QUALITY_OK",
   ], "orchestration identifiers");
   assert.equal(tddSkill.match(/^name:\s*(\S+)\s*$/mu)?.[1], "agentic-tdd");
-  assertIncludesEvery(inlineCode(tddSkill), [".agentic-core/golden-rules.md"], "TDD identifiers");
+  assertIncludesEach(inlineCode(tddSkill), [".agentic-core/golden-rules.md"], "TDD identifiers");
   assert.doesNotMatch(orchestrationSkill, /agentic-core (?:start|resume|approve-mode-change|submit-handoff)/);
+});
+
+test("assertIncludesEach rejects a string in place of an array", () => {
+  assert.throws(
+    () => assertIncludesEach("highlight", ["light"], "element inclusion"),
+    /element inclusion must be an array/u,
+  );
 });

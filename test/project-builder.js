@@ -12,6 +12,23 @@ function invalidProjectPath(relativePath) {
   return error;
 }
 
+function pythonUnavailable(reason, cause) {
+  const error = new Error(`Python is unavailable; ${reason}`);
+  error.code = "ERR_PYTHON_UNAVAILABLE";
+  if (cause !== undefined) error.cause = cause;
+  return error;
+}
+
+export function isMissingVenvModule(error) {
+  const stderr = error && typeof error === "object" && error.stderr !== undefined
+    ? String(error.stderr)
+    : "";
+  const diagnostic = stderr || (error && typeof error === "object" && typeof error.message === "string"
+    ? error.message
+    : "");
+  return /(?:No module named venv|ensurepip is not\s+available)(?:[.\s]|$)/u.test(diagnostic);
+}
+
 function resolveProjectPath(root, relativePath) {
   if (typeof relativePath !== "string" || relativePath.trim() === ""
     || path.posix.isAbsolute(relativePath) || path.win32.isAbsolute(relativePath)
@@ -43,9 +60,7 @@ async function findPython(root) {
       return { executable, prefix };
     } catch {}
   }
-  const error = new Error("Python is unavailable; cannot create a virtual environment");
-  error.code = "ERR_PYTHON_UNAVAILABLE";
-  throw error;
+  throw pythonUnavailable("no Python 3 interpreter was found");
 }
 
 export async function createTestProject(t, { files = {}, manifest, pythonVenv = false } = {}) {
@@ -67,13 +82,23 @@ export async function createTestProject(t, { files = {}, manifest, pythonVenv = 
     }
     if (pythonVenv) {
       const { executable, prefix } = await findPython(root);
-      await execFileAsync(executable, [
-        ...prefix,
-        "-m",
-        "venv",
-        "--without-pip",
-        path.join(root, ".venv"),
-      ], { cwd: root, timeout: 30_000, windowsHide: true });
+      try {
+        await execFileAsync(executable, [
+          ...prefix,
+          "-m",
+          "venv",
+          "--without-pip",
+          path.join(root, ".venv"),
+        ], { cwd: root, timeout: 30_000, windowsHide: true });
+      } catch (error) {
+        if (isMissingVenvModule(error)) {
+          throw pythonUnavailable(
+            "the interpreter cannot create virtual environments (the venv module is missing)",
+            error,
+          );
+        }
+        throw error;
+      }
     }
     return root;
   } catch (error) {
