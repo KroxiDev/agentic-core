@@ -86,18 +86,25 @@ test("uses the visible and data-directory modules", () => {
     baseline.inputInventory.entries.map((entry) => entry.path),
   );
 
-  // This characterizes PR-08. inputs.js, crap.js, mutation.js, and doctor.js
-  // retain four non-identical exclusion lists. Their public artifacts already
-  // expose a selection divergence: support code enters the checkpoint but not
-  // the C.R.A.P. input inventory.
+  // This characterizes PR-08. inputs.js:10, crap.js:22, mutation.js:17 and
+  // doctor.js:25 still hold four non-identical exclusion lists, but only
+  // doctor's diverges observably: the other two are strict subsets of
+  // inputs.js and their walks re-filter every child through
+  // qualityPathIsExcluded (crap.js:38, mutation.js:140), so they can only
+  // narrow. No checkpoint-versus-analysis divergence is therefore attributable
+  // to the lists. The pair below diverges by kind instead: checkpointKind
+  // labels out-of-scope code `support_code` while inputKind returns undefined.
   assert.equal(checkpointPaths.has(checkpointOnlyModule), true);
   assert.equal(analysisInputPaths.has(checkpointOnlyModule), false);
 
   // Merely turning `data` from a filename into a path segment makes legitimate
   // production logic disappear from both evidence paths. It is not reported as
   // unsupported and produces no baseline warning, so the session stays green.
+  // The visible twin anchors the analysis: without it the absence assertions
+  // below would also hold over an empty report.
   assert.equal(checkpointPaths.has("src/data.js"), true);
   assert.equal(analysisInputPaths.has("src/data.js"), true);
+  assert.equal(analyzedFiles.has("src/data.js"), true);
   assert.equal(checkpointPaths.has(excludedModule), false);
   assert.equal(analysisInputPaths.has(excludedModule), false);
   assert.equal(analyzedFiles.has(excludedModule), false);
@@ -111,6 +118,8 @@ test("uses the visible and data-directory modules", () => {
   assert.equal(baseline.status, "approved");
 
   // When MJ-06 closes, invert the excluded-module and favorable-verdict
-  // assertions. The mandatory secret exclusions remain a separate hard
+  // assertions. Unifying the four lists will not move the kind divergence
+  // above, so MJ-06 must carry its own check that doctor.js and the gate stop
+  // disagreeing. The mandatory secret exclusions remain a separate hard
   // boundary and are deliberately untouched by this characterization.
 });
