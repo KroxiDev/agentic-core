@@ -5,10 +5,14 @@
 ## Requisitos y soporte
 
 - Node.js 20 o posterior.
-- Windows 10 y Windows 11 son las únicas plataformas con soporte oficial inicial.
 - JavaScript, TypeScript y Python son los lenguajes soportados por los motores de calidad.
 - Python solo es necesario al analizar proyectos Python. `coverage.py` es opcional: sin cobertura atribuible, C.R.A.P. no inventa un baseline cero.
 - CodeGraph y Engram son integraciones opcionales de descubrimiento y memoria; no son requisitos del runtime.
+
+| Plataforma | Nivel de soporte |
+| --- | --- |
+| Windows 10 | Oficial |
+| Windows 11 | Oficial |
 
 ## Desarrollo desde un clon
 
@@ -24,12 +28,21 @@ La instalación ejecuta `prepare` y construye `dist/runtime/agentic-core.mjs`. S
 
 ## Instalación
 
+### `agentic-core init`
+
 Desde la raíz del proyecto destino:
 
 ```powershell
 npx.cmd --yes github:KroxiDev/agentic-core init . --dry-run
 npx.cmd --yes github:KroxiDev/agentic-core init .
 ```
+
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--dry-run` | — | No | No |
+| `--replace-conflicts` | — | No | No |
 
 El `--yes` anterior a la URL pertenece a `npx` y autoriza su instalación temporal; no es una opción de `agentic-core`. `agentic-core init` no acepta `--yes`: solo `--replace-conflicts` autoriza de forma explícita el reemplazo de conflictos aislados.
 
@@ -39,14 +52,25 @@ La instalación añade recursos gestionados para ambos hosts, un bloque breve en
 
 ## Actualización
 
+### `agentic-core update`
+
 ```powershell
 npx.cmd --yes github:KroxiDev/agentic-core update . --dry-run
 npx.cmd --yes github:KroxiDev/agentic-core update .
 ```
 
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--dry-run` | — | No | No |
+| `--force` | — | No | No |
+
 `update` comprueba ownership e integridad antes de reemplazar recursos de forma transaccional. `--force` solo autoriza reemplazar recursos propios divergentes; no autoriza cambios ajenos. Al migrar una instalación anterior, elimina el runtime de protocolo que todavía sea reconociblemente propio, instala la política semántica y conserva `.agentic-core/runs` como estado legacy sin interpretarlo ni reclamarlo como estado vigente.
 
 ## Diagnóstico
+
+### `agentic-core doctor`
 
 ```powershell
 npx.cmd --yes github:KroxiDev/agentic-core doctor .
@@ -54,14 +78,30 @@ npx.cmd --yes github:KroxiDev/agentic-core doctor . --dry-run
 npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair
 ```
 
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--dry-run` | — | No | No |
+| `--repair` | — | No | No |
+
 `doctor` valida recursos, bloques gestionados, configuración, runtime autocontenido, ownership, hashes e integridad de `QualitySession`. Las sesiones o recibos corruptos se reportan y preservan; no se reescribe evidencia histórica. Los directorios operativos del runtime anterior se informan como estado legacy preservado.
 
 ## Desinstalación
+
+### `agentic-core uninstall`
 
 ```powershell
 npx.cmd --yes github:KroxiDev/agentic-core uninstall . --dry-run
 npx.cmd --yes github:KroxiDev/agentic-core uninstall .
 ```
+
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--dry-run` | — | No | No |
+| `--force` | — | No | No |
 
 La desinstalación retira transaccionalmente los recursos propios no divergentes y `.agentic-core/quality`. Conserva archivos ajenos, recursos divergentes no autorizados y `.agentic-core/runs` legacy para revisión manual.
 
@@ -95,7 +135,7 @@ El mapping rol → perfil vive en la skill canónica `.agents/skills/orquestar/S
 
 ## QualitySession
 
-### Preparar el baseline
+### `agentic-quality prepare` — Preparar el baseline
 
 Después de identificar el alcance y antes de modificar producción o tests:
 
@@ -109,6 +149,13 @@ Salida humana:
 QUALITY_SESSION id=q_<id> mode=normal baseline=<sha256>
 ```
 
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--mode` | `<light\|normal\|full>` | Sí | No |
+| `--scope` | `<path>` | Sí | Sí |
+
 `prepare` exige un modo `light`, `normal` o `full` y al menos un scope relativo al proyecto. Los scopes pueden repetirse, ser directorios o señalar archivos todavía inexistentes. El comando:
 
 1. Descubre el runner y ejecuta los tests reales.
@@ -120,7 +167,7 @@ QUALITY_SESSION id=q_<id> mode=normal baseline=<sha256>
 
 El ID depende del modo, scopes normalizados, inventario y entorno. Repetir entradas idénticas reutiliza de forma segura la misma sesión. Argumentos inválidos, entornos no soportados o un baseline de tests fallido no dejan una sesión parcial.
 
-### Verificar el resultado
+### `agentic-quality verify` — Verificar el resultado
 
 Después de terminar los cambios:
 
@@ -133,6 +180,12 @@ Un resultado aprobado emite únicamente un recibo corto:
 ```text
 QUALITY_OK session=q_<id> tests=approved crap_max=5.82 mutation=not_applicable report=.agentic-core/quality/q_<id>/reports/<hash>.json sha256=<hash>
 ```
+
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--session` | `<id>` | Sí | No |
 
 `verify` acepta únicamente una sesión íntegra creada por `prepare`. Detecta cambios relevantes dentro y fuera del scope, ejecuta los tests actuales, compara C.R.A.P. con el baseline y publica un reporte completo hasheado. Las reglas diferenciales son:
 
@@ -162,12 +215,53 @@ Las sesiones se conservan como evidencia local y permanecen ignoradas por Git. U
 
 Los análisis independientes se conservan y no requieren una sesión:
 
+### `agentic-quality scan`
+
 ```powershell
 node .agentic-core/runtime-launcher.mjs agentic-quality scan --target src
+```
+
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--target` | `<path>` | Sí | No |
+
+### `agentic-quality crap`
+
+```powershell
 node .agentic-core/runtime-launcher.mjs agentic-quality crap --target src
+```
+
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--target` | `<path>` | Sí | No |
+
+### `agentic-quality mutate`
+
+```powershell
 node .agentic-core/runtime-launcher.mjs agentic-quality mutate --target src
+```
+
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--target` | `<path>` | Sí | No |
+
+### `agentic-quality mutation`
+
+```powershell
 node .agentic-core/runtime-launcher.mjs agentic-quality mutation --target src
 ```
+
+#### Esquema CLI
+
+| Opción | Valor | Requerida | Repetible |
+| --- | --- | --- | --- |
+| `--target` | `<path>` | Sí | No |
 
 `mutation` es alias de `mutate`. Estos comandos aceptan exactamente un `--target`; los detalles de discovery, cobertura, inventario, snapshots, hashes, caché y runners permanecen detrás de la interfaz pública.
 

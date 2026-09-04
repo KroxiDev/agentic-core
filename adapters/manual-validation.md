@@ -2,6 +2,15 @@
 
 Esta lista complementa las suites automatizadas. No convierte instrucciones de agentes en enforcement de seguridad ni exige demostrar un sandbox del host.
 
+## Límites de evidencia
+
+| Área | Contrato |
+| --- | --- |
+| `coordination` | `semantic-policy` |
+| `host-security` | `not-verified` |
+| `model-input` | `program-generated-json-only` |
+| `legacy-runs` | `preserve` |
+
 ## Preparación común
 
 1. Construir el runtime final con `npm.cmd run build:runtime` y comprobar `runtime-manifest.json`, hashes por archivo y `treeSha256` antes de instalarlo en fixtures limpias.
