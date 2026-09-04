@@ -79,7 +79,7 @@ function assertSameSnapshot(actual, expected) {
 
 test("doctor reports a complete healthy installation with actionable runtime evidence", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
 
   const result = await runCore(["doctor", project], {
     env: { ...process.env, AGENTIC_CORE_PYTHON: path.join(project, "missing-python") },
@@ -103,7 +103,7 @@ test("doctor reports a complete healthy installation with actionable runtime evi
 
 test("doctor rejects a self-hashed latest report that does not belong to its session", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   await mkdir(path.join(project, "src"));
   await mkdir(path.join(project, "test"));
   await writeFile(path.join(project, "package.json"), `${JSON.stringify({
@@ -149,7 +149,7 @@ test("doctor rejects a self-hashed latest report that does not belong to its ses
 
 test("doctor repairs only registered resources and block boundaries while preserving foreign content", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   const productRoot = path.join(project, ".agentic-core");
   const configPath = path.join(productRoot, "config.json");
   const config = JSON.parse(await readFile(configPath, "utf8"));
@@ -201,7 +201,7 @@ test("doctor repairs only registered resources and block boundaries while preser
 
 test("doctor --dry-run and --repair --dry-run return the same repair preview without writing", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   await writeFile(path.join(project, ".agentic-core", "golden-rules.md"), "corrupt rules\r\n");
   await rm(path.join(project, ".codex", "agents", "agentic-read.toml"));
   const before = await snapshotTree(project);
@@ -265,7 +265,7 @@ test("doctor --dry-run detects a divergent persisted runtime without replacing o
     NODE_ENV: "test",
     AGENTIC_CORE_TEST_RUNTIME_ROOT: runtime,
   };
-  assert.equal((await runCore(["init", project, "--yes"], { env: environment })).code, 0);
+  assert.equal((await runCore(["init", project], { env: environment })).code, 0);
   const artifact = path.join(project, ".agentic-core", "runtime", "agentic-core.mjs");
   await writeFile(artifact, "foreign runtime change\r\n");
   const before = await snapshotTree(project);
@@ -284,7 +284,7 @@ test("doctor --dry-run detects a divergent persisted runtime without replacing o
 
 test("doctor previews and repairs a missing currently owned launcher", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   const productRoot = path.join(project, ".agentic-core");
   await rm(path.join(productRoot, "runtime-launcher.mjs"));
   const before = await snapshotTree(project);
@@ -308,7 +308,7 @@ test("doctor previews and repairs a missing currently owned launcher", async (t)
 
 test("doctor restores an invalid owned configuration to the canonical schema", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   const configPath = path.join(project, ".agentic-core", "config.json");
   await writeFile(configPath, "{invalid configuration\r\n");
   const before = await snapshotTree(project);
@@ -377,7 +377,7 @@ test("doctor previews and repair never change a foreign or unproven installation
 
 test("doctor refuses ambiguous blocks and incompatible owned path types", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   const agentsPath = path.join(project, "AGENTS.md");
   const agents = await readFile(agentsPath, "utf8");
   await writeFile(agentsPath, `${agents}${agents}`);
@@ -399,7 +399,7 @@ test("doctor refuses ambiguous blocks and incompatible owned path types", async 
 
 test("doctor gates Python only when needed and preserves legacy orchestration residue", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   const missingPython = path.join(project, "missing-python");
   const environment = { ...process.env, AGENTIC_CORE_PYTHON: missingPython };
 
@@ -441,7 +441,7 @@ test("doctor gates Python only when needed and preserves legacy orchestration re
 
 test("doctor validates the Python analyzer, runner and coverage backend when Python source requires them", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   await mkdir(path.join(project, "src"));
   await writeFile(path.join(project, "src", "subject.py"), "def subject():\n    return True\n");
 
@@ -459,7 +459,7 @@ test("doctor validates the Python analyzer, runner and coverage backend when Pyt
 test("doctor does not follow a linked installation parent outside the selected project", async (t) => {
   const project = await createProject(t, "agentic doctor linked project ");
   const outside = await createProject(t, "agentic doctor linked outside ");
-  assert.equal((await runCore(["init", outside, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", outside])).code, 0);
   const outsideBefore = await snapshotTree(outside);
   await symlink(
     path.join(outside, ".agentic-core"),
@@ -483,7 +483,7 @@ test("a failed doctor repair rolls back every mutation and retains the original 
   for (const failAfterWrite of [1, 2, 3]) {
     await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest, `agentic doctor rollback ${failAfterWrite} `);
-      assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+      assert.equal((await runCore(["init", project])).code, 0);
       await writeFile(path.join(project, ".agentic-core", "golden-rules.md"), "corrupt rules\r\n");
       await rm(path.join(project, ".codex", "agents", "agentic-read.toml"));
       const agentsPath = path.join(project, "AGENTS.md");
@@ -513,7 +513,7 @@ test("a failed doctor repair rolls back every mutation and retains the original 
 
 test("a host-supplied native capability probe is reflected for both real-agent adapters", async (t) => {
   const project = await createProject(t);
-  assert.equal((await runCore(["init", project, "--yes"])).code, 0);
+  assert.equal((await runCore(["init", project])).code, 0);
   const probed = [];
 
   const { exitCode, report } = await doctorInstallation(project, {

@@ -15,9 +15,11 @@
 Desde la raíz del proyecto destino:
 
 ```powershell
-npx.cmd --yes github:KroxiDev/agentic-core init . --yes --dry-run
-npx.cmd --yes github:KroxiDev/agentic-core init . --yes
+npx.cmd --yes github:KroxiDev/agentic-core init . --dry-run
+npx.cmd --yes github:KroxiDev/agentic-core init .
 ```
+
+El `--yes` anterior a la URL pertenece a `npx` y autoriza su instalación temporal; no es una opción de `agentic-core`. `agentic-core init` no acepta `--yes`: solo `--replace-conflicts` autoriza de forma explícita el reemplazo de conflictos aislados.
 
 La invocación resuelve una revisión de `KroxiDev/agentic-core`, valida el runtime y persiste un conjunto autocontenido bajo `.agentic-core/runtime`. El runtime final no conserva `_npx`, `node_modules`, `package.json` ni lockfiles del entorno efímero. Su manifiesto registra el inventario final, hashes por archivo y `treeSha256`; no necesita que el paquete esté publicado en npm.
 

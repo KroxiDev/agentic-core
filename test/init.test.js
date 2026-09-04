@@ -107,7 +107,7 @@ function assertSameSnapshot(actual, expected) {
 test("init installs the canonical direct-mode configuration and records ownership", async (t) => {
   const project = await createProject(t);
 
-  const result = await runCore(["init", project, "--yes"]);
+  const result = await runCore(["init", project]);
 
   assert.match(result.stdout, /Installed agentic-core 0\.2\.0/);
 
@@ -188,7 +188,7 @@ test("init keeps generated QualitySession evidence out of Git", async (t) => {
   const project = await createProject(t);
   await execFileAsync("git", ["init", "--quiet"], { cwd: project, encoding: "utf8" });
 
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
 
   assert.equal(
     await readFile(path.join(project, ".agentic-core", ".gitignore"), "utf8"),
@@ -220,7 +220,7 @@ test("init never claims a pre-existing quality directory without ownership", asy
   await writeFile(path.join(qualityPath, "foreign-evidence.txt"), "preserve me\n");
 
   await assert.rejects(
-    runCore(["init", project, "--yes", "--replace-conflicts"]),
+    runCore(["init", project, "--replace-conflicts"]),
     /quality.*without proven ownership/i,
   );
   assert.equal(await readFile(path.join(qualityPath, "foreign-evidence.txt"), "utf8"), "preserve me\n");
@@ -233,9 +233,9 @@ test("init --dry-run reports its complete write plan without changing the destin
   await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");
   const before = await snapshotFiles(project);
 
-  const result = await runCore(["init", project, "--yes", "--dry-run"]);
+  const result = await runCore(["init", project, "--dry-run"]);
   const plan = JSON.parse(result.stdout);
-  const repeatedPlan = JSON.parse((await runCore(["init", project, "--yes", "--dry-run"])).stdout);
+  const repeatedPlan = JSON.parse((await runCore(["init", project, "--dry-run"])).stdout);
 
   assert.equal(plan.command, "init");
   assert.equal(plan.dryRun, true);
@@ -280,7 +280,7 @@ test("the GitHub npx bootstrap previews and transactionally persists the exact r
   };
   const before = await snapshotFiles(project);
 
-  const previewResult = await runCore(["init", project, "--yes", "--dry-run"], { env: environment });
+  const previewResult = await runCore(["init", project, "--dry-run"], { env: environment });
   const preview = JSON.parse(previewResult.stdout);
 
   assert.deepEqual(preview.runtime, {
@@ -297,7 +297,7 @@ test("the GitHub npx bootstrap previews and transactionally persists the exact r
     && action.path === ".agentic-core/runtime"));
   assertSameSnapshot(await snapshotFiles(project), before);
 
-  await runCore(["init", project, "--yes"], { env: environment });
+  await runCore(["init", project], { env: environment });
   const manifest = JSON.parse(await readFile(path.join(project, ".agentic-core", "ownership.json"), "utf8"));
   assert.deepEqual(manifest.runtime, preview.runtime);
   for (const action of preview.actions) {
@@ -352,7 +352,7 @@ test("init --dry-run rejects an overlapping ephemeral runtime boundary without w
   const { runtime } = await createNpxRuntime(t);
   const before = await snapshotFiles(runtime);
 
-  await assert.rejects(runCore(["init", runtime, "--yes", "--dry-run"], {
+  await assert.rejects(runCore(["init", runtime, "--dry-run"], {
     env: {
       ...process.env,
       NODE_ENV: "test",
@@ -375,7 +375,7 @@ test("init --dry-run rejects non-canonical runtime binary paths without writing"
   await writeFile(packagePath, `${JSON.stringify(packageManifest, null, 2)}\n`);
   const before = await snapshotFiles(project);
 
-  await assert.rejects(runCore(["init", project, "--yes", "--dry-run"], {
+  await assert.rejects(runCore(["init", project, "--dry-run"], {
     env: {
       ...process.env,
       NODE_ENV: "test",
@@ -404,7 +404,7 @@ test("init --dry-run rejects a packaged runtime payload that fails integrity", a
   await writeFile(artifact, "// tampered payload\n");
   const before = await snapshotFiles(project);
 
-  await assert.rejects(runCore(["init", project, "--yes", "--dry-run"], {
+  await assert.rejects(runCore(["init", project, "--dry-run"], {
     env: {
       ...process.env,
       NODE_ENV: "test",
@@ -427,7 +427,7 @@ test("update --dry-run previews the exact next GitHub runtime and real update pe
     NODE_ENV: "test",
     AGENTIC_CORE_TEST_RUNTIME_ROOT: runtime,
   });
-  await runCore(["init", project, "--yes"], { env: environment(first.runtime) });
+  await runCore(["init", project], { env: environment(first.runtime) });
   const before = await snapshotFiles(project);
 
   const previewResult = await runCore(["update", project, "--dry-run"], { env: environment(second.runtime) });
@@ -459,7 +459,7 @@ test("update --dry-run previews the exact next GitHub runtime and real update pe
 test("update --dry-run requires a GitHub runtime source before replacing a divergent persisted runtime", async (t) => {
   const project = await createProject(t);
   const source = await createNpxRuntime(t);
-  await runCore(["init", project, "--yes"], {
+  await runCore(["init", project], {
     env: {
       ...process.env,
       NODE_ENV: "test",
@@ -483,7 +483,7 @@ test("update --dry-run requires a GitHub runtime source before replacing a diver
 test("maintenance rejects an inconsistent self-contained runtime manifest even with retagged ownership", async (t) => {
   const project = await createProject(t);
   const source = await createNpxRuntime(t);
-  await runCore(["init", project, "--yes"], {
+  await runCore(["init", project], {
     env: {
       ...process.env,
       NODE_ENV: "test",
@@ -527,7 +527,7 @@ test("maintenance rejects an inconsistent self-contained runtime manifest even w
 
 test("update migrates legacy orchestration ownership, removes its guard, and preserves runs", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const productRoot = path.join(project, ".agentic-core");
   const manifestPath = path.join(productRoot, "ownership.json");
   const legacy = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -606,7 +606,7 @@ test("update migrates legacy orchestration ownership, removes its guard, and pre
 
 test("init installs native Codex and Claude agents plus canonical skills byte for byte", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const mappings = [
     ["src/runtime-launcher.mjs", ".agentic-core/runtime-launcher.mjs"],
     ...["read", "production", "tests", "docs"].flatMap((profile) => [
@@ -633,7 +633,7 @@ test("init installs native Codex and Claude agents plus canonical skills byte fo
 
 test("update transactionally restores every host profile, canonical skill, and Claude shim", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const mappings = [
     ["src/runtime-launcher.mjs", ".agentic-core/runtime-launcher.mjs"],
     ...["read", "production", "tests", "docs"].flatMap((profile) => [
@@ -659,7 +659,7 @@ test("update transactionally restores every host profile, canonical skill, and C
   }
 });
 
-test("--yes does not replace an isolated conflict without explicit authorization", async (t) => {
+test("init requires --replace-conflicts to replace an isolated conflict", async (t) => {
   const project = await createProject(t);
   const productRoot = path.join(project, ".agentic-core");
   await mkdir(productRoot);
@@ -667,7 +667,7 @@ test("--yes does not replace an isolated conflict without explicit authorization
   await writeFile(path.join(productRoot, "config.json"), conflictingConfig);
 
   await assert.rejects(
-    runCore(["init", project, "--yes"]),
+    runCore(["init", project]),
     (error) => {
       assert.equal(error.code, 1);
       assert.match(error.stderr, /isolated conflict/i);
@@ -679,7 +679,7 @@ test("--yes does not replace an isolated conflict without explicit authorization
   assert.deepEqual(await readFile(path.join(productRoot, "config.json")), conflictingConfig);
   assert.deepEqual(await readdir(productRoot), ["config.json"]);
 
-  const installed = await runCore(["init", project, "--yes", "--replace-conflicts"]);
+  const installed = await runCore(["init", project, "--replace-conflicts"]);
   assert.match(installed.stdout, /Installed agentic-core 0\.2\.0/);
   assert.notDeepEqual(await readFile(path.join(productRoot, "config.json")), conflictingConfig);
 });
@@ -694,7 +694,7 @@ test("init --dry-run returns a complete blocked plan for resource and managed-bl
   const before = await snapshotFiles(project);
 
   await assert.rejects(
-    runCore(["init", project, "--yes", "--dry-run"]),
+    runCore(["init", project, "--dry-run"]),
     (error) => {
       assert.equal(error.code, 1);
       const plan = JSON.parse(error.stdout);
@@ -711,7 +711,7 @@ test("init --dry-run returns a complete blocked plan for resource and managed-bl
   assertSameSnapshot(await snapshotFiles(project), before);
 
   const authorized = JSON.parse((await runCore([
-    "init", project, "--yes", "--replace-conflicts", "--dry-run",
+    "init", project, "--replace-conflicts", "--dry-run",
   ])).stdout);
   assert.equal(authorized.status, "ready");
   assert.deepEqual(authorized.conflicts.map(({ authorized: isAuthorized }) => isAuthorized), [true, true]);
@@ -727,7 +727,7 @@ test("init --dry-run never presents an ambiguous managed block as authorizable",
   const before = await snapshotFiles(project);
 
   await assert.rejects(
-    runCore(["init", project, "--yes", "--replace-conflicts", "--dry-run"]),
+    runCore(["init", project, "--replace-conflicts", "--dry-run"]),
     (error) => {
       assert.equal(error.code, 1);
       const plan = JSON.parse(error.stdout);
@@ -756,7 +756,7 @@ test("init stops when another product owns a complete installation", async (t) =
 
   for (const extra of [["--dry-run"], []]) {
     await assert.rejects(
-      runCore(["init", project, "--yes", "--replace-conflicts", ...extra]),
+      runCore(["init", project, "--replace-conflicts", ...extra]),
       (error) => {
         assert.equal(error.code, 1);
         assert.match(error.stderr, /foreign installation/i);
@@ -831,7 +831,7 @@ test("a conflicting managed block is replaced only when explicitly authorized", 
   const original = Buffer.concat([prefix, staleBlock, suffix]);
   await writeFile(path.join(project, "AGENTS.md"), original);
 
-  await assert.rejects(runCore(["init", project, "--yes"]), /Command failed/);
+  await assert.rejects(runCore(["init", project]), /Command failed/);
   assert.deepEqual(await readFile(path.join(project, "AGENTS.md")), original);
 
   await runCore(["init", project, "--replace-conflicts"]);
@@ -844,7 +844,7 @@ test("a conflicting managed block is replaced only when explicitly authorized", 
 
 test("update adds the managed quality ignore to an existing 0.2.0 installation", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const productRoot = path.join(project, ".agentic-core");
   const ignorePath = path.join(productRoot, ".gitignore");
   const ownershipPath = path.join(productRoot, "ownership.json");
@@ -870,7 +870,7 @@ test("update adds the managed quality ignore to an existing 0.2.0 installation",
 
 test("update preserves quality configuration and legacy runs", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
 
   const configPath = path.join(project, ".agentic-core", "config.json");
   const config = JSON.parse(await readFile(configPath, "utf8"));
@@ -926,7 +926,7 @@ test("update previews and real execution reject uncertain or foreign ownership e
 
 test("update --dry-run rejects invalid configuration without changing the installation", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const configPath = path.join(project, ".agentic-core", "config.json");
   await writeFile(configPath, "{invalid configuration\r\n");
   const before = await snapshotFiles(project);
@@ -942,7 +942,7 @@ test("update --dry-run rejects invalid configuration without changing the instal
 test("update enumerates divergences and force replaces only owned boundaries", async (t) => {
   const project = await createProject(t);
   await writeFile(path.join(project, "AGENTS.md"), "# Foreign prefix\r\n");
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const productRoot = path.join(project, ".agentic-core");
   await writeFile(path.join(productRoot, "golden-rules.md"), "locally changed rules\r\n");
   const agentsPath = path.join(project, "AGENTS.md");
@@ -971,14 +971,14 @@ test("update enumerates divergences and force replaces only owned boundaries", a
 
 test("update without divergences does not require force", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const result = await runCore(["update", project]);
   assert.match(result.stdout, /Updated agentic-core 0\.2\.0/);
 });
 
 test("update --dry-run reports forced replacements and legacy preservation without changing any byte", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const productRoot = path.join(project, ".agentic-core");
   await writeFile(path.join(productRoot, "golden-rules.md"), "locally changed rules\r\n");
   const runsPath = path.join(productRoot, "runs");
@@ -1002,7 +1002,7 @@ test("update --dry-run reports forced replacements and legacy preservation witho
 
 test("update --dry-run returns a blocked plan for divergences until --force is explicit", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   await writeFile(path.join(project, ".agentic-core", "golden-rules.md"), "divergent rules\r\n");
   const before = await snapshotFiles(project);
 
@@ -1026,7 +1026,7 @@ test("a failure after any update mutation restores the installation byte for byt
     await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest);
       await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");
-      await runCore(["init", project, "--yes"]);
+      await runCore(["init", project]);
       const productRoot = path.join(project, ".agentic-core");
       const runsPath = path.join(productRoot, "runs", "nested");
       await mkdir(runsPath, { recursive: true });
@@ -1055,7 +1055,7 @@ test("a failure after any update mutation restores the installation byte for byt
 
 test("uninstall dry-run reports exact owned resources and blocks without changing the project", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const before = await snapshotFiles(project);
 
   const result = await runCore(["uninstall", project, "--dry-run"]);
@@ -1101,7 +1101,7 @@ test("uninstall dry-run includes the hash-proven runtime and matches the real re
     NODE_ENV: "test",
     AGENTIC_CORE_TEST_RUNTIME_ROOT: source.runtime,
   };
-  await runCore(["init", project, "--yes"], { env: environment });
+  await runCore(["init", project], { env: environment });
   const before = await snapshotFiles(project);
 
   const preview = await runCore(["uninstall", project, "--dry-run"]);
@@ -1124,7 +1124,7 @@ test("uninstall --dry-run preserves a divergent runtime unless --force explicitl
     NODE_ENV: "test",
     AGENTIC_CORE_TEST_RUNTIME_ROOT: source.runtime,
   };
-  await runCore(["init", project, "--yes"], { env: environment });
+  await runCore(["init", project], { env: environment });
   const artifact = path.join(project, ".agentic-core", "runtime", "agentic-core.mjs");
   await writeFile(artifact, "divergent runtime\r\n");
   const before = await snapshotFiles(project);
@@ -1154,7 +1154,7 @@ test("runtime directory writes and removals roll back byte for byte at the trans
     await writeFile(path.join(project, ".hidden-input"), Buffer.from([0x00, 0xff]));
     const before = await snapshotFiles(project);
     await assert.rejects(
-      runCore(["init", project, "--yes"], { env: environment(first.runtime, 22) }),
+      runCore(["init", project], { env: environment(first.runtime, 22) }),
       /simulated transaction failure/i,
     );
     assertSameSnapshot(await snapshotFiles(project), before);
@@ -1162,7 +1162,7 @@ test("runtime directory writes and removals roll back byte for byte at the trans
 
   await t.test("update runtime replacement", async (subtest) => {
     const project = await createProject(subtest);
-    await runCore(["init", project, "--yes"], { env: environment(first.runtime) });
+    await runCore(["init", project], { env: environment(first.runtime) });
     const before = await snapshotFiles(project);
     await assert.rejects(
       runCore(["update", project], { env: environment(second.runtime, 22) }),
@@ -1173,7 +1173,7 @@ test("runtime directory writes and removals roll back byte for byte at the trans
 
   await t.test("uninstall runtime removal", async (subtest) => {
     const project = await createProject(subtest);
-    await runCore(["init", project, "--yes"], { env: environment(first.runtime) });
+    await runCore(["init", project], { env: environment(first.runtime) });
     const before = await snapshotFiles(project);
     await assert.rejects(
       runCore(["uninstall", project], { env: environment(first.runtime, 22) }),
@@ -1186,7 +1186,7 @@ test("runtime directory writes and removals roll back byte for byte at the trans
 test("uninstall removes owned state and keeps unknown resources and text", async (t) => {
   const project = await createProject(t);
   await writeFile(path.join(project, "AGENTS.md"), "# Keep prefix\r\n");
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const productRoot = path.join(project, ".agentic-core");
   const qualityRoot = path.join(productRoot, "quality", "nested");
   await mkdir(qualityRoot, { recursive: true });
@@ -1218,7 +1218,7 @@ test("uninstall removes owned state and keeps unknown resources and text", async
 
 test("non-interactive uninstall preserves and reports divergent owned resources", async (t) => {
   const project = await createProject(t);
-  await runCore(["init", project, "--yes"]);
+  await runCore(["init", project]);
   const configPath = path.join(project, ".agentic-core", "config.json");
   await writeFile(configPath, "locally edited configuration\r\n");
 
@@ -1232,7 +1232,7 @@ test("non-interactive uninstall preserves and reports divergent owned resources"
 test("force and interactive confirmation remove only manifest-owned divergences", async (t) => {
   await t.test("force", async (subtest) => {
     const project = await createProject(subtest);
-    await runCore(["init", project, "--yes"]);
+    await runCore(["init", project]);
     const configPath = path.join(project, ".agentic-core", "config.json");
     await writeFile(configPath, "locally edited configuration\r\n");
     await writeFile(path.join(project, ".agentic-core", "unknown.txt"), "keep unknown\r\n");
@@ -1243,7 +1243,7 @@ test("force and interactive confirmation remove only manifest-owned divergences"
 
   await t.test("interactive confirmation seam", async (subtest) => {
     const project = await createProject(subtest);
-    await runCore(["init", project, "--yes"]);
+    await runCore(["init", project]);
     const configPath = path.join(project, ".agentic-core", "config.json");
     await writeFile(configPath, "locally edited configuration\r\n");
     const prompted = [];
@@ -1280,7 +1280,7 @@ test("a failure after any uninstall mutation restores the project byte for byte"
     await t.test(`mutation ${failAfterWrite}`, async (subtest) => {
       const project = await createProject(subtest);
       await writeFile(path.join(project, "AGENTS.md"), "# Existing instructions\r\n");
-      await runCore(["init", project, "--yes"]);
+      await runCore(["init", project]);
       const productRoot = path.join(project, ".agentic-core");
       for (const directory of ["quality", "runs"]) {
         const ownedRoot = path.join(productRoot, directory);

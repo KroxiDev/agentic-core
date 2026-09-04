@@ -26,6 +26,7 @@ test("the maintenance CLI exposes only installation lifecycle commands", async (
   for (const command of ["init", "update", "doctor", "uninstall"]) {
     assert.match(help.stdout, new RegExp(`agentic-core ${command}`));
   }
+  assert.doesNotMatch(help.stdout, /agentic-core init.*--yes/);
   for (const retired of ["start", "resume", "approve-mode-change", "submit-handoff"]) {
     assert.doesNotMatch(help.stdout, new RegExp(`agentic-core ${retired}`));
   }
@@ -65,6 +66,19 @@ test("maintenance dry-run accepts only canonical options once", async () => {
       return true;
     });
   }
+});
+
+test("init rejects the retired --yes option before changing the project", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic retired yes "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  await assert.rejects(runBinary("bin/agentic-core.js", ["init", root, "--yes"]), (error) => {
+    assert.equal(error.code, 2);
+    assert.equal(error.stdout, "");
+    assert.match(error.stderr, /Unknown option: --yes/);
+    return true;
+  });
+  await assert.rejects(readdir(path.join(root, ".agentic-core")), { code: "ENOENT" });
 });
 
 test("retired orchestration commands fail without creating run state", async (t) => {

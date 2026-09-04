@@ -139,15 +139,15 @@ test("all maintenance commands render human output while captured JSON remains c
   t.after(() => rm(project, { recursive: true, force: true }));
 
   const machinePreview = capturedIo(false);
-  assert.equal(await runMaintenanceCli(["init", project, "--yes", "--dry-run"], machinePreview.io), 0);
+  assert.equal(await runMaintenanceCli(["init", project, "--dry-run"], machinePreview.io), 0);
   assert.equal(JSON.parse(machinePreview.stdout()).command, "init");
 
   const initPreview = capturedIo(true);
-  assert.equal(await runMaintenanceCli(["init", project, "--yes", "--dry-run"], initPreview.io), 0);
+  assert.equal(await runMaintenanceCli(["init", project, "--dry-run"], initPreview.io), 0);
   assert.match(initPreview.stdout(), /^PLAN \(sin escrituras\)/);
 
   const init = capturedIo(true);
-  assert.equal(await runMaintenanceCli(["init", project, "--yes"], init.io), 0);
+  assert.equal(await runMaintenanceCli(["init", project], init.io), 0);
   assert.match(init.stdout(), /^ACCIONES/);
   assert.match(init.stdout(), /agentic-core 0\.2\.0 instalado/);
 

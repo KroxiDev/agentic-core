@@ -21,8 +21,8 @@ test("the README documents the maintained lifecycle and self-contained runtime",
   ]) assert.ok(readme.includes(heading), `README is missing ${heading}`);
 
   for (const command of [
-    "npx.cmd --yes github:KroxiDev/agentic-core init . --yes",
-    "npx.cmd --yes github:KroxiDev/agentic-core init . --yes --dry-run",
+    "npx.cmd --yes github:KroxiDev/agentic-core init .",
+    "npx.cmd --yes github:KroxiDev/agentic-core init . --dry-run",
     "npx.cmd --yes github:KroxiDev/agentic-core update .",
     "npx.cmd --yes github:KroxiDev/agentic-core update . --dry-run",
     "npx.cmd --yes github:KroxiDev/agentic-core doctor .",
@@ -32,10 +32,22 @@ test("the README documents the maintained lifecycle and self-contained runtime",
     "npx.cmd --yes github:KroxiDev/agentic-core uninstall .",
   ]) assert.ok(readme.includes(command), `README is missing ${command}`);
 
+  assert.doesNotMatch(readme, /github:KroxiDev\/agentic-core init \. --yes(?:\s|$)/);
+  assert.match(readme, /`--yes`[^.]*pertenece a `npx`/i);
+  assert.match(readme, /`agentic-core init`[^.]*no acepta `--yes`/i);
+  assert.match(readme, /`--replace-conflicts`[^.]*autoriza/i);
   assert.match(readme, /\.agentic-core\/runtime/);
   assert.match(readme, /inventario final, hashes por archivo y `treeSha256`/);
   assert.match(readme, /no necesita que el paquete esté publicado en npm/i);
   assert.match(readme, /Windows 10 y Windows 11 son las únicas plataformas con soporte oficial/);
+});
+
+test("the changelog records the incompatible removal of init --yes", async () => {
+  const changelog = await read("CHANGELOG.md");
+  assert.match(changelog, /## Unreleased/);
+  assert.match(changelog, /`agentic-core init --yes`[^.]*retir/i);
+  assert.match(changelog, /`Unknown option: --yes`/);
+  assert.match(changelog, /`--replace-conflicts`[^.]*autoriza/i);
 });
 
 test("the README fixes semantic routing, roles, and permission boundaries", async () => {
