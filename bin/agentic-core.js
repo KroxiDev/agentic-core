@@ -1,4 +1,5 @@
 #!/usr/bin/env node
 
-process.argv.splice(2, 0, "agentic-core");
-await import("../dist/runtime/agentic-core.mjs");
+import { runBinary } from "./runtime-loader.js";
+
+await runBinary("agentic-core");
