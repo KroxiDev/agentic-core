@@ -23,3 +23,5 @@ issues/
 .idea/
 .DS_Store
 Thumbs.db
+
+.claude/
