@@ -10,6 +10,18 @@
 - Python solo es necesario al analizar proyectos Python. `coverage.py` es opcional: sin cobertura atribuible, C.R.A.P. no inventa un baseline cero.
 - CodeGraph y Engram son integraciones opcionales de descubrimiento y memoria; no son requisitos del runtime.
 
+## Desarrollo desde un clon
+
+Después de clonar este repositorio, ejecuta el siguiente paso obligatorio desde la raíz antes de invocar los binarios de `bin/`:
+
+```powershell
+npm install
+```
+
+La instalación ejecuta `prepare` y construye `dist/runtime/agentic-core.mjs`. Si las dependencias ya están instaladas y solo falta regenerar el runtime, ejecuta `npm run build:runtime`.
+
+`dist/runtime/` permanece deliberadamente sin versionar porque es un artefacto reproducible derivado de `src/` y de las dependencias bloqueadas. Reconstruirlo evita duplicar código fuente y acumular diffs generados obsoletos; los paquetes preparados para consumo sí incluyen el runtime construido.
+
 ## Instalación
 
 Desde la raíz del proyecto destino:

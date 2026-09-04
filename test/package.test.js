@@ -16,6 +16,7 @@ const expectedInventory = [
   "THIRD_PARTY_NOTICES.md",
   "bin/agentic-core.js",
   "bin/agentic-quality.js",
+  "bin/runtime-loader.js",
   "dist/runtime/agentic-core.mjs",
   "dist/runtime/LICENSE",
   "dist/runtime/payload-manifest.json",
