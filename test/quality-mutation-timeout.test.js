@@ -9,30 +9,35 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const sourceRuntime = path.join(repositoryRoot, "src", "runtime-entry.mjs");
 const mutantTimeoutMs = 100;
-const delayedSuiteDurationMs = 250;
+const generousMutantTimeoutMs = 10_000;
+const suiteDurationMs = 250;
 
 const manifest = {
   type: "module",
   scripts: { test: "node --test" },
 };
 
+// Two covered mutants with opposite fates once they are given time to run:
+// `> -> >=` survives, because the suite never asserts the boundary value,
+// and `0 -> 1` is a real semantic kill.
 const mutableSubject = `
-export function mutationTriggersDelay() {
-  return false;
+export function isPositive(value) {
+  return value > 0;
 }
 `;
 
-const timeoutSuite = `
+// The project's own suite passes and outlasts the time tolerated per mutant.
+// The delay is unconditional: it is the suite that is slow, not the mutation.
+const slowSuite = `
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { mutationTriggersDelay } from "../src/subject.js";
+import { isPositive } from "../src/subject.js";
 
-test("passes unless a mutation enables the delay", async () => {
-  if (mutationTriggersDelay()) {
-    await delay(Number.parseInt(process.env.FIXTURE_SUITE_DURATION_MS, 10));
-  }
-  assert.equal(mutationTriggersDelay(), false);
+test("passes, but slower than the time tolerated per mutant", async () => {
+  await delay(Number.parseInt(process.env.FIXTURE_SUITE_DURATION_MS, 10));
+  assert.equal(isPositive(1), true);
+  assert.equal(isPositive(-1), false);
 });
 `;
 
@@ -55,13 +60,13 @@ async function createFixtureProject(t, suite) {
   });
 }
 
-async function runMutation(root) {
+async function runMutation(root, mutantTimeout) {
   const env = {
     ...process.env,
     NODE_ENV: "test",
     AGENTIC_CORE_OUTPUT: "json",
-    AGENTIC_CORE_TEST_MUTANT_TIMEOUT_MS: String(mutantTimeoutMs),
-    FIXTURE_SUITE_DURATION_MS: String(delayedSuiteDurationMs),
+    AGENTIC_CORE_TEST_MUTANT_TIMEOUT_MS: String(mutantTimeout),
+    FIXTURE_SUITE_DURATION_MS: String(suiteDurationMs),
   };
   try {
     const result = await execFileAsync(process.execPath, [
@@ -77,40 +82,61 @@ async function runMutation(root) {
   }
 }
 
-test("PR-05: mutation approves when every covered mutant exhausts its timeout", async (t) => {
-  const timeoutRoot = await createFixtureProject(t, timeoutSuite);
-  const timeoutResult = await runMutation(timeoutRoot);
-  assert.equal(timeoutResult.code, 0, timeoutResult.stderr || timeoutResult.stdout);
-  const timeoutReport = JSON.parse(timeoutResult.stdout);
+test("PR-05: mutation approves when the suite outlasts the time tolerated per mutant", async (t) => {
+  const slowRoot = await createFixtureProject(t, slowSuite);
+  const timedOut = await runMutation(slowRoot, mutantTimeoutMs);
+  assert.equal(timedOut.code, 0, timedOut.stderr || timedOut.stdout);
+  const timedOutReport = JSON.parse(timedOut.stdout);
 
   // This characterizes PR-05. When MJ-05 closes, invert this assertion:
   // timeouts must be inconclusive and can never make mutation approved.
-  assert.equal(timeoutReport.status, "approved");
-  assert.deepEqual(timeoutReport.summary, {
-    mutants: 1,
+  assert.equal(timedOutReport.status, "approved");
+  assert.deepEqual(timedOutReport.summary, {
+    mutants: 2,
     killed: 0,
-    killedByTimeout: 1,
+    killedByTimeout: 2,
     survived: 0,
     uncovered: 0,
     equivalent: 0,
   });
-  assert.deepEqual(timeoutReport.details.map(({ status }) => status), ["killedByTimeout"]);
+  assert.deepEqual(timedOutReport.details.map(({ status }) => status),
+    ["killedByTimeout", "killedByTimeout"]);
+
+  // Same project, same suite, same mutants: only the tolerated time changes.
+  // The approval above hid a real survivor, so a timeout is evidence of
+  // nothing -- and the count of timeouts never reaches the verdict either.
+  const generous = await runMutation(slowRoot, generousMutantTimeoutMs);
+  assert.equal(generous.code, 1, generous.stderr || generous.stdout);
+  const generousReport = JSON.parse(generous.stdout);
+  assert.equal(generousReport.status, "failed");
+  assert.deepEqual(generousReport.summary, {
+    mutants: 2,
+    killed: 1,
+    killedByTimeout: 0,
+    survived: 1,
+    uncovered: 0,
+    equivalent: 0,
+  });
+  assert.deepEqual(generousReport.details.map(({ mutation, status }) => ({ mutation, status })), [
+    { mutation: "> -> >=", status: "survived" },
+    { mutation: "0 -> 1", status: "killed" },
+  ]);
 
   const uncoveredRoot = await createFixtureProject(t, unrelatedSuite);
-  const uncoveredResult = await runMutation(uncoveredRoot);
-  assert.equal(uncoveredResult.code, 1, uncoveredResult.stderr || uncoveredResult.stdout);
-  const uncoveredReport = JSON.parse(uncoveredResult.stdout);
+  const uncovered = await runMutation(uncoveredRoot, generousMutantTimeoutMs);
+  assert.equal(uncovered.code, 1, uncovered.stderr || uncovered.stdout);
+  const uncoveredReport = JSON.parse(uncovered.stdout);
 
-  // PR-05 also makes one uncovered mutant fail the complete gate. When MJ-05
+  // PR-05 also makes uncovered mutants fail the complete gate. When MJ-05
   // closes, uncovered mutants become informational and score/budget decide it.
   assert.equal(uncoveredReport.status, "failed");
   assert.deepEqual(uncoveredReport.summary, {
-    mutants: 1,
+    mutants: 2,
     killed: 0,
     killedByTimeout: 0,
     survived: 0,
-    uncovered: 1,
+    uncovered: 2,
     equivalent: 0,
   });
-  assert.deepEqual(uncoveredReport.details.map(({ status }) => status), ["uncovered"]);
+  assert.deepEqual(uncoveredReport.details.map(({ status }) => status), ["uncovered", "uncovered"]);
 });
