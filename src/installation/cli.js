@@ -44,7 +44,7 @@ function output(io, result) {
     io.stdout.write(`${result.message}\n`);
     io.stdout.write(`Límites: C.R.A.P. ${result.limits.crap}; mutación ${result.limits.mutationScore} %.\n`);
     if (result.dryRun) io.stdout.write(`Recursos: ${result.actions.join(", ")}\nConflictos: ${result.conflicts.join(", ") || "ninguno"}\n`);
-    else io.stdout.write("Herramientas: dry4python 0.1.0; crap4py 0.1.1; mutate4py 0.1.4.\n");
+    else io.stdout.write("Herramientas: dry4python 0.1.0; crap4py 0.1.1; mutate4py 0.1.4; coverage.py 7.13.4.\n");
   }
 }
 

@@ -1,194 +1,87 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { access, readFile, realpath, rm } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import test from "node:test";
-import { initialize } from "../src/init.js";
-import { analyzeQuality } from "../src/quality/crap.js";
-import { findPython } from "../src/quality/python.js";
-import { createTestProject } from "./project-builder.js";
+import { hashDirectory } from "../src/transaction.js";
+import { privatePython } from "../src/installation/python.js";
+import { configurePythonProject, pythonProject, runPythonProject } from "./support/python-project.mjs";
 
-const execFileAsync = promisify(execFile);
+test("PR-09 regression: installed pytest uses the project environment and actual suite", async (t) => {
+  const { root, python, hostPython, config } = await pythonProject(t);
+  const environmentHash = await hashDirectory(path.join(root, ".venv"));
+  const toolsHash = await hashDirectory(path.join(root, ".agentic-core/tools"));
+  const result = await runPythonProject(root);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.suite.status, "passed");
+  assert.equal(report.suite.collected, 1);
+  assert.equal(report.python.executable, python);
+  assert.deepEqual(report.effectiveCommand.args, config.integration.python.command.args);
+  assert.equal(report.effectiveCommand.cwd, path.join(root, "work dir"));
+  assert.equal(report.coverage.backend, "coverage.py");
+  const file = report.coverage.files[path.join(root, "work dir/src/subject.py")];
+  assert.deepEqual(file.executed_lines, [1, 2, 3, 4]);
+  assert.equal(file.summary.percent_covered, 100);
+  assert.match(report.coverage.lcov, /BRDA:/u);
+  assert.equal(await hashDirectory(path.join(root, ".venv")), environmentHash);
+  assert.equal(await hashDirectory(path.join(root, ".agentic-core/tools")), toolsHash);
+  await access(path.join(root, "work dir/declared-suite-ran.txt"));
+  await assert.rejects(access(path.join(root, "lcov.info")), { code: "ENOENT" });
+  t.diagnostic(`Windows/local Python ${report.python.version.join(".")}, pytest ${report.python.pytestVersion}, coverage ${report.coverage.version}`);
 
-function normalized(filePath) {
-  const value = path.normalize(filePath);
-  return process.platform === "win32" ? value.toLowerCase() : value;
-}
-
-function restoreEnvironment(name, existed, value) {
-  if (existed) process.env[name] = value;
-  else delete process.env[name];
-}
-
-async function runPython(runtime, root, source) {
-  return execFileAsync(runtime.executable, [...runtime.prefix, "-c", source], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
+  await t.test("environment override has maximum priority and invalid selections never fall back", async () => {
+    await configurePythonProject(root, (c) => { c.integration.python.interpreter = "missing-config-python"; c.integration.python.command.executable = "missing-config-python"; });
+    const validOverride = await runPythonProject(root, ["test"], { AGENTIC_CORE_PYTHON: python });
+    assert.equal(validOverride.code, 0, validOverride.stdout);
+    const missing = await runPythonProject(root, ["test"], { AGENTIC_CORE_PYTHON: path.join(root, "missing python") });
+    assert.equal(missing.code, 2, missing.stdout);
+    assert.equal(JSON.parse(missing.stdout).code, "command_unavailable");
+    const invalidConfig = await runPythonProject(root);
+    assert.equal(invalidConfig.code, 2);
+    const toolsAsProject = await runPythonProject(root, ["test"], { AGENTIC_CORE_PYTHON: privatePython(path.join(root, ".agentic-core/tools")) });
+    assert.equal(toolsAsProject.code, 2);
+    assert.equal(JSON.parse(toolsAsProject.stdout).code, "pytest_unavailable");
+    await configurePythonProject(root, (c) => { c.integration.python.interpreter = python; c.integration.python.command.executable = python; });
   });
-}
 
-async function pythonPrefix(runtime, root) {
-  const { stdout } = await runPython(runtime, root, "import sys; print(sys.prefix)");
-  return normalized(stdout.trim());
-}
+  await t.test("a wrapper selecting the wrong Python cannot approve", async () => {
+    await writeFile(path.join(root, "work dir/wrong.py"), `import subprocess,sys\nraise SystemExit(subprocess.call([${JSON.stringify(hostPython)}, '-m', 'pytest', '-c', 'config space.ini', 'python checks']))\n`);
+    await configurePythonProject(root, (c) => { c.integration.python.command.args = ["wrong.py"]; });
+    const wrong = await runPythonProject(root);
+    assert.equal(wrong.code, 2, wrong.stdout);
+    assert.equal(JSON.parse(wrong.stdout).code, "interpreter_mismatch");
+  });
 
-test("PR-09: Python analysis ignores the project virtual environment and declared suite", async (t) => {
-  const dependency = `agentic_core_pr09_${randomUUID().replaceAll("-", "_")}`;
-  const virtualPythonRelative = process.platform === "win32"
-    ? ".venv/Scripts/python.exe"
-    : ".venv/bin/python";
-  const declaredTestCommand = [
-    virtualPythonRelative,
-    "-m unittest discover -s python_checks -p \"test*.py\"",
-  ].join(" ");
-  let root;
-  try {
-    root = await createTestProject(t, {
-      pythonVenv: true,
-      manifest: {
-        name: "python-venv-fixture",
-        private: true,
-        scripts: { "test:python": declaredTestCommand },
-      },
-      files: {
-        "src/subject.py": `
-def classify(value):
-    if value > 0:
-        return "positive"
-    return "other"
-`,
-        "tests/test_fallback.py": `
-import unittest
-from pathlib import Path
-from src.subject import classify
+  await t.test("successful commands without observed pytest or coverage cannot approve", async () => {
+    await configurePythonProject(root, (c) => { c.integration.python.command.args = ["-c", "pass"]; });
+    const bypass = await runPythonProject(root);
+    assert.equal(bypass.code, 2);
+    assert.equal(JSON.parse(bypass.stdout).code, "pytest_unobserved");
+    assert.equal(JSON.parse(bypass.stdout).coverage.files, null);
+    await configurePythonProject(root, (c) => { c.integration.python.command.args = config.integration.python.command.args; c.integration.python.scope = ["missing-source"]; });
+    const noCoverage = await runPythonProject(root);
+    assert.equal(noCoverage.code, 2, noCoverage.stdout);
+    assert.equal(JSON.parse(noCoverage.stdout).suite.status, "passed");
+    assert.equal(JSON.parse(noCoverage.stdout).coverage.files, null);
+  });
 
-class FallbackTests(unittest.TestCase):
-    def test_classifies_both_outcomes(self):
-        Path("fallback-suite-ran.txt").write_text("fallback\\n", encoding="utf-8")
-        self.assertEqual(classify(1), "positive")
-        self.assertEqual(classify(0), "other")
-`,
-        "python_checks/test_subject.py": `
-import unittest
-from pathlib import Path
-from ${dependency} import VALUE
-from src.subject import classify
-
-class DeclaredTests(unittest.TestCase):
-    def test_uses_the_project_environment(self):
-        Path("declared-suite-ran.txt").write_text("declared\\n", encoding="utf-8")
-        self.assertEqual(VALUE, "venv-only")
-        self.assertEqual(classify(1), "positive")
-        self.assertEqual(classify(0), "other")
-`,
-      },
-    });
-  } catch (error) {
-    if (error?.code === "ERR_PYTHON_UNAVAILABLE") {
-      return t.skip("Python is unavailable; cannot create the PR-09 virtual environment fixture");
-    }
-    throw error;
-  }
-
-  const virtualPython = path.join(root, ...virtualPythonRelative.split("/"));
-  await execFileAsync(virtualPython, ["-c", `
-from pathlib import Path
-import sysconfig
-Path(sysconfig.get_path("purelib"), "${dependency}.py").write_text(
-    "VALUE = 'venv-only'\\n", encoding="utf-8"
-)
-`], { cwd: root, encoding: "utf8", windowsHide: true });
-
-  const virtualRuntime = { executable: virtualPython, prefix: [] };
-  const virtualPrefix = normalized(await realpath(path.join(root, ".venv")));
-  assert.equal(await pythonPrefix(virtualRuntime, root), virtualPrefix);
-  assert.equal(
-    (await runPython(virtualRuntime, root, `
-import importlib.util
-print("present" if importlib.util.find_spec("${dependency}") else "missing")
-`)).stdout.trim(),
-    "present",
-  );
-  await execFileAsync(virtualPython, [
-    "-m",
-    "unittest",
-    "discover",
-    "-s",
-    "python_checks",
-    "-p",
-    "test*.py",
-  ], { cwd: root, encoding: "utf8", windowsHide: true });
-  const declaredSuiteMarker = path.join(root, "declared-suite-ran.txt");
-  await access(declaredSuiteMarker);
-  await rm(declaredSuiteMarker);
-
-  await initialize(root, { runtimeSource: null });
-  // PR-09 is demonstrated behaviorally: the project declares its interpreter
-  // in scripts["test:python"], initialize preserves it, and analysis still ignores it.
-  assert.equal(
-    JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).scripts["test:python"],
-    declaredTestCommand,
-  );
-
-  const hadPythonOverride = Object.hasOwn(process.env, "AGENTIC_CORE_PYTHON");
-  const previousPythonOverride = process.env.AGENTIC_CORE_PYTHON;
-  const hadBackendOverride = Object.hasOwn(process.env, "AGENTIC_CORE_PYTHON_BACKEND");
-  const previousBackendOverride = process.env.AGENTIC_CORE_PYTHON_BACKEND;
-  try {
-    delete process.env.AGENTIC_CORE_PYTHON;
-    process.env.AGENTIC_CORE_PYTHON_BACKEND = "trace";
-
-    const detectedRuntime = await findPython(root);
-    if (!detectedRuntime) {
-      return t.skip("Python 3.10 or newer is unavailable for the PR-09 analysis fixture");
-    }
-    assert.notEqual(await pythonPrefix(detectedRuntime, root), virtualPrefix);
-    assert.equal(
-      (await runPython(detectedRuntime, root, `
-import importlib.util
-print("present" if importlib.util.find_spec("${dependency}") else "missing")
-`)).stdout.trim(),
-      "missing",
-    );
-
-    process.env.AGENTIC_CORE_PYTHON = virtualPython;
-    const overriddenRuntime = await findPython(root);
-    assert.ok(overriddenRuntime);
-    assert.equal(await pythonPrefix(overriddenRuntime, root), virtualPrefix);
-    delete process.env.AGENTIC_CORE_PYTHON;
-
-    const report = await analyzeQuality({
-      projectRoot: root,
-      targets: ["src"],
-      tool: "crap",
-    });
-
-    // This characterizes PR-09. When MJ-03 closes, invert the interpreter and
-    // suite assertions: analysis must use the declared .venv command and
-    // python_checks, while the fallback suite must remain untouched.
-    assert.equal(report.status, "approved");
-    assert.equal(report.language, "python");
-    assert.equal(report.backend, "stdlib-trace");
-    assert.equal(report.runner, "unittest");
-    assert.equal(report.inputInventory.commands.length, 1);
-    assert.equal(report.inputInventory.commands[0].executable, detectedRuntime.executable);
-    assert.notEqual(normalized(report.inputInventory.commands[0].executable), normalized(virtualPython));
-    assert.deepEqual(
-      report.inputInventory.entries
-        .filter(({ kind }) => kind === "discovered_test")
-        .map(({ path: inputPath }) => inputPath),
-      ["python_checks/test_subject.py", "tests/test_fallback.py"],
-    );
-    await access(path.join(root, "fallback-suite-ran.txt"));
-    await assert.rejects(
-      access(declaredSuiteMarker),
-      { code: "ENOENT" },
-    );
-  } finally {
-    restoreEnvironment("AGENTIC_CORE_PYTHON", hadPythonOverride, previousPythonOverride);
-    restoreEnvironment("AGENTIC_CORE_PYTHON_BACKEND", hadBackendOverride, previousBackendOverride);
-  }
+  await t.test("pytest failure, invalid usage and internal error use numeric codes", async () => {
+    await configurePythonProject(root, (c) => { c.integration.python.scope = config.integration.python.scope; c.integration.python.command.args = ["-m", "pytest", "tests"]; });
+    const failedCollection = await runPythonProject(root);
+    assert.equal(JSON.parse(failedCollection.stdout).suite.exitCode, 2);
+    await configurePythonProject(root, (c) => { c.integration.python.command.args = ["-m", "pytest", "-c", "config space.ini", "python checks"]; c.integration.python.environment.PROJECT_SETTING = "incorrect"; });
+    const failed = await runPythonProject(root);
+    assert.equal(failed.code, 1, failed.stdout);
+    assert.equal(JSON.parse(failed.stdout).code, "tests_failed");
+    assert.equal(JSON.parse(failed.stdout).coverage.status, "measured");
+    await configurePythonProject(root, (c) => { c.integration.python.command.args = ["-m", "pytest", "--not-a-pytest-option"]; });
+    const invalid = await runPythonProject(root);
+    assert.equal(invalid.code, 4, invalid.stdout);
+    assert.equal(JSON.parse(invalid.stdout).code, "pytest_invalid_usage");
+    await writeFile(path.join(root, "work dir/conftest.py"), "def pytest_sessionstart(session):\n    raise RuntimeError('required not found timeout: diagnostic text must not classify errors')\n");
+    await configurePythonProject(root, (c) => { c.integration.python.command.args = ["-m", "pytest", "-c", "config space.ini", "python checks"]; });
+    const internal = await runPythonProject(root);
+    assert.equal(internal.code, 5, internal.stdout);
+    assert.equal(JSON.parse(internal.stdout).code, "pytest_internal_error");
+  });
 });
