@@ -211,13 +211,28 @@ export async function discoverRuntimeSource() {
   return inspectRuntimeRoot(candidate);
 }
 
+// A distributed payload proves its origin and integrity independently of npm's bootstrap layout.
+export async function distributedRuntime() {
+  const packageManifest = await jsonFile(path.join(packageRoot, "package.json"), "Manifiesto del paquete");
+  if (packageManifest.name !== PRODUCT) throw new Error("El paquete no identifica el producto esperado");
+  const manifest = await jsonFile(path.join(packageRoot, "dist", "runtime", RUNTIME_PAYLOAD_MANIFEST), "Payload del runtime");
+  if (typeof manifest.source !== "string" || !manifest.source.trim() || /[\r\n]/u.test(manifest.source)) {
+    throw new Error("El payload no declara un origen válido");
+  }
+  const runtime = await assembledRuntime(packageRoot, {
+    root: packageRoot, source: manifest.source, version: packageManifest.version,
+    commit: manifest.commit,
+  });
+  validateRuntimeOwnership(runtime.manifest);
+  return runtime;
+}
+
 export function validateRuntimeOwnership(runtime) {
   if (runtime === undefined) return;
   const baseValid = plainObject(runtime)
     && runtime.path === ".agentic-core/runtime"
-    && /^github:KroxiDev\/agentic-core#[0-9a-f]{40}$/u.test(runtime.source)
-    && /^[0-9a-f]{40}$/u.test(runtime.commit)
-    && runtime.source === `${GITHUB_SPEC}#${runtime.commit}`
+    && typeof runtime.source === "string" && runtime.source.trim().length > 0 && !/[\r\n]/u.test(runtime.source)
+    && (runtime.commit === undefined || /^[0-9a-f]{40}$/u.test(runtime.commit))
     && /^[0-9a-f]{64}$/u.test(runtime.treeSha256)
     && Array.isArray(runtime.bins)
     && runtime.bins.length === BINS.length

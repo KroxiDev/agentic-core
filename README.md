@@ -1,12 +1,12 @@
 # agentic-core 0.2.0
 
-`@kroxidev/agentic-core` instala coordinación semántica explícita para Codex y Claude Code y un módulo determinista `QualitySession` para tests, C.R.A.P. diferencial y Mutation Testing. La coordinación se expresa como instrucciones breves; no es un reducer ni una frontera de seguridad del host.
+`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. La verificación de calidad y los nuevos modos del rediseño #38 están pendientes de integración; esta instalación no emite `QUALITY_OK`. Las secciones de coordinación y `QualitySession` siguientes describen el esquema 2 conservado para instalaciones anteriores.
 
 ## Requisitos y soporte
 
 - Node.js 20 o posterior.
-- JavaScript, TypeScript y Python son los lenguajes soportados por los motores de calidad.
-- Python solo es necesario al analizar proyectos Python. `coverage.py` es opcional: sin cobertura atribuible, C.R.A.P. no inventa un baseline cero.
+- Las instalaciones nuevas admiten solo Codex y Python 3.11 o superior; el runner declarado es pytest.
+- Las herramientas privadas son dry4python 0.1.0, crap4py 0.1.1 y mutate4py 0.1.4. La versión efectiva se comprueba; no se garantiza toda sintaxis futura.
 - CodeGraph y Engram son integraciones opcionales de descubrimiento y memoria; no son requisitos del runtime.
 
 | Plataforma | Nivel de soporte |
@@ -33,8 +33,8 @@ La instalación ejecuta `prepare` y construye `dist/runtime/agentic-core.mjs`. S
 Desde la raíz del proyecto destino:
 
 ```powershell
-npx.cmd --yes github:KroxiDev/agentic-core init . --dry-run
-npx.cmd --yes github:KroxiDev/agentic-core init .
+npx.cmd --yes github:KroxiDev/agentic-core init . --provider codex --language python --dry-run
+npx.cmd --yes github:KroxiDev/agentic-core init . --provider codex --language python
 ```
 
 #### Esquema CLI
@@ -42,13 +42,16 @@ npx.cmd --yes github:KroxiDev/agentic-core init .
 | Opción | Valor | Requerida | Repetible |
 | --- | --- | --- | --- |
 | `--dry-run` | — | No | No |
-| `--replace-conflicts` | — | No | No |
+| `--provider` | <proveedor> | No | No |
+| `--language` | <lenguaje> | No | No |
+| `--python` | <intérprete> | No | No |
+| `--config` | <archivo> | No | No |
 
-El `--yes` anterior a la URL pertenece a `npx` y autoriza su instalación temporal; no es una opción de `agentic-core`. `agentic-core init` no acepta `--yes`: solo `--replace-conflicts` autoriza de forma explícita el reemplazo de conflictos aislados.
+Sin selección explícita, una terminal interactiva pregunta proveedor y lenguaje. En pipes se requieren las opciones o un archivo completo mediante `--config`. El esquema cerrado se instala en `.agentic-core/config.schema.json`. `AGENTIC_CORE_PYTHON` prevalece sobre `--python`, la configuración y la autodetección de `.venv` y PATH.
 
-La invocación resuelve una revisión de `KroxiDev/agentic-core`, valida el runtime y persiste un conjunto autocontenido bajo `.agentic-core/runtime`. El runtime final no conserva `_npx`, `node_modules`, `package.json` ni lockfiles del entorno efímero. Su manifiesto registra el inventario final, hashes por archivo y `treeSha256`; no necesita que el paquete esté publicado en npm.
+El payload se valida por origen declarado, inventario y hashes, independientemente del bootstrap. El runtime queda en `.agentic-core/runtime` y las herramientas en `.agentic-core/tools`, sin modificar dependencias, manifests, lockfiles ni el entorno del consumidor. Los wheels y licencias viajan con el paquete; instalar no requiere red. La operación rechaza conflictos y revierte sus escrituras ante fallos.
 
-La instalación añade recursos gestionados para ambos hosts, un bloque breve en `AGENTS.md` y `CLAUDE.md`, y declara `.agentic-core/quality` como directorio propio generado. El recurso gestionado `.agentic-core/.gitignore` excluye únicamente `/quality/` para que la evidencia local no entre accidentalmente en Git. Una instalación nueva no crea `.agentic-core/runs`.
+La integración añade únicamente un bloque de Codex a `AGENTS.md`, conserva su contenido previo y la política canónica en `.agentic-core/golden-rules.md`. El ignore local excluye `/quality/` y `/tools/`.
 
 ## Actualización
 
@@ -65,6 +68,8 @@ npx.cmd --yes github:KroxiDev/agentic-core update .
 | --- | --- | --- | --- |
 | `--dry-run` | — | No | No |
 | `--force` | — | No | No |
+
+En el esquema 3, actualizar, migrar y desinstalar quedan pendientes de #57; los comandos informan esa limitación sin modificar archivos. El resto de esta sección describe el esquema 2.
 
 `update` comprueba ownership e integridad antes de reemplazar recursos de forma transaccional. `--force` solo autoriza reemplazar recursos propios divergentes; no autoriza cambios ajenos. Al migrar una instalación anterior, elimina el runtime de protocolo que todavía sea reconociblemente propio, instala la política semántica y conserva `.agentic-core/runs` como estado legacy sin interpretarlo ni reclamarlo como estado vigente.
 
@@ -85,7 +90,9 @@ npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair
 | `--dry-run` | — | No | No |
 | `--repair` | — | No | No |
 
-`doctor` valida recursos, bloques gestionados, configuración, runtime autocontenido, ownership, hashes e integridad de `QualitySession`. Las sesiones o recibos corruptos se reportan y preservan; no se reescribe evidencia histórica. Los directorios operativos del runtime anterior se informan como estado legacy preservado.
+En el esquema 3, `doctor` explica configuración, límites, intérpretes y versiones, y comprueba la integridad del runtime y las herramientas sin ejecutar la suite del consumidor. `--repair` queda reservado al esquema 2.
+
+En el esquema 2, `doctor` valida recursos, bloques gestionados, configuración, runtime autocontenido, ownership, hashes e integridad de `QualitySession`. Las sesiones o recibos corruptos se reportan y preservan; no se reescribe evidencia histórica. Los directorios operativos del runtime anterior se informan como estado legacy preservado.
 
 ## Desinstalación
 
@@ -103,11 +110,11 @@ npx.cmd --yes github:KroxiDev/agentic-core uninstall .
 | `--dry-run` | — | No | No |
 | `--force` | — | No | No |
 
-La desinstalación retira transaccionalmente los recursos propios no divergentes y `.agentic-core/quality`. Conserva archivos ajenos, recursos divergentes no autorizados y `.agentic-core/runs` legacy para revisión manual.
+En el esquema 2, la desinstalación retira transaccionalmente los recursos propios no divergentes y `.agentic-core/quality`. Conserva archivos ajenos, recursos divergentes no autorizados y `.agentic-core/runs` legacy para revisión manual.
 
 ## Formato de salida
 
-Los comandos de mantenimiento conservan su salida humana en terminal y su representación estructurada cuando se capturan. `AGENTIC_CORE_OUTPUT=json` solicita JSON generado por el programa.
+Las instalaciones del esquema 3 usan español neutro y salida breve tanto en terminal como en pipes. El esquema 2 conserva su representación estructurada al capturar la salida. `AGENTIC_CORE_OUTPUT=json` solicita JSON generado por el programa.
 
 `prepare` y `verify` usan por defecto recibos de una línea, estables y aptos para el contexto de un agente. Con `AGENTIC_CORE_OUTPUT=json` devuelven el mismo resultado como objeto JSON; el modelo nunca redacta ni entrega un payload JSON de entrada.
 

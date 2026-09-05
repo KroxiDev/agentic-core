@@ -97,8 +97,8 @@ async function persistedInvocation(projectRoot, owner, command) {
     && [...BINS.keys()].every((bin, index) => runtime.bins[index] === bin);
   if (!plainObject(runtime) || typeof owner.version !== "string"
     || runtime.path !== ".agentic-core/runtime"
-    || !/^[0-9a-f]{40}$/u.test(runtime.commit)
-    || runtime.source !== `github:KroxiDev/agentic-core#${runtime.commit}`
+    || (runtime.commit !== undefined && !/^[0-9a-f]{40}$/u.test(runtime.commit))
+    || typeof runtime.source !== "string" || !runtime.source.trim() || /[\r\n]/u.test(runtime.source)
     || !/^[0-9a-f]{64}$/u.test(runtime.treeSha256) || !binsValid) {
     throw new Error("The persisted runtime ownership metadata is invalid");
   }

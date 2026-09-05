@@ -11,7 +11,7 @@ import { hashDirectory } from "../src/transaction.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
-const maintenanceCli = path.join(repositoryRoot, "bin", "agentic-core.js");
+const maintenanceCli = path.join(repositoryRoot, "test", "support", "legacy-maintenance.mjs");
 
 async function createProject(t) {
   const project = await mkdtemp(path.join(tmpdir(), "agentic core project "));

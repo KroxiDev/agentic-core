@@ -34,7 +34,7 @@ test("CLI binaries explain how to build a missing generated runtime", async (t) 
       (error) => {
         assert.equal(error.code, 1, binary);
         assert.equal(error.stdout, "", binary);
-        assert.match(error.stderr, /generated runtime is missing/i, binary);
+        assert.match(error.stderr, /falta el runtime generado/i, binary);
         assert.match(error.stderr, /npm install/, binary);
         assert.doesNotMatch(error.stderr, /ERR_MODULE_NOT_FOUND|Cannot find module/i, binary);
         return true;
@@ -58,7 +58,7 @@ test("CLI binaries preserve failures inside an existing generated runtime", asyn
       assert.equal(error.stdout, "", binary);
       assert.match(error.stderr, /ERR_MODULE_NOT_FOUND/, binary);
       assert.match(error.stderr, /missing-transitive-module\.mjs/, binary);
-      assert.doesNotMatch(error.stderr, /generated runtime is missing/i, binary);
+      assert.doesNotMatch(error.stderr, /falta el runtime generado/i, binary);
       return true;
     });
   }

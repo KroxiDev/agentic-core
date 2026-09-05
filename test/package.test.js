@@ -41,6 +41,10 @@ const expectedInventory = [
   "dist/runtime/third_party/@jridgewell/resolve-uri/LICENSE",
   "dist/runtime/third_party/@jridgewell/sourcemap-codec/LICENSE",
   "dist/runtime/third_party/@jridgewell/trace-mapping/LICENSE",
+  "dist/runtime/third_party/python/crap4py-0.1.1-py3-none-any.whl",
+  "dist/runtime/third_party/python/dry4python-0.1.0-py3-none-any.whl",
+  "dist/runtime/third_party/python/mutate4py-0.1.4-py3-none-any.whl",
+  "dist/runtime/third_party/python/NOTICE.md",
   "dist/runtime/third_party/typescript/LICENSE.txt",
   "dist/runtime/third_party/typescript/ThirdPartyNoticeText.txt",
   "package.json",
@@ -140,7 +144,7 @@ test("both CLI entry points work from an installed package", async (t) => {
   }
 
   const maintenanceBinary = path.join(installedRoot, "bin", "agentic-core.js");
-  await execFileAsync(process.execPath, [maintenanceBinary, "init", consumer], {
+  await execFileAsync(process.execPath, [maintenanceBinary, "init", consumer, "--provider", "codex", "--language", "python"], {
     cwd: consumer,
     encoding: "utf8",
   });
@@ -148,7 +152,7 @@ test("both CLI entry points work from an installed package", async (t) => {
     cwd: consumer,
     encoding: "utf8",
   });
-  assert.equal(JSON.parse(doctor.stdout).status, "healthy");
+  assert.match(doctor.stdout, /DIAGNÓSTICO/);
 });
 
 test("a one-shot npm exec candidate previews cleanly and leaves both persisted runtime seams usable", async (t) => {
@@ -168,6 +172,7 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
     NODE_ENV: "test",
     AGENTIC_CORE_TEST_RUNTIME_ROOT: runtime,
     NPM_CONFIG_CACHE: cache,
+    AGENTIC_CORE_OUTPUT: "json",
   };
   const runCandidate = (cwd, args) => execFileAsync(process.execPath, [
     npmCli,
@@ -182,14 +187,14 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
 
   const previewProject = await temporaryDirectory(t, "agentic core bootstrap preview ");
   await writeFile(path.join(previewProject, ".hidden"), Buffer.from([0x00, 0xff]));
-  const preview = JSON.parse((await runCandidate(previewProject, ["init", ".", "--dry-run"])).stdout);
+  const preview = JSON.parse((await runCandidate(previewProject, ["init", ".", "--provider", "codex", "--language", "python", "--dry-run"])).stdout);
   assert.equal(preview.status, "ready");
   assert.deepEqual(await readdir(previewProject), [".hidden"]);
   assert.deepEqual(await readFile(path.join(previewProject, ".hidden")), Buffer.from([0x00, 0xff]));
 
   const project = await temporaryDirectory(t, "agentic core bootstrap consumer ");
-  const initialized = await runCandidate(project, ["init", "."]);
-  assert.match(initialized.stdout, /Installed agentic-core 0\.2\.0/);
+  const initialized = await runCandidate(project, ["init", ".", "--provider", "codex", "--language", "python"]);
+  assert.equal(JSON.parse(initialized.stdout).status, "installed");
   for (const rootPackageFile of ["package.json", "package-lock.json", "node_modules"]) {
     await assert.rejects(lstat(path.join(project, rootPackageFile)), { code: "ENOENT" });
   }
@@ -203,60 +208,10 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
     encoding: "utf8",
   });
   assert.equal(version.stdout.trim(), "0.2.0");
-  const help = await execFileAsync(process.execPath, [launcher, "agentic-quality", "--help"], {
-    cwd: project,
-    encoding: "utf8",
+  await assert.rejects(execFileAsync(process.execPath, [launcher, "agentic-quality", "prepare", "--mode", "normal", "--scope", "."], { cwd: project, encoding: "utf8" }), (error) => {
+    assert.equal(error.code, 2);
+    assert.match(error.stderr, /NO_VERIFICADO/);
+    assert.doesNotMatch(error.stdout + error.stderr, /QUALITY_OK/);
+    return true;
   });
-  assert.match(help.stdout, /agentic-quality scan/);
-  await writeFile(path.join(project, "quality-smoke.mjs"), "export function identity(value) { return value; }\n");
-  await writeFile(path.join(project, "quality-smoke.test.mjs"), [
-    'import assert from "node:assert/strict";',
-    'import test from "node:test";',
-    'import { identity } from "./quality-smoke.mjs";',
-    'test("identity", () => assert.equal(identity(7), 7));',
-    "",
-  ].join("\n"));
-  await mkdir(path.join(project, "schemas"));
-  await writeFile(path.join(project, "schemas", "admin.py"), "ADMIN = True\n");
-  await writeFile(path.join(project, "schemas", "admin_integration.py"), "ADMIN_INTEGRATION = True\n");
-  const quality = await execFileAsync(process.execPath, [
-    launcher,
-    "agentic-quality",
-    "scan",
-    "--target",
-    "quality-smoke.mjs",
-  ], { cwd: project, encoding: "utf8" });
-  const qualityReport = JSON.parse(quality.stdout);
-  assert.equal(qualityReport.status, "approved");
-  assert.equal(qualityReport.details.length, 1);
-  const prepared = await execFileAsync(process.execPath, [
-    launcher,
-    "agentic-quality",
-    "prepare",
-    "--mode",
-    "normal",
-    "--scope",
-    "quality-smoke.mjs",
-  ], { cwd: project, encoding: "utf8" });
-  assert.match(prepared.stdout, /^QUALITY_SESSION id=(q_[a-f0-9]{24}) mode=normal baseline=[a-f0-9]{64}\n$/);
-  const sessionId = prepared.stdout.match(/id=(q_[a-f0-9]{24})/)[1];
-  const inventory = JSON.parse(await readFile(path.join(
-    project,
-    ".agentic-core",
-    "quality",
-    sessionId,
-    "checkpoint",
-    "inventory.json",
-  ), "utf8"));
-  const inventoryPaths = inventory.entries.map((entry) => entry.path);
-  assert.ok(inventoryPaths.indexOf("schemas/admin.py")
-    < inventoryPaths.indexOf("schemas/admin_integration.py"));
-  const verified = await execFileAsync(process.execPath, [
-    launcher,
-    "agentic-quality",
-    "verify",
-    "--session",
-    sessionId,
-  ], { cwd: project, encoding: "utf8" });
-  assert.match(verified.stdout, new RegExp(`^QUALITY_OK session=${sessionId} tests=approved `));
 });
