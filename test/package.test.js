@@ -210,7 +210,7 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
     encoding: "utf8",
   });
   assert.equal(version.stdout.trim(), "0.2.0");
-  await assert.rejects(execFileAsync(process.execPath, [launcher, "agentic-quality", "prepare", "--mode", "normal", "--scope", "."], { cwd: project, encoding: "utf8" }), (error) => {
+  await assert.rejects(execFileAsync(process.execPath, [launcher, "agentic-quality", "prepare", "--task", "installation", "--mode", "normal", "--objective", "installation"], { cwd: project, encoding: "utf8" }), (error) => {
     assert.equal(error.code, 2);
     assert.match(error.stdout + error.stderr, /NO_VERIFICADO/);
     assert.doesNotMatch(error.stdout + error.stderr, /QUALITY_OK/);

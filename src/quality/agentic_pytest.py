@@ -1,6 +1,7 @@
 """Private pytest observer: preserve collection and run coverage in the project Python."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -21,6 +22,7 @@ _state = {
 }
 _coverage = None
 _phases = {"setup": 0, "call": 0, "teardown": 0}
+_failures = []
 _root = Path(_settings["projectRoot"]).resolve()
 _measured = {str((_root / file).resolve()): file for file in _settings["measured"]}
 
@@ -79,6 +81,14 @@ def pytest_runtest_logreport(report):
     # Collection and fixture coverage do not prove that pytest reached a test call.
     if report.when in _phases:
         _phases[report.when] += 1
+    if report.failed:
+        # Parameter values and traceback text can contain private runtime data.
+        _failures.append({
+            "id": hashlib.sha256(report.nodeid.encode("utf-8")).hexdigest(),
+            "path": _public_path(report.location[0]),
+            "line": report.location[1] + 1,
+            "phase": report.when,
+        })
 
 
 def pytest_collection_finish(session):
@@ -102,6 +112,7 @@ def pytest_sessionfinish(session, exitstatus):
         "collected": session.testscollected,
         "failed": session.testsfailed,
         "phases": dict(_phases),
+        "failures": list(_failures),
         "root": _public_path(session.config.rootpath),
         "configuration": _public_path(session.config.inipath),
     }

@@ -4,6 +4,7 @@ import { runMaintenanceCli } from "./maintenance-cli.js";
 import { runQualityCli } from "./quality-cli.js";
 import { isPythonInstallation } from "./installation/install.js";
 import { runPythonQualityCli } from "./quality/python-project.js";
+import { runTaskQualityCli } from "./quality/task-baseline.js";
 
 const [seam, ...args] = process.argv.slice(2);
 
@@ -12,7 +13,7 @@ try {
     process.exitCode = await runMaintenanceCli(args);
   } else if (seam === "agentic-quality") {
     if (await isPythonInstallation(process.cwd())) {
-      process.exitCode = await runPythonQualityCli(args);
+      process.exitCode = await (["prepare", "baseline", "verify"].includes(args[0]) ? runTaskQualityCli(args) : runPythonQualityCli(args));
     } else process.exitCode = await runQualityCli(args);
   } else {
     throw new Error(`Unsupported agentic runtime seam: ${String(seam)}`);

@@ -53,6 +53,20 @@ El payload se valida por origen declarado, inventario y hashes, independientemen
 
 La integración añade únicamente un bloque de Codex a `AGENTS.md`, conserva su contenido previo y la política canónica en `.agentic-core/golden-rules.md`. El ignore local excluye `/quality/` y `/tools/`.
 
+## Baseline de tarea Python (esquema 3)
+
+Antes de editar en Light, Normal o Full, prepare el estado real del worktree con el alcance e inputs de `config.json`:
+
+```powershell
+node .agentic-core/runtime-launcher.mjs agentic-quality prepare --task arreglo-43 --mode normal --objective issue:43 --repair-test tests/test_subject.py
+node .agentic-core/runtime-launcher.mjs agentic-quality baseline
+node .agentic-core/runtime-launcher.mjs agentic-quality verify
+```
+
+`--repair-test` es opcional y repetible: identifica archivos de pruebas cuyos fallos iniciales pertenecen al encargo. Los demás fallos se informan como ajenos y no amplían el alcance. El baseline conserva código, inputs no versionados, cobertura y evidencia de fallos sin usar el diff contra HEAD para atribuir autoría. Los errores de entorno, fixtures o integridad producen `NO_VERIFICADO`; no se confunden con fallos del cuerpo de un test.
+
+La referencia breve `.agentic-core/quality/active-task.json` contiene el objetivo, alcance e inicio inmutable de la tarea. Repetir `prepare` conserva ese inicio, incluso después de cambios; `baseline` compara inputs y condiciones actuales sin ejecutar pytest. Un cambio de pruebas, comando, configuración, runtime, dependencias o recursos vuelve obsoleta la evidencia afectada. `verify` exige la suite final aprobada; los controles agregados posteriores siguen pendientes y todavía no emite `QUALITY_OK`. Directo puede usar `test` sin preparar una tarea. Una tarea distinta no reemplaza automáticamente la evidencia activa.
+
 ## Actualización
 
 ### `agentic-core update`
