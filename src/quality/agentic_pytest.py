@@ -20,6 +20,7 @@ _state = {
     "coverage": {"status": "unknown", "files": None},
 }
 _coverage = None
+_phases = {"setup": 0, "call": 0, "teardown": 0}
 
 
 def _save():
@@ -59,13 +60,23 @@ def pytest_load_initial_conftests(early_config, parser, args):
         pytest.exit("No se pudo iniciar la cobertura privada", returncode=2)
 
 
+def pytest_runtest_logreport(report):
+    # Collection and fixture coverage do not prove that pytest reached a test call.
+    if report.when in _phases:
+        _phases[report.when] += 1
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
+    status = "failed"
+    if int(exitstatus) == 0:
+        status = "passed" if _phases["call"] else "not_executed"
     _state["suite"] = {
-        "status": "passed" if int(exitstatus) == 0 else "failed",
+        "status": status,
         "exitCode": int(exitstatus),
         "collected": session.testscollected,
         "failed": session.testsfailed,
+        "phases": dict(_phases),
         "root": str(session.config.rootpath),
         "configuration": str(session.config.inipath) if session.config.inipath else None,
         "args": list(session.config.invocation_params.args),

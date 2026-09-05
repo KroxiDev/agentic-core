@@ -91,6 +91,10 @@ async function observe(root, config, python, context, temporary) {
     return { ...common, code, exitCode, message: "La ejecución de pytest no aprobó; consulte el estado y código de la suite" };
   }
   if (execution.exitCode !== 0) return { ...common, code: "command_failed", exitCode: 1, message: "El wrapper terminó con un fallo después de pytest" };
+  if (suite.status !== "passed" || !Number.isInteger(suite.phases?.call) || suite.phases.call <= 0) {
+    return { ...common, code: "tests_not_executed", exitCode: 2,
+      message: "Pytest terminó sin evidencia de ejecución de tests; la recolección y la preparación no permiten aprobar" };
+  }
   if (observed.coverage.status !== "measured" || !Object.keys(observed.coverage.files ?? {}).length) {
     return { ...common, code: "coverage_failed", exitCode: 2, message: "La suite terminó, pero falta cobertura atribuible; no se asume cobertura cero" };
   }
@@ -124,7 +128,7 @@ export async function runProjectTests(projectRoot) {
 
 export async function runPythonQualityCli(args, io = process) {
   if (args.length === 0 || (args.length === 1 && ["--help", "-h"].includes(args[0]))) {
-    io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json y devuelve cobertura privada (LCOV relativo al directorio temporal de la ejecución).\nCódigos: 0 suite aprobada; 1 fallo; 2 entorno o cobertura no soportados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
+    io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json y devuelve cobertura privada (LCOV relativo al directorio temporal de la ejecución).\nCódigos: 0 suite aprobada; 1 fallo; 2 entorno o cobertura no soportados, o tests no ejecutados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
     return 0;
   }
   const result = args.length === 1 && args[0] === "test" ? await runProjectTests(process.cwd())
