@@ -13,12 +13,38 @@ const END = "<!-- AGENTIC_CORE_END -->";
 const BLOCK = `${START}
 ## agentic-core
 
-Antes de modificar código, sigue la política canónica de \`.agentic-core/golden-rules.md\`.
+Antes de atender la tarea, lee y aplica \`.agentic-core/golden-rules.md\`.
 Esta instalación integra Codex y una unidad Python 3.11+; consulta su configuración con
 \`node .agentic-core/runtime-launcher.mjs agentic-core doctor\`.
-Las solicitudes ordinarias se atienden directamente con las comprobaciones pertinentes.
-La verificación de calidad y los modos orquestados de esta entrega están pendientes de integración.
-Ante \`Orquesta\`, \`/orquestar\` o \`$orquestar\`, informa esa limitación sin anunciar un aprobado.
+
+### Selección de modo
+
+- Sin \`Orquesta\`, \`/orquestar\` o \`$orquestar\` al comienzo de la solicitud, usa Directo.
+  Una mención posterior o un ejemplo citado no activa la orquestación.
+- Con cualquiera de esos tres activadores al comienzo, reconoce el modo explícito que le sigue:
+  Directo, Light, Normal o Full (sin distinguir mayúsculas); si se omite el modo, usa Normal.
+- Respeta el modo elegido por el usuario durante toda la tarea: no lo cuestiones,
+  no recomiendes sustituirlo ni lo cambies ante dificultades.
+
+### Directo
+
+Resuelve el encargo con un único agente, las Golden Rules y las comprobaciones pertinentes
+de la tarea. Directo no despacha subagentes ni impone baseline, preparación de calidad,
+flujo orquestado o recibo \`QUALITY_OK\`. Informa el resultado y las verificaciones realmente
+ejecutadas; identifica cualquier comprobación pendiente sin inventar un aprobado.
+
+Una petición ordinaria de documentación también se resuelve en Directo. La ausencia de
+Documentador no agrega trabajo documental a otro encargo; puedes recomendarlo en el cierre
+si corresponde y el usuario decide. Documentador requiere petición expresa y, en un flujo
+orquestado, es siempre el último subagente, después del trabajo técnico y sus correcciones.
+
+### Light, Normal y Full
+
+Conserva el modo seleccionado e informa que su secuencia y verificación están pendientes
+de integración en #51 (Light), #52 (Normal) y #53 (Full). Esta entrega no las ejecuta ni
+las presenta como validadas: no despaches roles genéricos, no uses el flujo legacy del
+esquema 2 ni prepares calidad para suplirlas. La integración continuará en esta superficie
+nativa de Codex, sin otro proveedor ni un protocolo externo de coordinación.
 ${END}`;
 const json = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
 const hash = (value) => createHash("sha256").update(value).digest("hex");

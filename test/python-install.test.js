@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -77,6 +78,16 @@ test("private tools and installed runtime survive the bootstrap and remain indep
     assert.equal(JSON.parse(installed.stdout).status, "installed");
     assert.ok(!(await readdir(project)).includes("node_modules"));
     assert.ok(!(await readdir(project)).includes(".claude"));
+    const agents = await readFile(path.join(project, "AGENTS.md"), "utf8");
+    const block = agents.match(/<!-- AGENTIC_CORE_START -->[\s\S]*?<!-- AGENTIC_CORE_END -->/gu);
+    assert.equal(block?.length, 1);
+    const owner = JSON.parse(await readFile(path.join(project, ".agentic-core/ownership.json"), "utf8"));
+    assert.equal(owner.managedBlocks[0].sha256, createHash("sha256").update(block[0]).digest("hex"));
+    assert.deepEqual(await readFile(path.join(project, ".agentic-core/golden-rules.md")),
+      await readFile(path.join(repository, "golden-rules.md")));
+    assert.ok(!(await readdir(path.join(project, ".agentic-core"))).includes("quality"));
+    assert.ok(!(await readdir(project)).includes(".codex"));
+    assert.ok(!(await readdir(project)).includes(".agents"));
   }
   await rm(bootstrap, { recursive: true });
   for (const [file, content] of preserved) assert.deepEqual(await readFile(path.join(root, file)), content);

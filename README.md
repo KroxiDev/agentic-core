@@ -1,6 +1,6 @@
 # agentic-core 0.2.0
 
-`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. La verificación de calidad y los nuevos modos del rediseño #38 están pendientes de integración; esta instalación no emite `QUALITY_OK`. Las secciones de coordinación y `QualitySession` siguientes describen el esquema 2 conservado para instalaciones anteriores.
+`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. Directo aplica las Golden Rules y las comprobaciones pertinentes del encargo. La verificación de calidad y las secuencias Light, Normal y Full del rediseño #38 están pendientes de integración; esta instalación no emite `QUALITY_OK`. Las secciones de coordinación y `QualitySession` del esquema 2 se conservan para instalaciones anteriores.
 
 ## Requisitos y soporte
 
@@ -119,6 +119,30 @@ Las instalaciones del esquema 3 usan español neutro y salida breve tanto en ter
 `prepare` y `verify` usan por defecto recibos de una línea, estables y aptos para el contexto de un agente. Con `AGENTIC_CORE_OUTPUT=json` devuelven el mismo resultado como objeto JSON; el modelo nunca redacta ni entrega un payload JSON de entrada.
 
 ## Activación explícita y modo directo
+
+### Instalaciones nuevas (esquema 3)
+
+El bloque instalado en `AGENTS.md` selecciona Directo para solicitudes sin activador al comienzo.
+`Orquesta`, `/orquestar` y `$orquestar` reconocen Directo, Light, Normal y Full como modo
+explícito inmediatamente posterior, sin distinguir mayúsculas en el modo. Sin modo explícito,
+seleccionan Normal. Las menciones posteriores y los ejemplos citados no activan la orquestación.
+El usuario elige el modo; la capa lo conserva sin cuestionarlo ni recomendar otro.
+
+Directo resuelve el encargo con un único agente, conserva las Golden Rules y permite las
+comprobaciones pertinentes sin imponer baseline, preparación de calidad o `QUALITY_OK`.
+Por ejemplo, `Corrige esta función` y `Orquesta Directo corrige esta función` usan Directo;
+`/orquestar` selecciona Normal y comunica que su secuencia sigue pendiente.
+
+Una solicitud ordinaria de documentación también es un encargo directo. La ausencia de
+Documentador no añade documentación a otras tareas; puede recomendarse al cerrar el encargo.
+En un flujo orquestado, Documentador requiere petición expresa y actúa siempre al final.
+
+Light, Normal y Full se reconocen, pero sus secuencias y verificaciones quedan pendientes
+de #51, #52 y #53. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección vive
+en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
+La verificación de archivos instalados no acredita por sí sola el comportamiento en Codex real.
+
+### Instalaciones anteriores (esquema 2)
 
 Una solicitud que comienza con `Orquesta`, `/orquestar` o `$orquestar` debe cargar y seguir la skill instalada `.agents/skills/orquestar/SKILL.md`. `Orquesta` sin modo significa `normal`. Esta garantía positiva vive en los bloques gestionados de `AGENTS.md` y `CLAUDE.md`, de modo que `Orquesta normal` no se resuelve con agentes genéricos sin cargar la skill.
 
