@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -91,6 +91,9 @@ for (const scenario of [
   { name: "teardown assertion", phase: "teardown" },
   { name: "setup explicit failure", phase: "setup", explicit: true },
   { name: "setup production exception", phase: "setup", exception: true },
+  { name: "grouped teardown assertions", phase: "teardown", group: "native" },
+  { name: "nested setup assertions", phase: "setup", group: "nested" },
+  { name: "nested teardown production exception", phase: "teardown", group: "nested", exception: true },
   { name: "pytest root outside cwd", phase: "call" },
 ]) {
   test(`installed task baseline accepts repairable production failure with ${scenario.name}`, async (t) => {
@@ -100,7 +103,14 @@ for (const scenario of [
     const original = await readFile(subject, "utf8");
     if (scenario.phase !== "call") {
       const fixture = scenario.phase === "teardown" ? "    yield\n" : "";
-      const check = scenario.explicit ? "if classify(1) != 'positive':\n        pytest.fail('production check failed')" : "assert classify(1) == 'positive'";
+      let check = scenario.explicit ? "if classify(1) != 'positive':\n        pytest.fail('production check failed')" : "assert classify(1) == 'positive'";
+      if (scenario.group === "nested") check = `try:
+        assert classify(1) == 'positive'
+    except BaseException as error:
+        raise BaseExceptionGroup('private group detail 43', [
+            AssertionError('private check detail 43'),
+            BaseExceptionGroup('nested', [error, pytest.fail.Exception('explicit check')]),
+        ])`;
       await writeFile(path.join(root, testPath), `import pytest
 from src.subject import classify
 
@@ -108,6 +118,11 @@ from src.subject import classify
 def check_production():
 ${fixture}    ${check}
 
+${scenario.group === "native" ? `@pytest.fixture(autouse=True)
+def another_check():
+    yield
+    assert classify(1) == 'positive'
+` : ""}
 def test_subject():
     assert classify(0) == 'other'
 `);
@@ -154,7 +169,114 @@ def test_subject():
     assert.equal(await readFile(subject, "utf8"), original);
     assert.doesNotMatch(first.stdout + final.stdout, /QUALITY_OK/u);
     assert.ok(!first.stdout.includes(root) && !first.stdout.includes(root.replaceAll("\\", "/")));
+    assert.doesNotMatch(first.stdout, /private group detail 43|private check detail 43/u);
   });
+}
+
+for (const phase of ["setup", "call", "teardown"]) {
+  test(`installed task baseline rejects a nested mixed unattributed group during ${phase}`, async (t) => {
+    const { root } = await pythonProject(t);
+    const testPath = "work dir/python checks/check_subject.py";
+    const subject = path.join(root, "work dir/src/subject.py");
+    const original = await readFile(subject, "utf8");
+    await writeFile(path.join(root, testPath), `import pytest
+from src.subject import classify
+${phase === "call" ? "" : `@pytest.fixture(autouse=True)
+def check_production():
+${phase === "teardown" ? "    yield\n" : ""}    classify(1)
+`}
+def test_subject():
+    assert classify(${phase === "call" ? 1 : 0}) == '${phase === "call" ? "positive" : "other"}'
+`);
+    const positive = await runPythonProject(root);
+    assert.equal(positive.code, 0, positive.stdout + positive.stderr);
+    // A measured frame on the group cannot supply provenance for its unknown leaves.
+    const broken = original.replace("return 'positive'", "raise BaseExceptionGroup('private mixed group 43', [AssertionError('known check'), BaseExceptionGroup('nested', [RuntimeError('unknown preparation')])])");
+    await writeFile(subject, broken);
+    const first = await runPythonProject(root, prepare("normal", ["--repair-test", testPath]));
+    const report = parse(first);
+    assert.equal(first.code, 2, first.stdout + first.stderr);
+    assert.equal(report.status, "NO_VERIFICADO");
+    assert.equal(report.code, "pytest_failure_unattributed");
+    assert.equal(report.task.baseline.valid, false);
+    assert.equal(report.task.baseline.integrity.status, "preserved");
+    assert.equal(report.task.baseline.failures[0].phase, phase);
+    assert.equal(report.task.baseline.failures[0].disposition, "repair_in_task");
+    const evidence = path.join(root, report.task.reference);
+    const baseline = await readFile(evidence, "utf8");
+    await writeFile(subject, original);
+    const final = await runPythonProject(root, ["verify"]);
+    assert.equal(parse(final).result.code, "tests_passed");
+    assert.equal(parse(final).code, "baseline_invalid");
+    assert.equal(await readFile(evidence, "utf8"), baseline);
+    assert.doesNotMatch(first.stdout, /private mixed group 43|unknown preparation/u);
+  });
+
+  for (const grouped of [false, true]) {
+    test(`installed task baseline rejects an absent production dependency during ${phase}${grouped ? " in a nested group" : ""}`, async (t) => {
+      const { root, python } = await pythonProject(t);
+      const testPath = "work dir/python checks/check_subject.py";
+      const subject = path.join(root, "work dir/src/subject.py");
+      const source = (await readFile(subject, "utf8")).replace("def classify(value):", `def classify(value):
+    if value > 0:
+        from project_only_dependency import VALUE`);
+      await writeFile(subject, source);
+      const testSource = `import pytest
+from src.subject import classify
+
+def check_production():
+    try:
+        assert classify(1) == 'positive'
+    except BaseException as error:
+${grouped ? `        raise BaseExceptionGroup('private dependency detail 43', [
+            AssertionError('known check'),
+            BaseExceptionGroup('nested', [error, RuntimeError('unattributed')]),
+        ])` : "        raise"}
+
+${phase === "call" ? "" : `@pytest.fixture(autouse=True)
+def production_fixture():
+${phase === "teardown" ? "    yield\n" : ""}    check_production()
+`}
+def test_subject():
+    ${phase === "call" ? "check_production()" : "assert classify(0) == 'other'"}
+`;
+      await writeFile(path.join(root, testPath), testSource);
+      const positive = await runPythonProject(root);
+      assert.equal(positive.code, 0, positive.stdout + positive.stderr);
+      assert.equal(parse(positive).code, "tests_passed");
+      const dependency = (await execute(python, ["-c", "import project_only_dependency; print(project_only_dependency.__file__)"],
+        { encoding: "utf8", windowsHide: true, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } })).stdout.trim();
+      assert.ok(path.resolve(dependency).startsWith(path.resolve(root, ".venv") + path.sep));
+      const dependencySource = await readFile(dependency, "utf8");
+      await rm(dependency);
+      const first = await runPythonProject(root, prepare("normal", ["--repair-test", testPath]));
+      const report = parse(first);
+      assert.equal(first.code, 2, first.stdout + first.stderr);
+      assert.equal(report.code, "pytest_dependency_failed");
+      assert.equal(report.status, "NO_VERIFICADO");
+      assert.equal(report.task.baseline.valid, false);
+      assert.equal(report.task.baseline.code, "pytest_dependency_failed");
+      assert.equal(report.task.baseline.integrity.status, "preserved");
+      assert.equal(report.task.baseline.integrity.dependencies, "preserved");
+      assert.equal(report.task.baseline.failures[0].phase, phase);
+      assert.equal(report.task.baseline.failures[0].kind, "dependency_error");
+      assert.equal(report.task.baseline.failures[0].disposition, "repair_in_task");
+      assert.equal(report.task.baseline.suite.phases.call, phase === "setup" ? 0 : 1);
+      assert.equal(await readFile(subject, "utf8"), source);
+      assert.equal(await readFile(path.join(root, testPath), "utf8"), testSource);
+      const evidence = path.join(root, report.task.reference);
+      const baseline = await readFile(evidence, "utf8");
+      await writeFile(dependency, dependencySource);
+      const repeated = await runPythonProject(root, ["prepare"]);
+      assert.equal(repeated.code, 2);
+      assert.equal(parse(repeated).task.baseline.sha256, report.task.baseline.sha256);
+      const final = await runPythonProject(root, ["verify"]);
+      assert.equal(parse(final).result.code, "tests_passed");
+      assert.equal(parse(final).code, "baseline_invalid");
+      assert.equal(await readFile(evidence, "utf8"), baseline);
+      assert.doesNotMatch(first.stdout, /private dependency detail 43|ModuleNotFoundError|No module named/u);
+    });
+  }
 }
 
 for (const scenario of ["environment", "fixture", "fixture dependency", "integrity"]) {
@@ -172,7 +294,7 @@ for (const scenario of ["environment", "fixture", "fixture dependency", "integri
     assert.notEqual(report.code, "baseline_tests_failed");
     if (scenario === "integrity") assert.equal(report.code, "input_integrity_changed");
     if (scenario.startsWith("fixture")) {
-      assert.equal(report.code, "pytest_fixture_failed");
+      assert.equal(report.code, scenario === "fixture dependency" ? "pytest_dependency_failed" : "pytest_fixture_failed");
       assert.equal(report.task.baseline.failures[0].disposition, "repair_in_task");
     }
     const repeat = await runPythonProject(root, ["prepare"]);

@@ -99,6 +99,12 @@ async function observe(root, config, python, context, temporary) {
   }
   const pytestCodes = { 1: ["tests_failed", 1], 2: ["pytest_interrupted", 6], 3: ["pytest_internal_error", 5], 4: ["pytest_invalid_usage", 4], 5: ["no_tests_collected", 2] };
   if (suite.exitCode !== 0) {
+    if (suite.exitCode === 1 && suite.failures?.some((failure) => failure.kind === "dependency_error")) {
+      return { ...common, code: "pytest_dependency_failed", exitCode: 2, message: "Una importación falló en el entorno del proyecto; no se obtuvo una comprobación válida" };
+    }
+    if (suite.exitCode === 1 && suite.failures?.some((failure) => failure.kind === "unattributed_group")) {
+      return { ...common, code: "pytest_failure_unattributed", exitCode: 2, message: "Un grupo de errores contiene fallos sin atribución; no se obtuvo una comprobación válida" };
+    }
     if (suite.exitCode === 1 && suite.failures?.some((failure) => failure.phase !== "call" && !["assertion", "production_exception"].includes(failure.kind))) {
       return { ...common, code: "pytest_fixture_failed", exitCode: 2, message: "La preparación o limpieza de una prueba terminó con un error; no se obtuvo una comprobación válida" };
     }
