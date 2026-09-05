@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { InstallationError } from "./config.js";
 
 const execute = promisify(execFile);
-export const PYTHON_TOOLS = Object.freeze({ dry4python: "0.1.0", crap4py: "0.1.1", mutate4py: "0.1.4" });
+export const PYTHON_TOOLS = Object.freeze({ dry4python: "0.1.0", crap4py: "0.1.1", mutate4py: "0.1.4", coverage: "7.13.4" });
 export const privatePython = (root) => path.join(root, process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
 
 async function run(executable, args, cwd, timeout = 30000) {
@@ -48,7 +48,7 @@ export async function inspectTools(root) {
   const python = await inspectPython(executable, root);
   try {
     const { stdout } = await run(executable, ["-I", "-B", "-c",
-      "import json,importlib.metadata as m; import dry4python,crap4py,mutate4py; print(json.dumps({n:m.version(n) for n in ['dry4python','crap4py','mutate4py']}))"], root);
+      "import json,importlib.metadata as m; import dry4python,crap4py,mutate4py,coverage; print(json.dumps({n:m.version(n) for n in ['dry4python','crap4py','mutate4py','coverage']}))"], root);
     const versions = JSON.parse(stdout);
     for (const [name, version] of Object.entries(PYTHON_TOOLS)) {
       if (versions[name] !== version) throw new Error("version mismatch");

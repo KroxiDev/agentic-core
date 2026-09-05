@@ -27,10 +27,11 @@ const runtimeResources = [
 ].map((source) => ({ source, target: `resources/${source}` }));
 
 export const RUNTIME_PAYLOAD_COPIES = [
-  ...["dry4python-0.1.0-py3-none-any.whl", "crap4py-0.1.1-py3-none-any.whl", "mutate4py-0.1.4-py3-none-any.whl", "NOTICE.md"].map((name) => ({
+  ...["dry4python-0.1.0-py3-none-any.whl", "crap4py-0.1.1-py3-none-any.whl", "mutate4py-0.1.4-py3-none-any.whl", "coverage-7.13.4-py3-none-any.whl", "NOTICE.md"].map((name) => ({
     source: `third_party/python/${name}`, target: `third_party/python/${name}`,
   })),
   { source: "src/quality/python-helper.py", target: "python-helper.py" },
+  { source: "src/quality/agentic_pytest.py", target: "agentic_pytest.py" },
   { source: "LICENSE", target: "LICENSE" },
   { source: "THIRD_PARTY_NOTICES.md", target: "THIRD_PARTY_NOTICES.md" },
   { source: "node_modules/typescript/LICENSE.txt", target: "third_party/typescript/LICENSE.txt" },

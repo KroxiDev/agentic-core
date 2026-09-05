@@ -17,6 +17,7 @@ const expectedInventory = [
   "bin/agentic-core.js",
   "bin/agentic-quality.js",
   "bin/runtime-loader.js",
+  "dist/runtime/agentic_pytest.py",
   "dist/runtime/agentic-core.mjs",
   "dist/runtime/LICENSE",
   "dist/runtime/payload-manifest.json",
@@ -41,6 +42,7 @@ const expectedInventory = [
   "dist/runtime/third_party/@jridgewell/resolve-uri/LICENSE",
   "dist/runtime/third_party/@jridgewell/sourcemap-codec/LICENSE",
   "dist/runtime/third_party/@jridgewell/trace-mapping/LICENSE",
+  "dist/runtime/third_party/python/coverage-7.13.4-py3-none-any.whl",
   "dist/runtime/third_party/python/crap4py-0.1.1-py3-none-any.whl",
   "dist/runtime/third_party/python/dry4python-0.1.0-py3-none-any.whl",
   "dist/runtime/third_party/python/mutate4py-0.1.4-py3-none-any.whl",
@@ -210,7 +212,7 @@ test("a one-shot npm exec candidate previews cleanly and leaves both persisted r
   assert.equal(version.stdout.trim(), "0.2.0");
   await assert.rejects(execFileAsync(process.execPath, [launcher, "agentic-quality", "prepare", "--mode", "normal", "--scope", "."], { cwd: project, encoding: "utf8" }), (error) => {
     assert.equal(error.code, 2);
-    assert.match(error.stderr, /NO_VERIFICADO/);
+    assert.match(error.stdout + error.stderr, /NO_VERIFICADO/);
     assert.doesNotMatch(error.stdout + error.stderr, /QUALITY_OK/);
     return true;
   });

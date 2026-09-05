@@ -90,6 +90,9 @@ export async function installPythonProject(projectDirectory, options = {}) {
   let config = options.config ? await readConfiguration(path.resolve(options.config)) : undefined;
   const python = await resolvePython(project, options.python || config?.integration.python.interpreter);
   config ??= defaultConfiguration(python.executable);
+  if (config.integration.python.command.executable === config.integration.python.interpreter) {
+    config.integration.python.command.executable = python.executable;
+  }
   config.integration.python.interpreter = python.executable;
   validateConfiguration(config);
   let runtime;
