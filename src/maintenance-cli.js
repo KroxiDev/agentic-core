@@ -6,6 +6,7 @@ import {
 import { doctorInstallation } from "./doctor.js";
 import { initialize, uninstallInstallation, updateInstallation } from "./init.js";
 import { getVersion } from "./version.js";
+import { runInstallationCli } from "./installation/cli.js";
 
 const HELP = `Usage:
   agentic-core init [directory] [--replace-conflicts] [--dry-run]
@@ -16,6 +17,11 @@ const HELP = `Usage:
   agentic-core --help`;
 
 export async function runMaintenanceCli(args, io = process) {
+  const result = await runInstallationCli(args, io);
+  return result ?? runLegacyMaintenanceCli(args, io);
+}
+
+export async function runLegacyMaintenanceCli(args, io = process) {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
     io.stdout.write(`${HELP}\n`);
     return 0;

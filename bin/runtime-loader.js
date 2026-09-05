@@ -16,9 +16,9 @@ export async function runBinary(command) {
   process.argv.splice(2, 0, command);
   if (!await generatedRuntimeExists()) {
     console.error([
-      "agentic-core: generated runtime is missing.",
-      'Run "npm install" from the repository root, then try again.',
-      'If dependencies are already installed, run "npm run build:runtime".',
+      "agentic-core: falta el runtime generado.",
+      'Ejecute "npm install" desde la raíz del repositorio y vuelva a intentar.',
+      'Si las dependencias ya están instaladas, ejecute "npm run build:runtime".',
     ].join("\n"));
     process.exitCode = 1;
     return;

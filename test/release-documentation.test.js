@@ -233,10 +233,11 @@ test("every option documented for a command is accepted by that command parser",
         command,
         "first-directory",
         "second-directory",
-        ...schemaArguments(schema, {}),
+        ...schemaArguments(schema, { "--provider": "codex", "--language": "python", "--python": "python", "--config": "config.json" }),
       ]);
-      assert.equal(result.code, 2, publicCommand);
-      assert.equal(result.stderr.trim(), `${command} accepts at most one directory`);
+      assert.equal(result.code, command === "init" ? 4 : 2, publicCommand);
+      if (command === "init") assert.match(result.stderr, /Solo se admite un directorio/);
+      else assert.equal(result.stderr.trim(), `${command} accepts at most one directory`);
       return;
     }
 
@@ -290,15 +291,14 @@ test("the README keeps lifecycle, support, and runtime commitments as structure"
   const installation = commandSection(readme, "agentic-core init");
   const identifiers = inlineCode(installation.body);
   assertIncludesEach(identifiers, [
-    "--yes",
-    "npx",
-    "agentic-core init",
-    "--replace-conflicts",
+    "--provider",
+    "--language",
+    "--python",
+    "--config",
+    "AGENTIC_CORE_PYTHON",
     ".agentic-core/runtime",
-    "_npx",
-    "node_modules",
-    "package.json",
-    "treeSha256",
+    ".agentic-core/tools",
+    ".agentic-core/config.schema.json",
   ], "installation contract");
   assert.equal(documentedSchema(installation).some(({ option }) => option === "--yes"), false);
   assert.ok(fencedLines(installation.body).some((line) => (

@@ -61,8 +61,8 @@ test("maintenance dry-run accepts only canonical options once", async () => {
     ["doctor", ".", "--dry-run", "--force"],
   ]) {
     await assert.rejects(runBinary("bin/agentic-core.js", args), (error) => {
-      assert.equal(error.code, 2, args.join(" "));
-      assert.match(error.stderr, /Unknown option|specified more than once/);
+      assert.equal(error.code, args[0] === "init" ? 4 : 2, args.join(" "));
+      assert.match(error.stderr, /Unknown option|specified more than once|Opción/);
       return true;
     });
   }
@@ -73,9 +73,9 @@ test("init rejects the retired --yes option before changing the project", async 
   t.after(() => rm(root, { recursive: true, force: true }));
 
   await assert.rejects(runBinary("bin/agentic-core.js", ["init", root, "--yes"]), (error) => {
-    assert.equal(error.code, 2);
+    assert.equal(error.code, 4);
     assert.equal(error.stdout, "");
-    assert.match(error.stderr, /Unknown option: --yes/);
+    assert.match(error.stderr, /Opción desconocida o sin valor: --yes/);
     return true;
   });
   await assert.rejects(readdir(path.join(root, ".agentic-core")), { code: "ENOENT" });

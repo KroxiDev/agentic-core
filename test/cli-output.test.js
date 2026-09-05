@@ -8,7 +8,7 @@ import {
   formatQualityResult,
   writeCommandResult,
 } from "../src/cli-output.js";
-import { runMaintenanceCli } from "../src/maintenance-cli.js";
+import { runLegacyMaintenanceCli as runMaintenanceCli } from "../src/maintenance-cli.js";
 
 function capturedStream(isTTY) {
   let content = "";

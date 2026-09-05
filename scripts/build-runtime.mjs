@@ -111,6 +111,7 @@ export async function buildRuntimePayload(outputDirectory = defaultOutputDirecto
       type: "agentic-core-runtime-payload",
       product: PRODUCT,
       version: packageJson.version,
+      source: `npm:${packageJson.name}@${packageJson.version}`,
       format: RUNTIME_FORMAT,
       bins: RUNTIME_BINS,
       integrity: { algorithm: "sha256", files },

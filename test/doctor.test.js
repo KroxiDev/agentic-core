@@ -11,7 +11,7 @@ import { prepareQualitySession, verifyQualitySession } from "../src/quality/sess
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
-const maintenanceCli = path.join(repositoryRoot, "bin", "agentic-core.js");
+const maintenanceCli = path.join(repositoryRoot, "test", "support", "legacy-maintenance.mjs");
 
 async function createProject(t, prefix = "agentic doctor project with spaces ") {
   const project = await mkdtemp(path.join(tmpdir(), prefix));

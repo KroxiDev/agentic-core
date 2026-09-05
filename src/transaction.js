@@ -179,6 +179,9 @@ export async function writeTransaction(projectDirectory, operations, {
   const snapshots = new Map();
   for (const operation of operations) {
     const snapshot = await inspect(operation.path);
+    if (operation.type === "create_directory" && snapshot.kind !== "missing") {
+      throw new Error(`El destino ya existe: ${operation.path}`);
+    }
     if (snapshot.kind === "other"
       || (snapshot.kind === "directory" && !["delete", "replace_directory"].includes(operation.type))) {
       throw new Error(`Transaction target is not compatible with the operation: ${operation.path}`);
@@ -226,6 +229,13 @@ export async function writeTransaction(projectDirectory, operations, {
 
     let writeCount = 0;
     for (const operation of operations) {
+      if (operation.type === "create_directory") {
+        await mkdir(operation.path, { recursive: true });
+        await operation.prepare(operation.path);
+        writeCount += 1;
+        if (failAfterWrite === writeCount) throw new Error("Simulated transaction failure");
+        continue;
+      }
       if (operation.type === "delete") {
         await rm(operation.path, { recursive: true, force: true });
         writeCount += 1;
@@ -315,7 +325,10 @@ export async function writeTransaction(projectDirectory, operations, {
 
     if (restorationErrors.length > 0) {
       const backup = backupPreserved ? ` Backup preserved at ${backupRoot}` : "";
-      throw new Error(`Installation failed and restoration was incomplete.${backup}`, { cause: error });
+      const failure = new Error(`Installation failed and restoration was incomplete.${backup}`, { cause: error });
+      failure.code = "ERR_RESTORATION_FAILED";
+      failure.backupPath = backupPreserved ? backupRoot : undefined;
+      throw failure;
     }
     throw error;
   }
