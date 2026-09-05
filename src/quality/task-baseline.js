@@ -126,7 +126,7 @@ async function prepare(root, args) {
   const valid = !before.issues.length && result.integrity?.status === "preserved"
     && result.coverage?.status === "measured"
     && (result.code === "tests_passed" || result.code === "tests_failed" && result.suite?.failures?.length > 0
-      && result.suite.failures.every((failure) => failure.phase === "call" && failure.path));
+      && result.suite.failures.every((failure) => failure.path && (failure.phase === "call" || ["assertion", "production_exception"].includes(failure.kind))));
   const failures = (result.suite?.failures ?? []).map((failure) => ({ ...failure,
     disposition: requested.repairTests.includes(failure.path) ? "repair_in_task" : "outside_task" }));
   const task = { schemaVersion: 1, ...requested, scope: config.integration.python.scope,

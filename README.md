@@ -63,7 +63,7 @@ node .agentic-core/runtime-launcher.mjs agentic-quality baseline
 node .agentic-core/runtime-launcher.mjs agentic-quality verify
 ```
 
-`--repair-test` es opcional y repetible: identifica archivos de pruebas cuyos fallos iniciales pertenecen al encargo. Los demás fallos se informan como ajenos y no amplían el alcance. El baseline conserva código, inputs no versionados, cobertura y evidencia de fallos sin usar el diff contra HEAD para atribuir autoría. Los errores de entorno, fixtures o integridad producen `NO_VERIFICADO`; no se confunden con fallos del cuerpo de un test.
+`--repair-test` es opcional y repetible: identifica archivos de pruebas cuyos fallos iniciales pertenecen al encargo. Los demás fallos se informan como ajenos y no amplían el alcance. El baseline conserva código, inputs no versionados, cobertura y evidencia de fallos sin usar el diff contra HEAD para atribuir autoría. Los fallos de comprobación y los defectos atribuibles al código medido pueden conservarse como baseline fallido válido aunque se detecten en fixtures; los errores de entorno, integridad o preparación sin esa evidencia producen `NO_VERIFICADO`.
 
 La referencia breve `.agentic-core/quality/active-task.json` contiene el objetivo, alcance e inicio inmutable de la tarea. Repetir `prepare` conserva ese inicio, incluso después de cambios; `baseline` compara inputs y condiciones actuales sin ejecutar pytest. Un cambio de pruebas, comando, configuración, runtime, dependencias o recursos vuelve obsoleta la evidencia afectada. `verify` exige la suite final aprobada; los controles agregados posteriores siguen pendientes y todavía no emite `QUALITY_OK`. Directo puede usar `test` sin preparar una tarea. Una tarea distinta no reemplaza automáticamente la evidencia activa.
 

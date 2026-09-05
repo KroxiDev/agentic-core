@@ -86,20 +86,95 @@ for (const mode of ["light", "full"]) {
   });
 }
 
-for (const scenario of ["environment", "fixture", "integrity"]) {
+for (const scenario of [
+  { name: "setup assertion", phase: "setup" },
+  { name: "teardown assertion", phase: "teardown" },
+  { name: "setup explicit failure", phase: "setup", explicit: true },
+  { name: "setup production exception", phase: "setup", exception: true },
+  { name: "pytest root outside cwd", phase: "call" },
+]) {
+  test(`installed task baseline accepts repairable production failure with ${scenario.name}`, async (t) => {
+    const { root } = await pythonProject(t);
+    const testPath = "work dir/python checks/check_subject.py";
+    const subject = path.join(root, "work dir/src/subject.py");
+    const original = await readFile(subject, "utf8");
+    if (scenario.phase !== "call") {
+      const fixture = scenario.phase === "teardown" ? "    yield\n" : "";
+      const check = scenario.explicit ? "if classify(1) != 'positive':\n        pytest.fail('production check failed')" : "assert classify(1) == 'positive'";
+      await writeFile(path.join(root, testPath), `import pytest
+from src.subject import classify
+
+@pytest.fixture(autouse=True)
+def check_production():
+${fixture}    ${check}
+
+def test_subject():
+    assert classify(0) == 'other'
+`);
+    } else {
+      await writeFile(path.join(root, "pytest.ini"), "[pytest]\npythonpath = work dir\npython_files = check_*.py\naddopts = -q\n");
+      await configurePythonProject(root, (config) => { config.integration.python.command.args[3] = "../pytest.ini"; });
+    }
+    const passing = await runPythonProject(root);
+    assert.equal(passing.code, 0, passing.stdout + passing.stderr);
+    assert.equal(parse(passing).code, "tests_passed");
+    assert.equal(parse(passing).suite.collected, 1);
+    assert.equal(parse(passing).suite.root, scenario.phase === "call" ? "." : "work dir");
+
+    const broken = original.replace("return 'positive'", scenario.exception ? "raise RuntimeError('production defect')" : "return 'broken'");
+    await writeFile(subject, broken);
+    const first = await runPythonProject(root, prepare("normal", ["--repair-test", testPath]));
+    const report = parse(first);
+    assert.equal(first.code, 0, first.stdout + first.stderr);
+    assert.equal(report.code, "baseline_tests_failed");
+    assert.equal(report.task.baseline.valid, true);
+    assert.equal(report.task.baseline.status, "rejected");
+    assert.equal(report.task.baseline.integrity.status, "preserved");
+    assert.equal(report.task.baseline.failures.length, 1);
+    assert.equal(report.task.baseline.failures[0].path, testPath);
+    assert.equal(report.task.baseline.failures[0].phase, scenario.phase);
+    assert.equal(report.task.baseline.failures[0].disposition, "repair_in_task");
+    assert.equal(await readFile(subject, "utf8"), broken);
+    const evidence = path.join(root, report.task.reference);
+    const baseline = await readFile(evidence, "utf8");
+    const failedFinal = await runPythonProject(root, ["verify"]);
+    assert.equal(failedFinal.code, 1, failedFinal.stdout + failedFinal.stderr);
+    assert.equal(parse(failedFinal).code, "tests_failed");
+
+    await writeFile(subject, original);
+    const repeated = await runPythonProject(root, ["prepare", "--task", "repair-43"]);
+    assert.equal(repeated.code, 0, repeated.stdout + repeated.stderr);
+    assert.equal(parse(repeated).reused, true);
+    assert.equal(parse(repeated).task.baseline.sha256, report.task.baseline.sha256);
+    const final = await runPythonProject(root, ["verify"]);
+    assert.equal(parse(final).result.code, "tests_passed");
+    assert.equal(parse(final).code, "quality_pending");
+    assert.deepEqual(parse(final).freshness.changed, ["work dir/src/subject.py"]);
+    assert.equal(await readFile(evidence, "utf8"), baseline);
+    assert.equal(await readFile(subject, "utf8"), original);
+    assert.doesNotMatch(first.stdout + final.stdout, /QUALITY_OK/u);
+    assert.ok(!first.stdout.includes(root) && !first.stdout.includes(root.replaceAll("\\", "/")));
+  });
+}
+
+for (const scenario of ["environment", "fixture", "fixture dependency", "integrity"]) {
   test(`installed preparation records invalid ${scenario} evidence without treating it as a repairable failure`, async (t) => {
     const { root } = await pythonProject(t);
     if (scenario === "environment") await configurePythonProject(root, (config) => { config.integration.python.interpreter = "python-does-not-exist-43"; });
     if (scenario === "fixture") await writeFile(path.join(root, "work dir/conftest.py"), "import pytest\n@pytest.fixture(autouse=True)\ndef broken_setup():\n    raise RuntimeError('fixture unavailable')\n");
+    if (scenario === "fixture dependency") await writeFile(path.join(root, "work dir/conftest.py"), "import importlib, pytest\n@pytest.fixture(autouse=True)\ndef missing_dependency():\n    importlib.import_module('missing_dependency_43')\n");
     if (scenario === "integrity") await writeFile(path.join(root, "work dir/python checks/check_write.py"), "from pathlib import Path\ndef test_write():\n    Path('src/subject.py').write_text('changed')\n");
-    const result = await runPythonProject(root, prepare("normal"));
+    const result = await runPythonProject(root, prepare("normal", ["--repair-test", "work dir/python checks/check_subject.py"]));
     const report = parse(result);
     assert.equal(result.code, 2, result.stdout + result.stderr);
     assert.equal(report.status, "NO_VERIFICADO");
     assert.equal(report.task.baseline.valid, false);
     assert.notEqual(report.code, "baseline_tests_failed");
     if (scenario === "integrity") assert.equal(report.code, "input_integrity_changed");
-    if (scenario === "fixture") assert.equal(report.code, "pytest_fixture_failed");
+    if (scenario.startsWith("fixture")) {
+      assert.equal(report.code, "pytest_fixture_failed");
+      assert.equal(report.task.baseline.failures[0].disposition, "repair_in_task");
+    }
     const repeat = await runPythonProject(root, ["prepare"]);
     assert.equal(repeat.code, 2);
     assert.equal(parse(repeat).task.baseline.sha256, report.task.baseline.sha256);

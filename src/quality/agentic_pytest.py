@@ -81,13 +81,24 @@ def pytest_runtest_logreport(report):
     # Collection and fixture coverage do not prove that pytest reached a test call.
     if report.when in _phases:
         _phases[report.when] += 1
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
     if report.failed:
+        assertion = call.excinfo is not None and call.excinfo.errisinstance((AssertionError, pytest.fail.Exception))
+        production = call.excinfo is not None and any(
+            str(Path(str(entry.path)).resolve()) in _measured for entry in call.excinfo.traceback
+        )
         # Parameter values and traceback text can contain private runtime data.
         _failures.append({
             "id": hashlib.sha256(report.nodeid.encode("utf-8")).hexdigest(),
-            "path": _public_path(report.location[0]),
+            "path": _public_path(item.config.rootpath / report.location[0]),
             "line": report.location[1] + 1,
             "phase": report.when,
+            "kind": "assertion" if assertion else "production_exception" if production else "exception",
         })
 
 
