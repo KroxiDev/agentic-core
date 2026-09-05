@@ -28,7 +28,8 @@ export const CONFIG_SCHEMA = {
         environment: { type: "object", additionalProperties: { type: "string" } },
         coverage: object({ format: { const: "lcov" }, path: text }),
         scope: { ...strings, minItems: 1 },
-        inputs: object({ include: { ...strings, minItems: 1 }, exclude: strings }),
+        inputs: { ...object({ include: { ...strings, minItems: 1 }, exclude: strings,
+          includeIgnored: strings, respectGitIgnore: { type: "boolean" } }), required: ["include", "exclude"] },
       }),
     }),
     limits: object({
@@ -58,7 +59,7 @@ function validate(value, schema, location) {
     for (const [key, item] of Object.entries(value)) {
       const child = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : schema.additionalProperties;
       if (!child) throw new InstallationError("unknown_configuration_key", `Clave desconocida en ${location}`);
-      validate(item, child, `${location}.${key}`);
+      validate(item, child, `${location}.${schema.properties ? key : "valor"}`);
     }
   }
 }
@@ -66,7 +67,7 @@ function validate(value, schema, location) {
 export function validateConfiguration(config) {
   validate(config, CONFIG_SCHEMA, "config");
   const unit = config.integration.python;
-  for (const relative of [unit.cwd, unit.coverage.path, ...unit.scope, ...unit.inputs.include, ...unit.inputs.exclude]) {
+  for (const relative of [unit.cwd, unit.coverage.path, ...unit.scope, ...unit.inputs.include, ...unit.inputs.exclude, ...unit.inputs.includeIgnored ?? []]) {
     if (path.posix.isAbsolute(relative) || path.win32.isAbsolute(relative) || /^[a-z]:/iu.test(relative)
       || relative.split(/[\\/]/u).includes("..")) {
       throw new InstallationError("invalid_configuration", "Las rutas de la unidad Python deben permanecer dentro del proyecto");
@@ -81,7 +82,8 @@ export function defaultConfiguration(interpreter = "python") {
     integration: { provider: "codex", languages: ["python"], python: {
       interpreter, runner: "pytest", command: { executable: interpreter, args: ["-m", "pytest"] },
       cwd: ".", environment: {}, coverage: { format: "lcov", path: "lcov.info" }, scope: ["."],
-      inputs: { include: ["**/*"], exclude: [".git/**", ".agentic-core/**", ".venv/**", "**/.env", "**/.env.*"] },
+      inputs: { include: ["**/*"], exclude: [".git/**", ".agentic-core/**", ".venv/**", "**/.env", "**/.env.*"],
+        includeIgnored: [], respectGitIgnore: true },
     } },
     limits: { dry: { similarity: 0.82, minLines: 4, minNodes: 20 }, crap: 7, mutationScore: 90,
       operation: { commandTimeoutMs: 120000, totalBudgetMs: 600000, workers: 4 } },
