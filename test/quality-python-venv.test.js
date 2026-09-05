@@ -15,17 +15,18 @@ test("PR-09 regression: installed pytest uses the project environment and actual
   const report = JSON.parse(result.stdout);
   assert.equal(report.suite.status, "passed");
   assert.equal(report.suite.collected, 1);
-  assert.equal(report.python.executable, python);
+  assert.equal(report.python.executable, "[Python del proyecto]");
   assert.deepEqual(report.effectiveCommand.args, config.integration.python.command.args);
-  assert.equal(report.effectiveCommand.cwd, path.join(root, "work dir"));
+  assert.equal(report.effectiveCommand.cwd, "work dir");
+  assert.equal(report.effectiveCommand.location, "controlled_copy");
   assert.equal(report.coverage.backend, "coverage.py");
-  const file = report.coverage.files[path.join(root, "work dir/src/subject.py")];
+  const file = report.coverage.files["work dir/src/subject.py"];
   assert.deepEqual(file.executed_lines, [1, 2, 3, 4]);
   assert.equal(file.summary.percent_covered, 100);
   assert.match(report.coverage.lcov, /BRDA:/u);
   assert.equal(await hashDirectory(path.join(root, ".venv")), environmentHash);
   assert.equal(await hashDirectory(path.join(root, ".agentic-core/tools")), toolsHash);
-  await access(path.join(root, "work dir/declared-suite-ran.txt"));
+  await assert.rejects(access(path.join(root, "work dir/declared-suite-ran.txt")), { code: "ENOENT" });
   await assert.rejects(access(path.join(root, "lcov.info")), { code: "ENOENT" });
   t.diagnostic(`Windows/local Python ${report.python.version.join(".")}, pytest ${report.python.pytestVersion}, coverage ${report.coverage.version}`);
 

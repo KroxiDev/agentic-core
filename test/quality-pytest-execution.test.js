@@ -40,8 +40,7 @@ def prepare_subject():
         const report = JSON.parse(result.stdout);
 
         await assert.rejects(access(bodyMarker), { code: "ENOENT" });
-        if (option === "--setup-only") assert.equal(await readFile(setupMarker, "utf8"), "setup");
-        else await assert.rejects(access(setupMarker), { code: "ENOENT" });
+        await assert.rejects(access(setupMarker), { code: "ENOENT" });
         assert.equal(report.suite.exitCode, 0);
         assert.equal(report.suite.collected, 1);
         assert.equal(report.coverage.status, "measured");
@@ -68,8 +67,8 @@ def prepare_subject():
       assert.equal(report.status, "approved");
       assert.equal(report.code, "tests_passed");
       assert.equal(report.suite.status, "passed");
-      assert.equal(await readFile(bodyMarker, "utf8"), "declared");
-      assert.equal(await readFile(setupMarker, "utf8"), "setup");
+      await assert.rejects(access(bodyMarker), { code: "ENOENT" });
+      await assert.rejects(access(setupMarker), { code: "ENOENT" });
       assert.deepEqual(report.effectiveCommand.args, config.integration.python.command.args);
     });
   }

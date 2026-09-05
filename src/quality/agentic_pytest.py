@@ -21,6 +21,21 @@ _state = {
 }
 _coverage = None
 _phases = {"setup": 0, "call": 0, "teardown": 0}
+_root = Path(_settings["projectRoot"]).resolve()
+_measured = {str((_root / file).resolve()): file for file in _settings["measured"]}
+
+
+def _public_path(value):
+    if value is None:
+        return None
+    try:
+        relative = Path(value).resolve().relative_to(_root).as_posix()
+        if relative == "." or any(file == relative or file.startswith(relative + "/") for file in _settings["inputs"]):
+            return relative
+    except ValueError:
+        pass
+    _state["error"] = "isolation_unsupported"
+    return None
 
 
 def _save():
@@ -51,7 +66,7 @@ def pytest_load_initial_conftests(early_config, parser, args):
         _coverage = coverage.Coverage(
             data_file=str(Path(_settings["temporary"], f"data-{uuid.uuid4().hex}")),
             config_file=False, branch=True, timid=True,
-            include=_settings["include"], omit=_settings["omit"],
+            include=list(_measured) or [str(_root / ".no-measured-inputs")],
         )
         _coverage.start()
     except Exception:
@@ -66,6 +81,16 @@ def pytest_runtest_logreport(report):
         _phases[report.when] += 1
 
 
+def pytest_collection_finish(session):
+    _public_path(session.config.rootpath)
+    _public_path(session.config.inipath)
+    for item in session.items:
+        _public_path(item.path)
+    if _state.get("error") == "isolation_unsupported":
+        _save()
+        pytest.exit("La suite usa rutas ajenas a la copia controlada", returncode=2)
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     status = "failed"
@@ -77,9 +102,8 @@ def pytest_sessionfinish(session, exitstatus):
         "collected": session.testscollected,
         "failed": session.testsfailed,
         "phases": dict(_phases),
-        "root": str(session.config.rootpath),
-        "configuration": str(session.config.inipath) if session.config.inipath else None,
-        "args": list(session.config.invocation_params.args),
+        "root": _public_path(session.config.rootpath),
+        "configuration": _public_path(session.config.inipath),
     }
     try:
         if _coverage is None:
@@ -93,10 +117,23 @@ def pytest_sessionfinish(session, exitstatus):
         lcov_path = Path(_settings["temporary"], _settings["lcovPath"])
         lcov_path.parent.mkdir(parents=True, exist_ok=True)
         _coverage.lcov_report(outfile=str(lcov_path))
+        files = {_measured[str(Path(file).resolve())]: data for file, data in document["files"].items()
+                 if str(Path(file).resolve()) in _measured}
+        # LCOV paths are regenerated from the same allowlist as JSON coverage.
+        lcov = []
+        allowed = False
+        for line in lcov_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("SF:"):
+                public = _measured.get(str(Path(line[3:]).resolve()))
+                allowed = public is not None
+                if allowed:
+                    lcov.append("SF:" + public)
+            elif allowed:
+                lcov.append(line)
         _state["coverage"] = {
             "status": "measured", "backend": "coverage.py", "version": "7.13.4",
-            "files": {str(Path(file).resolve()): data for file, data in document["files"].items()},
-            "lcov": lcov_path.read_text(encoding="utf-8"),
+            "files": files,
+            "lcov": "\n".join(lcov) + "\n",
         }
     except Exception:
         _state["coverage"] = {"status": "error", "code": "coverage_failed", "files": None}

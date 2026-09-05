@@ -6,6 +6,7 @@ import { hashDirectory, writeTransaction } from "../transaction.js";
 import { getVersion } from "../version.js";
 import { CONFIG_SCHEMA, InstallationError, defaultConfiguration, validateConfiguration } from "./config.js";
 import { PYTHON_TOOLS, inspectTools, installTools, resolvePython } from "./python.js";
+import { captureProjectInputs, publicCheckpoint } from "../quality/project-inputs.js";
 
 const PRODUCT = "@kroxidev/agentic-core";
 const START = "<!-- AGENTIC_CORE_START -->";
@@ -179,9 +180,12 @@ export async function diagnosePythonProject(projectDirectory) {
   } catch (error) { throw new InstallationError("installation_integrity", "El runtime o el entorno privado diverge de su inventario; revise los recursos de esta instalación", 2, { cause: error }); }
   const tools = await inspectTools(path.join(project, owner.tools.path));
   const unit = config.integration.python;
-  return { command: "doctor", status: "installed", provider: "codex", languages: ["python"], python, tools,
-    integration: { interpreter: python.executable, runner: unit.runner, cwd: unit.cwd, coverage: unit.coverage,
-      command: { executable: unit.command.executable, argumentCount: unit.command.args.length }, environmentKeys: Object.keys(unit.environment), scope: unit.scope, inputs: unit.inputs },
+  const checkpoint = await captureProjectInputs(project, unit);
+  return { command: "doctor", status: "installed", provider: "codex", languages: ["python"],
+    python: { ...python, executable: "[Python del proyecto]" }, tools: { ...tools, executable: "[Python privado de herramientas]" },
+    integration: { interpreter: "[Python del proyecto]", runner: unit.runner,
+      command: { argumentCount: unit.command.args.length }, environmentCount: Object.keys(unit.environment).length,
+      inputs: publicCheckpoint(checkpoint) },
     limits: config.limits, runtime: owner.runtime, verification: "NO_VERIFICADO",
     message: "Configuración válida y versiones efectivas identificadas. No se ejecutaron pruebas del proyecto. La compatibilidad de sintaxis y la calidad requieren sus verificaciones pendientes", exitCode: 0 };
 }
