@@ -4,6 +4,8 @@ import path from "node:path";
 import { IntegrationError } from "./command.js";
 import { captureProjectInputs, inputHash, mandatoryInputExclusion, privateInputContent, relativeInput } from "./project-inputs.js";
 
+const privateOption = /^--?(?:[\w]+[-_])*(?:password|passwd|token|secret|api[_-]?key|credentials?|authorization)(?:=|$)/iu;
+
 export async function createProjectCopy(checkpoint) {
   const temporary = await mkdtemp(path.join(tmpdir(), "agentic verification "));
   const root = path.join(temporary, "project copy");
@@ -63,14 +65,14 @@ export function isolatedCommand(unit, python, checkpoint, copyRoot, inheritedEnv
 }
 
 export function publicArgument(value, checkpoint, copyRoot) {
-  if (/^--?(?:password|passwd|token|secret|api[_-]?key|credential|authorization)(?:=|$)/iu.test(value)) return "[privado]";
+  if (privateOption.test(value)) return "[privado]";
   if (privateInputContent(Buffer.from(value)) || mandatoryInputExclusion(value)) return "[privado]";
   if (path.isAbsolute(value)) return relativeInput(copyRoot, value) ?? relativeInput(checkpoint.root, value) ?? "[ruta externa]";
   return value.includes(checkpoint.root) || value.includes(copyRoot) ? "[argumento de ruta]" : value;
 }
 
 export function publicArguments(values, checkpoint, copyRoot) {
-  return values.map((value, index) => index > 0 && /^--?(?:password|passwd|token|secret|api[_-]?key|credential|authorization)$/iu.test(values[index - 1])
+  return values.map((value, index) => index > 0 && !values[index - 1].includes("=") && privateOption.test(values[index - 1])
     ? "[privado]" : publicArgument(value, checkpoint, copyRoot));
 }
 

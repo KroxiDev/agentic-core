@@ -109,7 +109,7 @@ export async function runProjectTests(projectRoot) {
     const checkpoint = await captureProjectInputs(projectRoot, unit);
     const inputEvidence = publicCheckpoint(checkpoint);
     if (checkpoint.issues.length) return { command: "test", status: "NO_VERIFICADO", code: "input_checkpoint_incompatible",
-      message: "Los inputs contienen enlaces, tipos incompatibles o cambios durante el checkpoint", exitCode: 2, inputs: inputEvidence };
+      message: "Los inputs no admiten una copia fiel: revise enlaces, tipos, cambios o código excluido por privacidad", exitCode: 2, inputs: inputEvidence };
     const context = { cwd: path.resolve(projectRoot, unit.cwd), env: { ...process.env, ...unit.environment, PYTHONDONTWRITEBYTECODE: "1" },
       budget: commandBudget(config.limits.operation) };
     const python = await projectInterpreter(projectRoot, unit, context);

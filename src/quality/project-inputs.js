@@ -10,7 +10,7 @@ const execute = promisify(execFile);
 const generated = new Set([".git", ".agentic-core", ".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"]);
 const privateName = /^(?:\.?env(?:\..*)?|\.?secrets?(?:[._-].*)?|\.?credentials?(?:[._-].*)?|\.?private(?:[._-].*)?|\.?personal(?:[._-].*)?|\.ssh|\.aws|\.azure|id_rsa|id_ed25519|.*\.(?:pem|key|pfx|p12|jks|keystore|sqlite3?|db))$/iu;
 const personalText = /[\w.+-]+@[\w.-]+\.[a-z]{2,}|-----BEGIN [^-]*PRIVATE KEY-----|\b(?:gh[pousr]_[a-z0-9]{20,}|sk-[a-z0-9_-]{20,})\b/iu;
-const credentialText = /["']?(?:password|passwd|api[_-]?key|(?:access[_-]?)?token|(?:client[_-]?)?secret|credential|authorization|ssn|dni|phone|telefono)["']?\s*[:=]\s*["'][^"'\r\n]+["']/iu;
+const credentialText = /(?:^|[^\w])["']?(?:password|passwd|api[_-]?key|(?:access[_-]?)?token|(?:client[_-]?)?secret|credential|authorization|ssn|dni|phone|telefono)["']?\s*[:=](?!=)\s*(?:["'][^"'\r\n]+["']|[^\s"'#,\]}]+)/iu;
 const testInput = /(?:^|\/)(?:tests?|specs?|__tests__)(?:\/|$)|(?:^|\/)(?:test_[^/]*|[^/]*_test|conftest)\.py$/u;
 export const inputHash = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -107,7 +107,12 @@ export async function captureProjectInputs(projectRoot, unit) {
         || relativeInput(root, await realpath(absolute)) !== file) {
         issues.push({ code: "input_changed", phase: "checkpoint" }); continue;
       }
-      if (privateInputContent(content)) { exclusions.private += 1; continue; }
+      if (privateInputContent(content)) {
+        exclusions.private += 1;
+        // Pytest may collect any configured Python filename, not only test_*.py.
+        if (/\.py$/iu.test(file)) issues.push({ code: "private_executable_input", phase: "checkpoint" });
+        continue;
+      }
       const measured = file.endsWith(".py") && !testInput.test(file) && unit.scope.some((p) => matchesInput(file, p));
       entries.push({ path: file, kind: measured ? "measured_code" : "test_input", mode: info.mode & 0o777,
         sha256: inputHash(content), content });
