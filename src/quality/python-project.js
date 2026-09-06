@@ -178,13 +178,14 @@ function integrationFailure(error) {
 
 export async function runPythonQualityCli(args, io = process) {
   if (args.length === 0 || (args.length === 1 && ["--help", "-h"].includes(args[0]))) {
+    io.stdout.write("DRY: agentic-quality dry detecta duplicación Python con dry4python fijado, límites de config.json y baseline de tarea; no interpreta el código de salida del motor como aprobación. Informe: .agentic-core/quality/dry.json.\n");
     io.stdout.write("C.R.A.P.: agentic-quality crap mide el alcance Python con el límite de config.json y conserva resultados parciales. Informe: .agentic-core/quality/crap.json.\n");
     io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json en una copia controlada y devuelve cobertura con rutas públicas relativas.\nTareas Light, Normal y Full: prepare --task <id> --mode <modo> --objective <referencia> [--repair-test <ruta>]; baseline consulta el inicio y verify exige la suite final aprobada. Directo no requiere preparación.\nCódigos: 0 suite aprobada o baseline válido (puede contener fallos); 1 fallo; 2 aislamiento, integridad, entorno, cobertura o calidad no verificados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
     return 0;
   }
   const result = args.length === 1 && args[0] === "test" ? await runProjectTests(process.cwd())
     : { command: args[0], status: "NO_VERIFICADO", code: ["prepare", "verify", "scan", "crap", "mutate", "mutation"].includes(args[0]) ? "quality_pending" : "invalid_usage",
-      message: "Use agentic-quality test; los controles agregados del esquema 3 están pendientes de integración",
+      message: "Use agentic-quality test o dry; los demás controles agregados del esquema 3 están pendientes de integración",
       exitCode: ["prepare", "verify", "scan", "crap", "mutate", "mutation"].includes(args[0]) ? 2 : 4 };
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
   else io.stdout.write(`${result.status} [${result.code}] ${result.message}\n`);

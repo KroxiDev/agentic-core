@@ -6,6 +6,7 @@ import { isPythonInstallation } from "./installation/install.js";
 import { runPythonQualityCli } from "./quality/python-project.js";
 import { runTaskQualityCli } from "./quality/task-baseline.js";
 import { runPythonCrapCli } from "./quality/python-crap.js";
+import { runPythonDryCli } from "./quality/python-dry.js";
 
 const [seam, ...args] = process.argv.slice(2);
 
@@ -15,6 +16,7 @@ try {
   } else if (seam === "agentic-quality") {
     if (await isPythonInstallation(process.cwd())) {
       process.exitCode = await (args[0] === "crap" ? runPythonCrapCli(args)
+        : args[0] === "dry" ? runPythonDryCli(args)
         : ["prepare", "baseline", "verify"].includes(args[0]) ? runTaskQualityCli(args) : runPythonQualityCli(args));
     } else process.exitCode = await runQualityCli(args);
   } else {
