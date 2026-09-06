@@ -1,6 +1,7 @@
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { readConfiguration } from "../installation/install.js";
 import { PYTHON_TOOLS, privatePython } from "../installation/python.js";
 import { writeTransaction } from "../transaction.js";
@@ -13,6 +14,7 @@ const engine = Object.freeze({ name: "dry4python", version: PYTHON_TOOLS.dry4pyt
 const reportReference = ".agentic-core/quality/dry.json";
 const resolutionReference = ".agentic-core/quality/dry-resolutions.json";
 const hash = (value) => inputHash(JSON.stringify(value));
+const preparationHelper = fileURLToPath(new URL("agentic_dry.py", import.meta.url));
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -44,7 +46,7 @@ function locationKey(location) {
 }
 
 function candidateKey(candidate) {
-  return [locationKey(candidate.left), locationKey(candidate.right)].sort().join("\0");
+  return [candidate.left.sourceHash, candidate.right.sourceHash].sort().join("\0");
 }
 
 function normalizeEnginePath(value) {
@@ -141,12 +143,23 @@ async function runEngine(root, python, sources, limits, budget) {
   const temporary = await mkdtemp(path.join(tmpdir(), "agentic-dry-"));
   try {
     const materialized = await materializeSources(temporary, sources);
+    const prepared = await executeCommand({ executable: python, args: [
+      "-I", "-B", preparationHelper, String(limits.minLines), String(limits.minNodes), ...materialized.argumentsList,
+    ] }, { cwd: temporary, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, timeoutMs: budget() });
+    if (prepared.exitCode !== 0) throw new IntegrationError("dry_preparation_failed", "No se pudo comprobar la cobertura del detector DRY", 2);
+    const metadata = JSON.parse(prepared.stdout);
+    if (!Array.isArray(metadata) || metadata.length !== sources.length) {
+      throw new IntegrationError("invalid_dry_evidence", "La preparación DRY no cubre los inputs seleccionados", 5);
+    }
+    const issues = metadata.flatMap((entry) => entry.issues.map((issue) => ({ ...issue, file: materialized.paths.get(entry.file) })));
+    const argumentsList = metadata.filter((entry) => entry.scannable).map((entry) => entry.file);
+    if (!argumentsList.length) return { candidates: [], groups: [], issues };
     const outcome = await executeCommand({ executable: python, args: [
       "-I", "-B", "-m", "dry4python", "--format", "json",
       "--threshold", String(limits.similarity),
       "--min-lines", String(limits.minLines),
       "--min-nodes", String(limits.minNodes),
-      ...materialized.argumentsList,
+      ...argumentsList,
     ] }, { cwd: temporary, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, timeoutMs: budget() });
     if (outcome.exitCode !== 0) {
       throw new IntegrationError("dry_engine_failed", "dry4python no pudo completar la detección", 2);
@@ -157,9 +170,20 @@ async function runEngine(root, python, sources, limits, budget) {
     if (!plainObject(parsed) || !Array.isArray(parsed.candidates) || !Array.isArray(parsed.groups)) {
       throw new IntegrationError("invalid_dry_evidence", "dry4python no devolvió el contrato esperado", 5);
     }
-    const candidates = parsed.candidates.map((candidate) => normalizeCandidate(candidate, materialized.paths, limits));
+    const candidates = parsed.candidates.map((candidate) => {
+      const normalized = normalizeCandidate(candidate, materialized.paths, limits);
+      for (const side of ["left", "right"]) {
+        const location = normalized[side];
+        const source = metadata.find((entry) => materialized.paths.get(entry.file) === location.file);
+        const body = source?.functions.find((entry) => entry.startLine === location.startLine && entry.endLine === location.endLine);
+        if (!body) throw new IntegrationError("invalid_dry_evidence", "No se pudo atribuir el cuerpo del candidato DRY", 5);
+        location.sourceHash = body.sha256;
+        location.bodyReferences = body.references;
+      }
+      return normalized;
+    });
     const groups = normalizeGroups(parsed.groups, materialized.paths);
-    return { candidates, groups };
+    return { candidates, groups, issues };
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -178,10 +202,8 @@ async function loadBaseline(root, config) {
   const loaded = await readActiveTask(root);
   if (!loaded) return { status: "not_requested", reason: null, sources: [], inventory: [], digest: null };
   const task = loaded.task;
-  const configHash = hash(config);
   if (!task.initial.valid) return invalidBaseline("baseline_initial_invalid");
-  if (!sameScope(task.scope, config.integration.python.scope)
-    || task.initial.result?.configurationHash !== configHash) {
+  if (!sameScope(task.scope, config.integration.python.scope)) {
     return invalidBaseline("baseline_conditions_changed");
   }
   if (!plainObject(task.initial.inputs) || typeof task.initial.inputs.digest !== "string"
@@ -234,12 +256,6 @@ async function loadBaseline(root, config) {
     digest: task.initial.inputs.digest };
 }
 
-function unchangedFile(file, current, baseline) {
-  const currentEntry = current.get(file);
-  const baselineEntry = baseline.get(file);
-  return currentEntry?.sha256 && currentEntry.sha256 === baselineEntry?.sha256;
-}
-
 async function readResolutions(root, inputsDigest, configurationHash) {
   const file = path.join(root, resolutionReference);
   let content;
@@ -279,8 +295,20 @@ async function readResolutions(root, inputsDigest, configurationHash) {
     entries: current ? normalized : [],
     sha256: inputHash(content),
     used: [],
-    unused: current ? normalized.map((entry) => entry.candidate) : normalized.map((entry) => entry.candidate),
+    unused: normalized.map((entry) => entry.candidate),
   };
+}
+
+function concreteReason(resolution, candidate) {
+  if (!resolution) return false;
+  const reason = resolution.reason;
+  const words = new Set(reason.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []);
+  const names = [candidate.left.qualname, candidate.right.qualname];
+  const references = [...candidate.left.bodyReferences, ...candidate.right.bodyReferences];
+  const generic = /\b(?:ok(?:ay)?|looks good|no (?:necesita[n]?|requiere[n]?) cambios|est[aá]n? bien|sin (?:problemas|cambios necesarios))\b/iu.test(reason);
+  // This checks a source-grounded contract; the Tester still owns the design judgment.
+  return !generic && words.size >= 8 && names.every((name) => reason.includes(name))
+    && references.some((reference) => reason.includes(reference));
 }
 
 function messageFor(status, code) {
@@ -292,19 +320,21 @@ function messageFor(status, code) {
   return "Los candidatos DRY están resueltos o no pertenecen al cambio de la tarea";
 }
 
-function reportBase({ status, code, config, checkpoint, baseline, engineInfo, candidates = [], groups = [], resolutions, configurationHash }) {
+function reportBase({ status, code, exitCode, config, checkpoint, baseline, engineInfo, candidates = [], groups = [], issues = [], resolutions, configurationHash }) {
   const limits = config.limits.dry;
   const baselineCandidates = baseline.scan?.candidates ?? [];
-  const baselineFiles = new Map((baseline.inventory ?? []).map((entry) => [entry.path, entry]));
-  const currentFiles = new Map(checkpoint.inventory.map((entry) => [entry.path, entry]));
-  const baselineKeys = new Set(baselineCandidates.map(candidateKey));
+  const baselineKeys = new Map();
+  for (const candidate of baselineCandidates) {
+    const key = candidateKey(candidate);
+    baselineKeys.set(key, (baselineKeys.get(key) ?? 0) + 1);
+  }
   const resolutionMap = new Map((resolutions?.entries ?? []).map((entry) => [entry.candidate, entry]));
   const enriched = candidates.map((candidate) => {
-    const preexisting = baseline.status === "captured" && baseline.scan?.status === "measured"
-      && baselineKeys.has(candidateKey(candidate))
-      && unchangedFile(candidate.left.file, currentFiles, baselineFiles)
-      && unchangedFile(candidate.right.file, currentFiles, baselineFiles);
-    const resolution = resolutionMap.get(candidate.id);
+    const key = candidateKey(candidate);
+    const preexisting = baseline.status === "captured" && baseline.scan?.status === "measured" && baselineKeys.get(key) > 0;
+    if (preexisting) baselineKeys.set(key, baselineKeys.get(key) - 1);
+    const offeredResolution = resolutionMap.get(candidate.id);
+    const resolution = concreteReason(offeredResolution, candidate) ? offeredResolution : undefined;
     const classification = preexisting ? "preexisting" : resolution ? "resolved" : "new_or_changed";
     return {
       ...candidate,
@@ -328,32 +358,48 @@ function reportBase({ status, code, config, checkpoint, baseline, engineInfo, ca
   const used = enriched.filter((candidate) => candidate.classification === "resolved").map((candidate) => candidate.id);
   const unused = (resolutions?.entries ?? []).map((entry) => entry.candidate).filter((id) => !used.includes(id));
   const finalStatus = status ?? (baseline.status !== "not_requested" && baseline.status !== "captured"
-    || baseline.scan?.status === "NO_VERIFICADO"
+    || baseline.scan?.status === "NO_VERIFICADO" || issues.length
     ? "NO_VERIFICADO" : checkpoint.entries.filter((entry) => entry.kind === "measured_code").length === 0
       ? "NO_APLICA" : unresolved.length ? "rejected" : "approved");
-  const finalCode = code ?? (finalStatus === "NO_VERIFICADO" ? baseline.reason ?? baseline.scan?.code ?? "dry_incomplete"
+  const finalCode = code ?? (finalStatus === "NO_VERIFICADO" ? baseline.reason ?? baseline.scan?.code ?? (issues.length ? "dry_measurement_incomplete" : "dry_incomplete")
     : finalStatus === "NO_APLICA" ? "no_executable_code" : unresolved.length ? "dry_candidates_unresolved"
       : enriched.length === 0 ? "no_duplicates" : preexisting.length === enriched.length ? "preexisting_only" : "dry_resolved");
   const identity = hash({ engine: engineInfo, limits, inputs: checkpoint.digest,
-    baseline: baseline.digest, candidates: enriched, groups, resolutions: resolutions?.sha256 ?? null });
+    baseline: baseline.digest, candidates: enriched, groups, issues, resolutions: resolutions?.sha256 ?? null });
   return {
     command: "dry", schemaVersion: 1, status: finalStatus, code: finalCode,
-    exitCode: finalStatus === "NO_VERIFICADO" ? 2 : finalStatus === "rejected" ? 1 : 0,
+    exitCode: finalStatus === "NO_VERIFICADO" ? exitCode ?? 2 : finalStatus === "rejected" ? 1 : 0,
     message: messageFor(finalStatus, finalCode), engine: engineInfo, limits,
     identity, hashes: { inputs: checkpoint.digest, configuration: configurationHash, baseline: baseline.digest,
       resolutions: resolutions?.sha256 ?? null },
     inputs: publicCheckpoint(checkpoint),
     baseline: { status: baseline.status, reason: baseline.reason, digest: baseline.digest,
-      scan: baseline.scan?.status ?? "not_run", candidates: baselineCandidates,
+      scan: baseline.scan?.status ?? "not_run", candidates: baselineCandidates, issues: baseline.scan?.issues ?? [],
       changedFiles: baseline.changedFiles ?? [] },
     resolutions: { reference: resolutionReference, status: resolutions?.status ?? "not_read",
       inputs: checkpoint.digest, configuration: configurationHash, sha256: resolutions?.sha256 ?? null,
       used, unused },
-    groups, candidates: enriched,
+    groups, candidates: enriched, issues,
     summary: { candidates: enriched.length, unresolved: unresolved.length,
       preexisting: preexisting.length, resolved: resolved.length, groups: groups.length },
     reference: reportReference,
   };
+}
+
+async function finishReport(root, parameters) {
+  const { config, checkpoint, configurationHash, resolutions } = parameters;
+  const after = await captureProjectInputs(root, config.integration.python);
+  let code;
+  if (after.issues.length) code = "input_checkpoint_incompatible";
+  else if (after.digest !== checkpoint.digest) code = "dry_inputs_changed";
+  try {
+    if (hash(await readConfiguration(path.join(root, ".agentic-core/config.json"))) !== configurationHash) code = "dry_configuration_changed";
+  } catch { code = "dry_configuration_changed"; }
+  try {
+    const finalResolutions = await readResolutions(root, checkpoint.digest, configurationHash);
+    if (finalResolutions.sha256 !== resolutions.sha256) code = "dry_resolutions_changed";
+  } catch { code = "dry_resolutions_changed"; }
+  return reportBase({ ...parameters, ...(code ? { status: "NO_VERIFICADO", code, exitCode: 2 } : {}) });
 }
 
 export async function runPythonDry(root) {
@@ -376,17 +422,17 @@ export async function runPythonDry(root) {
       checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
   }
   if (currentSources.length === 0) {
-    const result = reportBase({ config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
-    const after = await captureProjectInputs(root, config.integration.python);
-    if (after.digest !== before.digest) return reportBase({ status: "NO_VERIFICADO", code: "dry_inputs_changed",
-      config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
-    return result;
+    return finishReport(root, { config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
   }
   const python = privatePython(path.join(root, ".agentic-core/tools"));
   await inspectEngineVersion(root, python, budget);
   if (baseline.status === "captured" && baseline.sources.length > 0) {
     try {
       baseline.scan = { status: "measured", ...await runEngine(root, python, baseline.sources, config.limits.dry, budget) };
+      if (baseline.scan.issues.length) {
+        baseline.scan.status = "NO_VERIFICADO";
+        baseline.scan.code = "baseline_dry_incomplete";
+      }
     } catch (error) {
       if (["budget_exhausted", "command_timeout", "termination_failed"].includes(error?.code)) throw error;
       baseline.scan = { status: "NO_VERIFICADO", code: error?.code ?? "baseline_dry_failed" };
@@ -394,17 +440,13 @@ export async function runPythonDry(root) {
   } else if (baseline.status === "captured") {
     baseline.scan = { status: "measured", candidates: [], groups: [] };
   }
-  const current = await runEngine(root, python, currentSources, config.limits.dry, budget);
-  const after = await captureProjectInputs(root, config.integration.python);
-  let finalConfigHash = configurationHash;
-  try { finalConfigHash = hash(await readConfiguration(path.join(root, ".agentic-core/config.json"))); }
-  catch { finalConfigHash = "changed"; }
-  if (after.digest !== before.digest || finalConfigHash !== configurationHash) {
-    return reportBase({ status: "NO_VERIFICADO", code: finalConfigHash !== configurationHash ? "dry_configuration_changed" : "dry_inputs_changed",
-      config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash, candidates: current.candidates, groups: current.groups });
+  let current;
+  try { current = await runEngine(root, python, currentSources, config.limits.dry, budget); }
+  catch (error) {
+    return finishReport(root, { status: "NO_VERIFICADO", code: error?.code ?? "dry_engine_failed", exitCode: error?.exitCode ?? 5,
+      config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
   }
-  return reportBase({ config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash,
-    candidates: current.candidates, groups: current.groups });
+  return finishReport(root, { config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash, ...current });
 }
 
 async function saveReport(root, result) {
@@ -451,11 +493,17 @@ export async function runPythonDryCli(args, io = process) {
     const { reference: _unsaved, ...partial } = result ?? {};
     result = { ...partial, command: "dry", status: "NO_VERIFICADO", code: typed ? error.code : "dry_internal_error",
       message: typed ? error.message : "No se pudo completar o conservar la detección DRY", exitCode: typed ? error.exitCode : 5 };
+    // Replace a previous owned success with the current failure; preserve foreign reports.
+    if (!_unsaved) {
+      try { result.reference = reportReference; await saveReport(process.cwd(), result); }
+      catch { delete result.reference; }
+    }
   }
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
   else {
     io.stdout.write(`${result.status} [${result.code}] ${result.message}\n`);
     for (const candidate of (result.candidates ?? []).slice(0, 8)) io.stdout.write(`${candidateLine(candidate)}\n`);
+    for (const issue of (result.issues ?? []).slice(0, 8)) io.stdout.write(`${issue.file}:${issue.startLine} [${issue.code}]\n`);
     if (result.reference) io.stdout.write(`Informe íntegro: ${result.reference}\n`);
   }
   return result.exitCode;

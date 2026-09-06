@@ -88,13 +88,17 @@ El resultado queda en `.agentic-core/quality/dry.json`. Un candidato nuevo o mod
     {
       "candidate": "<id del candidato>",
       "decision": "keep",
-      "reason": "Coincidencia mecánica fuera del alcance de esta tarea."
+      "reason": "first conserva el orden de entrada; second usa result.reverse() para entregar la secuencia invertida requerida por su consumidor."
     }
   ]
 }
 ```
 
-Cuando existe `active-task.json`, la detección ejecuta también el baseline real y clasifica como `preexisting` la duplicación que ya estaba presente en inputs sin cambios. Si cambian los inputs o los límites, las resoluciones previas quedan obsoletas. `NO_VERIFICADO` diferencia errores de herramienta, integridad o medición de `no_duplicates`; esta comprobación tampoco emite `QUALITY_OK`.
+La razón debe mencionar ambos símbolos del candidato y un fragmento de sus cuerpos ofrecido en `bodyReferences`, con al menos ocho palabras distintas y sin fórmulas de aprobación vacía como «ok», «están bien» o «no necesitan cambios». Ese contrato exige una explicación ligada al código; el Tester sigue siendo responsable de valorar el diseño. Una razón que no cumple ese contrato o una resolución retirada durante la medición no aprueba el candidato.
+
+Cuando existe `active-task.json`, la detección analiza sus fuentes originales con los límites actuales. Compara las identidades de los cuerpos duplicados, sin atribuir a la tarea cambios ajenos en el archivo o traslados identificables; cada par previo puede justificar un único par actual, de modo que nuevas copias siguen pendientes. Cambiar un límite renueva la detección sin reemplazar el baseline. Si cambian los inputs o los límites, las resoluciones previas quedan obsoletas.
+
+Los pragmas `dry4python: ignore` e `ignore-file` se neutralizan únicamente en las copias de análisis. El motor fijado mide funciones y métodos: el código procedural de módulo o clase que alcanza los tamaños mínimos configurados queda `NO_VERIFICADO`, con ubicaciones y los candidatos válidos de las demás partes. También se conservan resultados parciales ante errores sintácticos, sin publicar el texto fuente en el diagnóstico. `NO_VERIFICADO` diferencia errores de herramienta, integridad o medición de `no_duplicates`; esta comprobación tampoco emite `QUALITY_OK`.
 
 ## Actualización
 
