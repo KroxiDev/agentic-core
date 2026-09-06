@@ -73,6 +73,29 @@ La referencia breve `.agentic-core/quality/active-task.json` contiene el objetiv
 
 El adaptador conserva el cálculo de complejidad y C.R.A.P. del motor; delimita funciones y comportamiento de módulo sin contar dos veces sus cuerpos. Usa ramas atribuibles y, cuando no hay ramas, sentencias observadas para no convertir un cuerpo sin ejecutar en cobertura completa. La cobertura cero tiene un valor numérico; código no cargado, atribución ausente o ambigua, sintaxis no analizable y otros lenguajes incluidos en el alcance quedan `NO_VERIFICADO`, con resultados válidos de las demás partes. Las lambdas sin atribución separada también se informan como limitación. Un ámbito que contiene una expresión generadora queda `generator_coverage_unsupported`, con valor y cobertura desconocidos: las líneas no separan su creación de la ejecución diferida, incluso si los tests la consumen; las métricas de otros ámbitos soportados se conservan. Las anotaciones de parámetros, retorno y variables de módulo/clase, los valores de alias de tipo y los límites, restricciones y defaults de parámetros de tipo conservan filas `annotation_coverage_unsupported`, con valor y cobertura desconocidos: ejecutar la declaración no demuestra su evaluación independiente. Las asignaciones y cuerpos conservan sus métricas sin volver a contar esas expresiones. La limitación incluye anotaciones simples y stringizadas; su modalidad usa la versión observada de pytest y queda desconocida si no se pudo observar. Las anotaciones locales que Python nunca evalúa no añaden comportamiento ejecutable. `NO_APLICA` exige ausencia comprobada de comportamiento ejecutable en el alcance. Un informe ajeno o divergente se conserva y produce un conflicto explícito.
 
+### DRY de Python
+
+`node .agentic-core/runtime-launcher.mjs agentic-quality dry` ejecuta `dry4python==0.1.0` en un directorio temporal con el código Python medido por la política de inputs vigente. Usa `limits.dry.similarity`, `limits.dry.minLines` y `limits.dry.minNodes`; el motor recibe los tres límites y sus candidatos se normalizan con ubicación, rango de líneas, símbolo, score y nodos. El código de salida del motor no decide por sí solo si hay duplicaciones ni si la comprobación está aprobada.
+
+El resultado queda en `.agentic-core/quality/dry.json`. Un candidato nuevo o modificado produce `rejected` hasta que se corrija o se registre una justificación concreta en `.agentic-core/quality/dry-resolutions.json`, asociada al ID del candidato, al digest de inputs y a la configuración actual:
+
+```json
+{
+  "schemaVersion": 1,
+  "inputs": "<hash del informe DRY>",
+  "configuration": "<hash de config.json>",
+  "resolutions": [
+    {
+      "candidate": "<id del candidato>",
+      "decision": "keep",
+      "reason": "Coincidencia mecánica fuera del alcance de esta tarea."
+    }
+  ]
+}
+```
+
+Cuando existe `active-task.json`, la detección ejecuta también el baseline real y clasifica como `preexisting` la duplicación que ya estaba presente en inputs sin cambios. Si cambian los inputs o los límites, las resoluciones previas quedan obsoletas. `NO_VERIFICADO` diferencia errores de herramienta, integridad o medición de `no_duplicates`; esta comprobación tampoco emite `QUALITY_OK`.
+
 ## Actualización
 
 ### `agentic-core update`
