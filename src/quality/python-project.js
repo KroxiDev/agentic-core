@@ -11,6 +11,19 @@ import { createProjectCopy, dependencyFingerprint, isolatedCommand, publicArgume
 const plugin = fileURLToPath(new URL("agentic_pytest.py", import.meta.url));
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+export async function projectTestIdentity(root, config) {
+  const unit = config.integration.python;
+  const env = { ...process.env, ...unit.environment, PYTHONDONTWRITEBYTECODE: "1" };
+  const context = { cwd: path.resolve(root, unit.cwd), env, budget: commandBudget(config.limits.operation) };
+  const python = await projectInterpreter(root, unit, context);
+  const protectedPaths = [python.executable, ...python.dependencies, path.join(root, ".agentic-core/config.json"),
+    path.join(root, ".agentic-core/runtime")];
+  const dependencies = await dependencyFingerprint(protectedPaths);
+  const environment = Object.fromEntries(Object.entries(env).filter(([key]) => key !== "AGENTIC_CORE_OUTPUT").sort());
+  return { context, python, protectedPaths, dependencies,
+    identity: digest({ configuration: config, dependencies, environment, node: process.version, platform: process.platform, arch: process.arch }) };
+}
+
 async function inspectInterpreter(executable, context) {
   const result = await executeCommand({ executable, args: ["-c",
     "import json,sys,sysconfig,importlib.util; print(json.dumps({'executable':sys.executable,'version':list(sys.version_info[:3]),'dependencies':list(set([sysconfig.get_path('purelib'),sysconfig.get_path('platlib')])),'pytest':importlib.util.find_spec('pytest') is not None}))"] },
@@ -86,6 +99,15 @@ async function observe(root, config, python, context, temporary) {
   }
   const pytestCodes = { 1: ["tests_failed", 1], 2: ["pytest_interrupted", 6], 3: ["pytest_internal_error", 5], 4: ["pytest_invalid_usage", 4], 5: ["no_tests_collected", 2] };
   if (suite.exitCode !== 0) {
+    if (suite.exitCode === 1 && suite.failures?.some((failure) => failure.kind === "dependency_error")) {
+      return { ...common, code: "pytest_dependency_failed", exitCode: 2, message: "Una importación falló en el entorno del proyecto; no se obtuvo una comprobación válida" };
+    }
+    if (suite.exitCode === 1 && suite.failures?.some((failure) => failure.kind === "unattributed_group")) {
+      return { ...common, code: "pytest_failure_unattributed", exitCode: 2, message: "Un grupo de errores contiene fallos sin atribución; no se obtuvo una comprobación válida" };
+    }
+    if (suite.exitCode === 1 && suite.failures?.some((failure) => failure.phase !== "call" && !["assertion", "production_exception"].includes(failure.kind))) {
+      return { ...common, code: "pytest_fixture_failed", exitCode: 2, message: "La preparación o limpieza de una prueba terminó con un error; no se obtuvo una comprobación válida" };
+    }
     const [code, exitCode] = pytestCodes[suite.exitCode] ?? ["pytest_incomplete", 2];
     return { ...common, code, exitCode, message: "La ejecución de pytest no aprobó; consulte el estado y código de la suite" };
   }
@@ -110,16 +132,11 @@ export async function runProjectTests(projectRoot) {
     const inputEvidence = publicCheckpoint(checkpoint);
     if (checkpoint.issues.length) return { command: "test", status: "NO_VERIFICADO", code: "input_checkpoint_incompatible",
       message: "Los inputs no admiten una copia fiel: revise enlaces, tipos, cambios o código excluido por privacidad", exitCode: 2, inputs: inputEvidence };
-    const context = { cwd: path.resolve(projectRoot, unit.cwd), env: { ...process.env, ...unit.environment, PYTHONDONTWRITEBYTECODE: "1" },
-      budget: commandBudget(config.limits.operation) };
-    const python = await projectInterpreter(projectRoot, unit, context);
+    const { context, python, protectedPaths, dependencies, identity } = await projectTestIdentity(projectRoot, config);
     const copy = await createProjectCopy(checkpoint);
     let result;
     try {
       const isolated = isolatedCommand(unit, python, checkpoint, copy.root, process.env);
-      const protectedPaths = [python.executable, ...python.dependencies, path.join(projectRoot, ".agentic-core/config.json"),
-        path.join(projectRoot, ".agentic-core/runtime/third_party/python/coverage-7.13.4-py3-none-any.whl")];
-      const dependencies = await dependencyFingerprint(protectedPaths);
       let integrity = await verifyProjectIntegrity(checkpoint, unit, copy.root, "preparation");
       if (integrity.status !== "preserved") {
         result = { code: "input_integrity_changed", exitCode: 2, message: "Los inputs cambiaron durante la preparación; no se ejecutaron pruebas", integrity };
@@ -140,7 +157,7 @@ export async function runProjectTests(projectRoot) {
     }
     finally { await copy.dispose(); }
     return { command: "test", ...result, status: result.exitCode === 0 ? "approved" : result.exitCode === 1 ? "rejected" : "NO_VERIFICADO",
-      inputs: inputEvidence, configurationHash: digest(config), limits: config.limits.operation };
+      inputs: inputEvidence, configurationHash: digest(config), executionIdentity: identity, limits: config.limits.operation };
   } catch (error) {
     effectiveCommand = error.effectiveCommand;
     const typed = error instanceof IntegrationError || (typeof error.code === "string" && Number.isInteger(error.exitCode));
@@ -161,7 +178,7 @@ function integrationFailure(error) {
 
 export async function runPythonQualityCli(args, io = process) {
   if (args.length === 0 || (args.length === 1 && ["--help", "-h"].includes(args[0]))) {
-    io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json en una copia controlada y devuelve cobertura con rutas públicas relativas.\nCódigos: 0 suite aprobada; 1 fallo; 2 aislamiento, integridad, entorno o cobertura no verificados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
+    io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json en una copia controlada y devuelve cobertura con rutas públicas relativas.\nTareas Light, Normal y Full: prepare --task <id> --mode <modo> --objective <referencia> [--repair-test <ruta>]; baseline consulta el inicio y verify exige la suite final aprobada. Directo no requiere preparación.\nCódigos: 0 suite aprobada o baseline válido (puede contener fallos); 1 fallo; 2 aislamiento, integridad, entorno, cobertura o calidad no verificados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
     return 0;
   }
   const result = args.length === 1 && args[0] === "test" ? await runProjectTests(process.cwd())

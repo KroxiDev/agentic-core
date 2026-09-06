@@ -1,6 +1,7 @@
 """Private pytest observer: preserve collection and run coverage in the project Python."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -21,6 +22,7 @@ _state = {
 }
 _coverage = None
 _phases = {"setup": 0, "call": 0, "teardown": 0}
+_failures = []
 _root = Path(_settings["projectRoot"]).resolve()
 _measured = {str((_root / file).resolve()): file for file in _settings["measured"]}
 
@@ -81,6 +83,43 @@ def pytest_runtest_logreport(report):
         _phases[report.when] += 1
 
 
+def _failure_kind(error):
+    if isinstance(error, BaseExceptionGroup):
+        # Each leaf needs its own attribution; the group's traceback cannot supply it.
+        kinds = {_failure_kind(child) for child in error.exceptions}
+        if "dependency_error" in kinds:
+            return "dependency_error"
+        if kinds & {"exception", "unattributed_group"}:
+            return "unattributed_group"
+        return "production_exception" if "production_exception" in kinds else "assertion"
+    # An import can fail inside measured code because the project environment is incomplete.
+    if isinstance(error, ImportError):
+        return "dependency_error"
+    if isinstance(error, (AssertionError, pytest.fail.Exception)):
+        return "assertion"
+    traceback = getattr(error, "__traceback__", None)
+    while traceback is not None:
+        if str(Path(traceback.tb_frame.f_code.co_filename).resolve()) in _measured:
+            return "production_exception"
+        traceback = traceback.tb_next
+    return "exception"
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.failed:
+        # Parameter values and traceback text can contain private runtime data.
+        _failures.append({
+            "id": hashlib.sha256(report.nodeid.encode("utf-8")).hexdigest(),
+            "path": _public_path(item.config.rootpath / report.location[0]),
+            "line": report.location[1] + 1,
+            "phase": report.when,
+            "kind": _failure_kind(call.excinfo.value if call.excinfo is not None else None),
+        })
+
+
 def pytest_collection_finish(session):
     _public_path(session.config.rootpath)
     _public_path(session.config.inipath)
@@ -102,6 +141,7 @@ def pytest_sessionfinish(session, exitstatus):
         "collected": session.testscollected,
         "failed": session.testsfailed,
         "phases": dict(_phases),
+        "failures": list(_failures),
         "root": _public_path(session.config.rootpath),
         "configuration": _public_path(session.config.inipath),
     }

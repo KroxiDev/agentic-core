@@ -102,7 +102,7 @@ test("private tools and installed runtime survive the bootstrap and remain indep
     assert.equal(report.tools.tools.mutate4py, "0.1.4");
     assert.notEqual(report.python.executable, report.tools.executable);
     assert.equal(report.verification, "NO_VERIFICADO");
-    const quality = await installedRun(project, "agentic-quality", ["prepare", "--mode", "normal", "--scope", "."]);
+    const quality = await installedRun(project, "agentic-quality", ["prepare", "--task", "installation", "--mode", "normal", "--objective", "installation"]);
     assert.equal(quality.code, 2);
     assert.doesNotMatch(quality.stdout + quality.stderr, /QUALITY_OK/);
   }
