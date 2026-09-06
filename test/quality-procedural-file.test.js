@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { findPython } from "../src/quality/python.js";
 import { createTestProject } from "./project-builder.js";
+import { configurePythonProject, pythonProject as installedPythonProject, runPythonProject } from "./support/python-project.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -133,10 +134,7 @@ async function runCrap(root, target) {
   }
 }
 
-// This characterizes PR-17. When MJ-13 closes, invert both characterizations
-// below: each procedural file must expose a measured <module> symbol and a
-// measured verdict; move the zero-symbol warning expectation to a truly empty
-// scope.
+// The legacy JavaScript characterization remains outside the Python-only contract.
 function assertSilentNotApplicable(result, {
   backends,
   language,
@@ -184,18 +182,25 @@ test("PR-17: a JavaScript procedural file passes silently without any measured s
   });
 });
 
-// The Python backend shares the defect, so it is characterized on its own test:
-// an unavailable interpreter must show up as a skip, never as a silent pass.
-test("PR-17: a Python procedural file passes silently without any measured symbol", async (t) => {
-  const root = await createTestProject(t, pythonProject);
-  if (!await findPython(root)) return t.skip("Python 3.10 or newer is unavailable");
-
-  const result = await runCrap(root, "src/procedural_subject.py");
-
-  assertSilentNotApplicable(result, {
-    backends: ["coverage.py", "stdlib-trace"],
-    language: "python",
-    runner: "unittest",
-    target: "src/procedural_subject.py",
-  });
+test("PR-17 regression: installed Python procedural behavior is measured and cannot pass silently", async (t) => {
+  const { root } = await installedPythonProject(t);
+  await writeFile(path.join(root, "work dir/src/subject.py"), pythonProject.files["src/procedural_subject.py"]);
+  await writeFile(path.join(root, "work dir/python checks/check_subject.py"),
+    pythonProject.files["tests/test_procedural_subject.py"].replace("src.procedural_subject", "src.subject"));
+  const result = await runPythonProject(root, ["crap"]);
+  assert.equal(result.code, 1, result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, "rejected");
+  assert.equal(report.execution.suite.status, "passed");
+  assert.equal(report.details.length, 1);
+  const module = report.details[0];
+  assert.equal(module.name, "<module>");
+  assert.equal(module.kind, "module");
+  assert.ok(module.complexity > 7);
+  assert.ok(module.value > module.limit);
+  assert.equal(module.limit, 7);
+  await configurePythonProject(root, (config) => { config.limits.crap = module.value; });
+  const control = await runPythonProject(root, ["crap"]);
+  assert.equal(control.code, 0, control.stdout);
+  assert.equal(JSON.parse(control.stdout).details[0].value, module.value);
 });

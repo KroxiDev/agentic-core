@@ -150,6 +150,11 @@ def pytest_sessionfinish(session, exitstatus):
             return
         _coverage.stop()
         _coverage.save()
+        loaded = sorted(_measured[file] for file in _coverage.get_data().measured_files() if file in _measured)
+        if not loaded:
+            _state["coverage"] = {"status": "measured", "backend": "coverage.py", "version": "7.13.4",
+                                  "files": {}, "loadedFiles": [], "lcov": ""}
+            return
         json_path = _report.with_suffix(".coverage.json")
         _coverage.json_report(outfile=str(json_path))
         document = json.loads(json_path.read_text(encoding="utf-8"))
@@ -173,6 +178,7 @@ def pytest_sessionfinish(session, exitstatus):
         _state["coverage"] = {
             "status": "measured", "backend": "coverage.py", "version": "7.13.4",
             "files": files,
+            "loadedFiles": loaded,
             "lcov": "\n".join(lcov) + "\n",
         }
     except Exception:

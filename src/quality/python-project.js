@@ -178,6 +178,7 @@ function integrationFailure(error) {
 
 export async function runPythonQualityCli(args, io = process) {
   if (args.length === 0 || (args.length === 1 && ["--help", "-h"].includes(args[0]))) {
+    io.stdout.write("C.R.A.P.: agentic-quality crap mide el alcance Python con el límite de config.json y conserva resultados parciales. Informe: .agentic-core/quality/crap.json.\n");
     io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json en una copia controlada y devuelve cobertura con rutas públicas relativas.\nTareas Light, Normal y Full: prepare --task <id> --mode <modo> --objective <referencia> [--repair-test <ruta>]; baseline consulta el inicio y verify exige la suite final aprobada. Directo no requiere preparación.\nCódigos: 0 suite aprobada o baseline válido (puede contener fallos); 1 fallo; 2 aislamiento, integridad, entorno, cobertura o calidad no verificados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
     return 0;
   }
