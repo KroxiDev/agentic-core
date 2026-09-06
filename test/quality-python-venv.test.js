@@ -63,7 +63,10 @@ test("PR-09 regression: installed pytest uses the project environment and actual
     const noCoverage = await runPythonProject(root);
     assert.equal(noCoverage.code, 2, noCoverage.stdout);
     assert.equal(JSON.parse(noCoverage.stdout).suite.status, "passed");
-    assert.equal(JSON.parse(noCoverage.stdout).coverage.files, null);
+    assert.equal(JSON.parse(noCoverage.stdout).code, "coverage_failed");
+    assert.equal(JSON.parse(noCoverage.stdout).coverage.status, "measured");
+    assert.deepEqual(JSON.parse(noCoverage.stdout).coverage.loadedFiles, []);
+    assert.deepEqual(JSON.parse(noCoverage.stdout).coverage.files, {});
   });
 
   await t.test("pytest failure, invalid usage and internal error use numeric codes", async () => {
