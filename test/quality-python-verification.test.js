@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { compareCrap, verificationConsistency, verificationExit } from "../src/quality/python-verification.js";
 import { configurePythonProject, pythonProject, runPythonProject } from "./support/python-project.mjs";
 
 const parse = (result) => JSON.parse(result.stdout);
@@ -64,8 +65,70 @@ test("installed Light and Normal verification emit a receipt backed by all requi
       assert.equal(human.code, 0, human.stdout + human.stderr);
       assert.match(human.stdout, /^QUALITY_OK task=issue-46 mode=normal /u);
       assert.ok(!human.stdout.includes(root));
+      const validReport = JSON.parse(await readFile(reportPath, "utf8"));
+      validReport.crap.details[0].value = 999;
+      const corrupted = JSON.stringify(validReport);
+      await writeFile(reportPath, corrupted);
+      const refused = await runPythonProject(root, ["verify"]);
+      assert.equal(refused.code, 2, refused.stdout + refused.stderr);
+      assert.equal(parse(refused).code, "quality_report_conflict");
+      assert.equal(await readFile(reportPath, "utf8"), corrupted);
+      assert.doesNotMatch(refused.stdout, /QUALITY_OK/u);
     }
   }
+});
+
+test("C.R.A.P. identity reserves existing symbols and only attributes unique relocations", () => {
+  const row = (file, value, fingerprint = "original") => ({
+    id: file, file, name: "classify", kind: "function", fingerprint,
+    value, status: value <= 7 ? "approved" : "rejected",
+  });
+  const baseline = { status: "rejected", details: [row("z.py", 12)] };
+  const compare = (rows) => compareCrap({ status: "rejected", details: rows }, baseline, 7);
+  const copied = compare([row("a.py", 12), row("z.py", 4, "improved")]);
+  assert.equal(copied.status, "rejected");
+  assert.equal(copied.details[0].baseline.status, "new_symbol");
+  assert.equal(copied.details[0].status, "rejected");
+  assert.equal(copied.details[1].baseline.status, "attributed");
+  assert.equal(copied.details[1].baseline.value, 12);
+  assert.equal(copied.details[1].status, "approved");
+  const relocated = compare([row("a.py", 12)]);
+  assert.equal(relocated.status, "approved");
+  assert.equal(relocated.details[0].baseline.status, "relocated");
+  const ambiguous = compare([row("a.py", 12), row("b.py", 12)]);
+  assert.equal(ambiguous.status, "NO_VERIFICADO");
+  assert.ok(ambiguous.details.every((detail) => detail.baseline.status === "ambiguous_identity"));
+  const uncertain = compareCrap({ status: "approved", exitCode: 0,
+    details: [row("a.py", 4), row("b.py", 4)] }, baseline, 7);
+  assert.equal(uncertain.status, "NO_VERIFICADO");
+  assert.equal(verificationExit(uncertain.status, uncertain.code, [uncertain]), 2);
+});
+
+test("verification consistency rejects inputs, configuration and environment changed between controls", () => {
+  const consistent = { inputs: ["A", "A", "A", "A", "A"], configurations: ["C", "C"], identities: ["E", "E"] };
+  assert.equal(verificationConsistency(consistent).status, "approved");
+  for (const index of [1, 2, 3, 4]) {
+    const changed = structuredClone(consistent);
+    changed.inputs[index] = "B";
+    assert.deepEqual(verificationConsistency(changed), { status: "NO_VERIFICADO", code: "quality_inputs_changed" });
+  }
+  for (const field of ["configurations", "identities"]) {
+    const changed = structuredClone(consistent);
+    changed[field][1] = "changed";
+    assert.deepEqual(verificationConsistency(changed), { status: "NO_VERIFICADO", code: "quality_conditions_changed" });
+  }
+});
+
+test("verification preserves typed failures through C.R.A.P. and aggregate exit codes", () => {
+  for (const [code, exitCode] of [["dry_resolution_invalid", 4], ["crap_internal_error", 5], ["command_timeout", 6]]) {
+    const failure = { status: "NO_VERIFICADO", code, exitCode };
+    assert.equal(verificationExit("NO_VERIFICADO", code, [failure]), exitCode);
+    const measured = compareCrap(failure, { status: "approved", details: [] }, 7);
+    assert.equal(verificationExit("NO_VERIFICADO", code, [measured]), exitCode);
+  }
+  assert.equal(verificationExit("approved", "quality_approved", []), 0);
+  assert.equal(verificationExit("rejected", "tests_failed", [{ code: "tests_failed", exitCode: 1 }]), 1);
+  assert.equal(verificationExit("NO_VERIFICADO", "baseline_invalid", []), 2);
 });
 
 test("incremental C.R.A.P. rejects new code and degradation of existing code", async (t) => {

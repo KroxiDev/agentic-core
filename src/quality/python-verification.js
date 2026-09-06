@@ -61,6 +61,10 @@ async function inspectExistingReport(root, taskId) {
     || !report.controls || !report.tests || !report.dry || !report.crap || !report.mutation) {
     throw new IntegrationError("quality_report_conflict", "El veredicto existente es ajeno o divergente; se conserva sin reemplazarlo", 2);
   }
+  const { integrity, ...evidence } = report;
+  if (integrity !== hash(evidence)) {
+    throw new IntegrationError("quality_report_conflict", "El veredicto existente está corrupto; se conserva sin reemplazarlo", 2);
+  }
   return report;
 }
 
@@ -114,8 +118,10 @@ function baselineRows(report) {
   return Array.isArray(report?.details) ? report.details : [];
 }
 
-function compareCrap(current, baseline, limit) {
+export function compareCrap(current, baseline, limit) {
   const priorRows = baselineRows(baseline);
+  const currentRows = current?.details ?? [];
+  const currentKeys = new Set(currentRows.map(detailKey));
   const exact = new Map();
   for (const row of priorRows) {
     const key = detailKey(row);
@@ -125,15 +131,19 @@ function compareCrap(current, baseline, limit) {
   }
   const used = new Set();
   const comparablePrior = priorRows.filter((row) => detailValue(row) !== null);
-  const details = (current?.details ?? []).map((row) => {
+  const details = currentRows.map((row) => {
     const key = detailKey(row);
     let prior = (exact.get(key) ?? []).find((candidate) => !used.has(candidate));
     let relation = "same_identity";
     if (!prior && row.fingerprint) {
       const moved = comparablePrior.filter((candidate) => !used.has(candidate)
+        && !currentKeys.has(detailKey(candidate))
         && candidate.kind === row.kind && candidate.name === row.name
         && candidate.fingerprint === row.fingerprint);
-      if (moved.length === 1) {
+      const destinations = currentRows.filter((candidate) => !exact.has(detailKey(candidate))
+        && candidate.kind === row.kind && candidate.name === row.name
+        && candidate.fingerprint === row.fingerprint);
+      if (moved.length === 1 && destinations.length === 1) {
         prior = moved[0];
         relation = "relocated_identity";
       }
@@ -157,6 +167,7 @@ function compareCrap(current, baseline, limit) {
     }
     if (!prior) {
       const identityCandidates = priorRows.filter((candidate) => !used.has(candidate)
+        && !currentKeys.has(detailKey(candidate))
         && candidate.kind === row.kind && candidate.name === row.name);
       if (identityCandidates.length > 0) {
         return {
@@ -224,7 +235,8 @@ function compareCrap(current, baseline, limit) {
     ...current,
     status,
     code,
-    exitCode: status === noVerification ? 2 : status === "rejected" ? 1 : 0,
+    exitCode: status === noVerification ? current?.status === noVerification ? current.exitCode ?? 2 : 2
+      : status === "rejected" ? 1 : 0,
     details,
     baseline: {
       status: baseline ? baseline.status ?? "captured" : "missing",
@@ -265,6 +277,21 @@ function freshnessControl(value) {
   if (value.status === noVerification) return { status: noVerification, code: "current_inputs_incomplete" };
   if (value.conditionsChanged) return { status: noVerification, code: "quality_conditions_changed" };
   return { status: "approved", code: "conditions_preserved" };
+}
+
+export function verificationConsistency({ inputs, configurations, identities }) {
+  const differs = (values) => values.some((value) => value !== values[0]);
+  if (differs(inputs)) return { status: noVerification, code: "quality_inputs_changed" };
+  if (differs(configurations) || differs(identities)) {
+    return { status: noVerification, code: "quality_conditions_changed" };
+  }
+  return { status: "approved", code: "conditions_preserved" };
+}
+
+export function verificationExit(status, code, controls) {
+  if (status === "approved" || status === "NO_APLICA") return 0;
+  const cause = controls.find((control) => control.code === code);
+  return cause?.exitCode ?? (status === "rejected" ? 1 : 2);
 }
 
 function aggregateStatus({ baseline, evidence, tests, dry, crap, mutation }) {
@@ -335,9 +362,14 @@ function initialEnvironment(task) {
   };
 }
 
-async function currentEnvironment(root, config, tests) {
+async function currentEnvironment(root, tests) {
   let identity = null;
-  try { identity = (await projectTestIdentity(root, config)).identity; }
+  let configurationHash = null;
+  try {
+    const currentConfig = await readConfiguration(path.join(root, ".agentic-core/config.json"));
+    configurationHash = hash(currentConfig);
+    identity = (await projectTestIdentity(root, currentConfig)).identity;
+  }
   catch { /* The typed test result remains the source of the environment cause. */ }
   return {
     node: process.version,
@@ -345,8 +377,8 @@ async function currentEnvironment(root, config, tests) {
     arch: process.arch,
     python: tests.python ?? null,
     runner: tests.effectiveCommand ?? null,
-    configurationHash: tests.configurationHash ?? null,
-    executionIdentity: tests.executionIdentity ?? identity,
+    configurationHash,
+    executionIdentity: identity,
   };
 }
 
@@ -354,6 +386,7 @@ async function persistVerification(root, taskId, document) {
   await ownDirectory(path.join(root, ".agentic-core"));
   await ownDirectory(path.join(root, ".agentic-core", "quality"));
   await inspectExistingReport(root, taskId);
+  document.integrity = hash(document);
   const content = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
   const target = path.join(root, reference);
   await writeTransaction(root, [{ path: target, content }]);
@@ -412,9 +445,19 @@ export async function verifyPythonTask(root, task) {
   catch (error) { currentCrap = controlFailure("crap", error); }
   const after = await captureProjectInputs(root, config.integration.python);
   const configHash = hash(config);
-  const currentEnvironmentValue = await currentEnvironment(root, config, tests);
+  const currentEnvironmentValue = await currentEnvironment(root, tests);
   const taskFreshness = freshness(task, after, tests, configHash);
-  const evidence = freshnessControl(taskFreshness);
+  let evidence = freshnessControl(taskFreshness);
+  if (evidence.status === "approved" && tests.status === "approved"
+    && dry.status !== noVerification && currentCrap.status !== noVerification) {
+    evidence = verificationConsistency({
+      inputs: [before.digest, tests.inputs?.digest, dry.hashes?.inputs, currentCrap.inputs?.digest, after.digest],
+      configurations: [configHash, tests.configurationHash, dry.hashes?.configuration,
+        currentCrap.execution?.configurationHash, currentEnvironmentValue.configurationHash],
+      identities: [tests.executionIdentity, currentCrap.execution?.executionIdentity,
+        currentEnvironmentValue.executionIdentity],
+    });
+  }
   const crapBaseline = qualityBaselineControl(task);
   const crap = crapBaseline.report
     ? compareCrap(currentCrap, crapBaseline.report, config.limits.crap)
@@ -506,8 +549,7 @@ export async function verifyPythonTask(root, task) {
     command: "verify",
     status,
     code,
-    exitCode: status === "approved" || status === "NO_APLICA" ? 0
-      : tests.status === "rejected" || status === "rejected" ? 1 : 2,
+    exitCode: verificationExit(status, code, [baseline, evidence, tests, dry, crap, mutation]),
     message: document.message,
     task,
     freshness: taskFreshness,
