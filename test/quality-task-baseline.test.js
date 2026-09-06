@@ -64,7 +64,10 @@ test("installed task baseline preserves the actual worktree and separates repair
   assert.equal(await readFile(evidence, "utf8"), baseline);
   const final = await runPythonProject(root, ["verify"]);
   assert.equal(parse(final).result.suite.status, "passed");
-  assert.equal(parse(final).code, "quality_pending");
+  assert.equal(final.code, 2);
+  assert.equal(parse(final).status, "NO_VERIFICADO");
+  assert.equal(parse(final).code, "quality_conditions_changed");
+  assert.equal(parse(final).verification.controls.evidence.code, "quality_conditions_changed");
   assert.doesNotMatch(final.stdout, /QUALITY_OK/u);
   const different = await runPythonProject(root, ["prepare", "--task", "different"]);
   assert.equal(parse(different).code, "task_already_active");
@@ -163,11 +166,14 @@ def test_subject():
     assert.equal(parse(repeated).task.baseline.sha256, report.task.baseline.sha256);
     const final = await runPythonProject(root, ["verify"]);
     assert.equal(parse(final).result.code, "tests_passed");
-    assert.equal(parse(final).code, "quality_pending");
+    assert.equal(final.code, 0);
+    assert.equal(parse(final).status, "approved");
+    assert.equal(parse(final).code, "quality_approved");
     assert.deepEqual(parse(final).freshness.changed, ["work dir/src/subject.py"]);
     assert.equal(await readFile(evidence, "utf8"), baseline);
     assert.equal(await readFile(subject, "utf8"), original);
-    assert.doesNotMatch(first.stdout + final.stdout, /QUALITY_OK/u);
+    assert.doesNotMatch(first.stdout, /QUALITY_OK/u);
+    assert.match(parse(final).receipt, /^QUALITY_OK/u);
     assert.ok(!first.stdout.includes(root) && !first.stdout.includes(root.replaceAll("\\", "/")));
     assert.doesNotMatch(first.stdout, /private group detail 43|private check detail 43/u);
   });
