@@ -5,11 +5,13 @@ import { writeTransaction } from "../transaction.js";
 import { IntegrationError } from "./command.js";
 import { compareCodeUnits } from "./order.js";
 import { captureProjectInputs, inputHash, publicCheckpoint } from "./project-inputs.js";
+import { dependencyFingerprint } from "./project-copy.js";
 import { projectTestIdentity, runProjectTests } from "./python-project.js";
 import { runPythonCrap } from "./python-crap.js";
 import { runPythonDry } from "./python-dry.js";
 
 const reference = ".agentic-core/quality/verification.json";
+export const verificationReference = reference;
 const schema = "https://kroxidev.dev/agentic-core/python-quality-verification.schema.json";
 const hash = (value) => inputHash(JSON.stringify(value));
 const noVerification = "NO_VERIFICADO";
@@ -42,7 +44,13 @@ async function ownDirectory(directory) {
   }
 }
 
-async function inspectExistingReport(root, taskId) {
+function sameTask(left, right) {
+  return left?.id === right?.id && left?.mode === right?.mode
+    && left?.objective === right?.objective
+    && JSON.stringify(left?.scope) === JSON.stringify(right?.scope);
+}
+
+async function inspectExistingReport(root, taskId, expectedTask) {
   const target = path.join(root, reference);
   let content;
   try {
@@ -57,7 +65,9 @@ async function inspectExistingReport(root, taskId) {
   try { report = JSON.parse(content); }
   catch { throw new IntegrationError("quality_report_conflict", "El veredicto existente está corrupto; se conserva sin reemplazarlo", 2); }
   if (report?.$schema !== schema || report.schemaVersion !== 1
-    || report.task?.id !== taskId || !acceptedStatuses.has(report.status)
+    || taskId !== undefined && report.task?.id !== taskId
+    || expectedTask && !sameTask(report.task, expectedTask)
+    || typeof report.task?.id !== "string" || !acceptedStatuses.has(report.status)
     || !report.controls || !report.tests || !report.dry || !report.crap || !report.mutation) {
     throw new IntegrationError("quality_report_conflict", "El veredicto existente es ajeno o divergente; se conserva sin reemplazarlo", 2);
   }
@@ -66,6 +76,15 @@ async function inspectExistingReport(root, taskId) {
     throw new IntegrationError("quality_report_conflict", "El veredicto existente está corrupto; se conserva sin reemplazarlo", 2);
   }
   return report;
+}
+
+export async function readVerificationReport(root, expectedTask) {
+  const report = await inspectExistingReport(root, expectedTask?.id, expectedTask);
+  if (!report) return null;
+  return {
+    report,
+    sha256: inputHash(await readFile(path.join(root, reference))),
+  };
 }
 
 function compactReport(report) {
@@ -359,18 +378,22 @@ function initialEnvironment(task) {
     runner: result.effectiveCommand ?? null,
     configurationHash: result.configurationHash ?? null,
     executionIdentity: result.executionIdentity ?? null,
+    qualityTools: null,
   };
 }
 
 async function currentEnvironment(root, tests) {
   let identity = null;
   let configurationHash = null;
+  let qualityTools = null;
   try {
     const currentConfig = await readConfiguration(path.join(root, ".agentic-core/config.json"));
     configurationHash = hash(currentConfig);
     identity = (await projectTestIdentity(root, currentConfig)).identity;
   }
   catch { /* The typed test result remains the source of the environment cause. */ }
+  try { qualityTools = await dependencyFingerprint([path.join(root, ".agentic-core/tools")]); }
+  catch { /* The tool environment cause remains in the typed control result. */ }
   return {
     node: process.version,
     platform: process.platform,
@@ -379,13 +402,14 @@ async function currentEnvironment(root, tests) {
     runner: tests.effectiveCommand ?? null,
     configurationHash,
     executionIdentity: identity,
+    qualityTools,
   };
 }
 
 async function persistVerification(root, taskId, document) {
   await ownDirectory(path.join(root, ".agentic-core"));
   await ownDirectory(path.join(root, ".agentic-core", "quality"));
-  await inspectExistingReport(root, taskId);
+  await inspectExistingReport(root, taskId, document.task);
   document.integrity = hash(document);
   const content = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
   const target = path.join(root, reference);
@@ -393,15 +417,17 @@ async function persistVerification(root, taskId, document) {
   return { reference, sha256: inputHash(content) };
 }
 
-function freshness(task, currentCheckpoint, tests, configHash) {
+function freshness(task, currentCheckpoint, tests, configHash, qualityTools) {
   const initial = task.initial ?? {};
   const initialInputs = initial.inputs?.inventory ?? [];
   const currentInputs = currentCheckpoint.inventory ?? [];
   const changed = changedEntries(initialInputs, currentInputs, task.scope ?? []);
   const configurationChanged = configHash !== initial.result?.configurationHash;
   const identityKnown = tests.executionIdentity !== undefined && initial.result?.executionIdentity !== undefined;
+  const toolsKnown = initial.environment?.qualityTools !== undefined;
   const conditionsChanged = configurationChanged || identityKnown
-    && tests.executionIdentity !== initial.result.executionIdentity;
+    && tests.executionIdentity !== initial.result.executionIdentity
+    || toolsKnown && qualityTools !== initial.environment.qualityTools;
   return {
     status: currentCheckpoint.issues?.length ? noVerification : "compared",
     changed: changed.map((entry) => entry.path),
@@ -412,6 +438,9 @@ function freshness(task, currentCheckpoint, tests, configHash) {
       && !conditionsChanged && currentCheckpoint.digest === initial.inputs?.digest,
     baselinePreserved: true,
     checkpoint: publicCheckpoint(currentCheckpoint),
+    configurationHash: configHash,
+    executionIdentity: tests.executionIdentity ?? null,
+    qualityTools,
   };
 }
 
@@ -420,7 +449,7 @@ export async function capturePythonQualityBaseline(root, { checkpoint, execution
   let dry;
   try { crap = await runPythonCrap(root, { checkpoint, execution }); }
   catch (error) { crap = controlFailure("crap", error); }
-  try { dry = await runPythonDry(root); }
+  try { dry = await runPythonDry(root, { activeTask: null, ignoreStoredResolutions: true }); }
   catch (error) { dry = controlFailure("dry", error); }
   const status = [crap, dry].some((control) => control.status === noVerification)
     ? noVerification : "captured";
@@ -446,7 +475,7 @@ export async function verifyPythonTask(root, task) {
   const after = await captureProjectInputs(root, config.integration.python);
   const configHash = hash(config);
   const currentEnvironmentValue = await currentEnvironment(root, tests);
-  const taskFreshness = freshness(task, after, tests, configHash);
+  const taskFreshness = freshness(task, after, tests, configHash, currentEnvironmentValue.qualityTools);
   let evidence = freshnessControl(taskFreshness);
   if (evidence.status === "approved" && tests.status === "approved"
     && dry.status !== noVerification && currentCrap.status !== noVerification) {
