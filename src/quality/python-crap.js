@@ -80,11 +80,11 @@ async function measure(root, config, checkpoint, execution, budget) {
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 
-export async function runPythonCrap(root) {
+export async function runPythonCrap(root, { checkpoint: suppliedCheckpoint, execution: suppliedExecution } = {}) {
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const budget = commandBudget(config.limits.operation);
-  const before = await captureProjectInputs(root, config.integration.python);
-  const execution = await runProjectTests(root);
+  const before = suppliedCheckpoint ?? await captureProjectInputs(root, config.integration.python);
+  const execution = suppliedExecution ?? await runProjectTests(root);
   const measured = await measure(root, config, before, execution, budget);
   const after = await captureProjectInputs(root, config.integration.python);
   let currentIdentity;

@@ -1,6 +1,6 @@
 # agentic-core 0.2.0
 
-`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. Directo aplica las Golden Rules y las comprobaciones pertinentes del encargo. La verificación de calidad y las secuencias Light, Normal y Full del rediseño #38 están pendientes de integración; esta instalación no emite `QUALITY_OK`. Las secciones de coordinación y `QualitySession` del esquema 2 se conservan para instalaciones anteriores.
+`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. Directo aplica las Golden Rules y las comprobaciones pertinentes del encargo. La verificación agregada de tareas Light y Normal exige suite, DRY y C.R.A.P. y puede emitir `QUALITY_OK`; Full permanece `NO_VERIFICADO` hasta integrar Mutation Testing. Las secciones de coordinación y `QualitySession` del esquema 2 se conservan para instalaciones anteriores.
 
 ## Requisitos y soporte
 
@@ -65,7 +65,7 @@ node .agentic-core/runtime-launcher.mjs agentic-quality verify
 
 `--repair-test` es opcional y repetible: identifica archivos de pruebas cuyos fallos iniciales pertenecen al encargo. Los demás fallos se informan como ajenos y no amplían el alcance. El baseline conserva código, inputs no versionados, cobertura y evidencia de fallos sin usar el diff contra HEAD para atribuir autoría. Los fallos de comprobación y los defectos atribuibles al código medido pueden conservarse como baseline fallido válido aunque se detecten en fixtures. Los grupos anidados requieren atribución de cada excepción interna. Los errores de importación o dependencias producen `NO_VERIFICADO` incluso desde código medido; también lo producen los errores de integridad, de preparación sin atribución o los grupos con errores no atribuibles. Declarar `--repair-test` no valida esa evidencia.
 
-La referencia breve `.agentic-core/quality/active-task.json` contiene el objetivo, alcance e inicio inmutable de la tarea. Repetir `prepare` conserva ese inicio, incluso después de cambios; `baseline` compara inputs y condiciones actuales sin ejecutar pytest. Un cambio de pruebas, comando, configuración, runtime, dependencias o recursos vuelve obsoleta la evidencia afectada. `verify` exige la suite final aprobada; los controles agregados posteriores siguen pendientes y todavía no emite `QUALITY_OK`. Directo puede usar `test` sin preparar una tarea. Una tarea distinta no reemplaza automáticamente la evidencia activa.
+La referencia breve `.agentic-core/quality/active-task.json` contiene el objetivo, alcance e inicio inmutable de la tarea. Repetir `prepare` conserva ese inicio, incluso después de cambios; `baseline` compara inputs y condiciones actuales sin ejecutar pytest. Un cambio de pruebas, comando, configuración, runtime, dependencias o recursos vuelve obsoleta la evidencia afectada. `verify` exige la suite final aprobada y compara DRY y C.R.A.P. contra ese baseline; Light y Normal emiten `QUALITY_OK` solo con evidencia vigente y completa. Full permanece `NO_VERIFICADO` porque Mutation Testing se integra en las tareas posteriores de mutación. Directo puede usar `test` sin preparar una tarea. Una tarea distinta no reemplaza automáticamente la evidencia activa.
 
 ### C.R.A.P. de Python
 
@@ -99,6 +99,14 @@ La razón debe mencionar ambos símbolos del candidato y un fragmento de sus cue
 Cuando existe `active-task.json`, la detección analiza sus fuentes originales con los límites actuales. Compara las identidades de los cuerpos duplicados, sin atribuir a la tarea cambios ajenos en el archivo o traslados identificables; cada par previo puede justificar un único par actual, de modo que nuevas copias siguen pendientes. Cambiar un límite renueva la detección sin reemplazar el baseline. Si cambian los inputs o los límites, las resoluciones previas quedan obsoletas.
 
 Los pragmas `dry4python: ignore` e `ignore-file` se neutralizan únicamente en las copias de análisis. El motor fijado mide funciones y métodos: el código procedural de módulo o clase que alcanza los tamaños mínimos configurados queda `NO_VERIFICADO`, con ubicaciones y los candidatos válidos de las demás partes. También se conservan resultados parciales ante errores sintácticos, sin publicar el texto fuente en el diagnóstico. `NO_VERIFICADO` diferencia errores de herramienta, integridad o medición de `no_duplicates`; esta comprobación tampoco emite `QUALITY_OK`.
+
+### Veredicto incremental y `QUALITY_OK`
+
+`agentic-quality verify` reúne el resultado de la suite final, DRY y C.R.A.P. en `.agentic-core/quality/verification.json`. El informe vincula el modo, alcance, inventarios y hashes de inputs, comando efectivo, configuración, versiones, entorno, baseline y resultados actuales. `QUALITY_OK` solo aparece en el campo `receipt` del JSON cuando todos los controles exigibles están aprobados; una ejecución incompleta, una evidencia corrupta o un cambio de configuración produce `NO_VERIFICADO` y no reutiliza un aprobado anterior.
+
+El diferencial de C.R.A.P. aplica `limits.crap` al código nuevo y exige que los símbolos existentes dentro del alcance no empeoren respecto de su valor inicial. La deuda heredada por encima del límite se conserva como contexto y solo debe no empeorar. Un traslado se atribuye únicamente con una identidad de símbolo y fingerprint únicos; si no puede establecerse la correspondencia, el resultado queda sin verificar. DRY conserva candidatos nuevos o modificados como rechazados hasta que exista una resolución concreta ligada al ID, inputs y configuración actuales.
+
+Light y Normal pueden cerrar con `approved` y `QUALITY_OK`; sus controles de mutación son `NO_APLICA`. Full ejecuta suite, DRY y C.R.A.P., pero declara Mutation Testing `NO_VERIFICADO` hasta que esté disponible la integración aislada correspondiente. `approved`, `rejected`, `NO_VERIFICADO` y `NO_APLICA` incluyen códigos de causa, y el estado agregado nunca convierte una medición ausente en un aprobado.
 
 ## Actualización
 
@@ -184,8 +192,8 @@ Una solicitud ordinaria de documentación también es un encargo directo. La aus
 Documentador no añade documentación a otras tareas; puede recomendarse al cerrar el encargo.
 En un flujo orquestado, Documentador requiere petición expresa y actúa siempre al final.
 
-Light, Normal y Full se reconocen, pero sus secuencias y verificaciones quedan pendientes
-de #51, #52 y #53. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección vive
+Light, Normal y Full se reconocen; la secuencia de roles queda pendiente de #51, #52 y #53,
+pero el gate local de calidad de #46 ya exige sus controles instalados. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección vive
 en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
 La verificación de archivos instalados no acredita por sí sola el comportamiento en Codex real.
 
