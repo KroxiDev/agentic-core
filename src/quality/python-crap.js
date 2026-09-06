@@ -12,7 +12,18 @@ import { projectTestIdentity, runProjectTests } from "./python-project.js";
 const adapter = fileURLToPath(new URL("agentic_crap.py", import.meta.url));
 const reference = ".agentic-core/quality/crap.json";
 const hash = (value) => inputHash(JSON.stringify(value));
-const otherLanguage = /\.(?:[cm]?[jt]sx?|go|rs|java|c|cc|cpp|cs|rb|php|swift|kt)$/iu;
+// Only recognized document/data formats can leave the measured scope silently.
+// Unknown suffixes and extensionless files may contain code: retain a limitation.
+const resourceFormat = /\.(?:md|markdown|rst|txt|json|jsonl|csv|tsv|toml|ini|cfg|ya?ml|png|jpe?g|gif|webp|ico|pdf|woff2?|ttf|otf)$/iu;
+
+function requiresMeasurement(entry, unit) {
+  if (entry.kind === "measured_code") return true;
+  if (!unit.scope.some((scope) => matchesInput(entry.path, scope))) return false;
+  // The shared input policy already excludes Python tests from measured code.
+  if (entry.path.endsWith(".py")) return false;
+  return !resourceFormat.test(entry.path) || (entry.mode & 0o111) !== 0
+    || entry.content.subarray(0, 2).toString() === "#!";
+}
 const causes = {
   coverage_not_loaded: "El comando real no cargó este archivo",
   coverage_attribution_missing: "Falta cobertura atribuible para este comportamiento",
@@ -20,6 +31,7 @@ const causes = {
   unsupported_syntax: "La sintaxis no se pudo analizar",
   unsupported_language: "El lenguaje está fuera de la integración Python",
   unsupported_construct: "El adaptador no puede atribuir por separado el cuerpo de una lambda",
+  annotation_coverage_unsupported: "La cobertura no separa la evaluación de anotaciones de la cabecera; se conserva sin medición",
   crap_analysis_failed: "El analizador no pudo medir esta parte",
   crap_limit_exceeded: "El valor supera el límite configurado",
   no_executable_code: "El AST no contiene comportamiento ejecutable que medir",
@@ -49,13 +61,13 @@ async function saveReport(root, result) {
 }
 
 async function measure(root, config, checkpoint, execution, budget) {
-  const sources = checkpoint.entries.filter((entry) => entry.kind === "measured_code"
-    || otherLanguage.test(entry.path) && config.integration.python.scope.some((scope) => matchesInput(entry.path, scope)))
+  const sources = checkpoint.entries.filter((entry) => requiresMeasurement(entry, config.integration.python))
     .map(({ content, ...entry }) => ({ ...entry, content: content.toString("base64") }));
   const temporary = await mkdtemp(path.join(tmpdir(), "agentic-crap-"));
   try {
     const request = path.join(temporary, "request.json");
-    await writeFile(request, JSON.stringify({ sources, coverage: execution.coverage ?? {}, limit: config.limits.crap }));
+    await writeFile(request, JSON.stringify({ sources, coverage: execution.coverage ?? {},
+      pythonVersion: execution.python?.version ?? null, limit: config.limits.crap }));
     const outcome = await executeCommand({ executable: privatePython(path.join(root, ".agentic-core/tools")),
       args: ["-I", "-B", adapter, request] },
     { cwd: temporary, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, timeoutMs: budget() });

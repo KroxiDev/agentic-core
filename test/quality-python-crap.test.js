@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { configurePythonProject, pythonProject, runPythonProject } from "./support/python-project.mjs";
@@ -141,4 +141,116 @@ test("installed C.R.A.P. explains a documentation-only scope and preserves a for
   assert.equal(conflict.code, 2);
   assert.equal(conflict.report.code, "quality_report_conflict");
   assert.equal(await readFile(reportFile, "utf8"), "contenido ajeno\n");
+});
+
+test("installed C.R.A.P. blocks unknown scoped languages while retaining Python and resource controls", async (t) => {
+  const { root } = await pythonProject(t);
+  const foreignFiles = ["policy.scala", "policy.unrecognized", "policy"];
+  for (const file of foreignFiles) {
+    await writeFile(path.join(root, "work dir/src", file),
+      'object Policy { def classify(value: Int): String = if (value > 0) "positive" else "other" }\n');
+  }
+  await writeFile(path.join(root, "work dir/src/guide.md"), "# Guía del proyecto\n");
+  await writeFile(path.join(root, "work dir/src/options.json"), '{"label":"example"}\n');
+  const mixed = await crap(root);
+  assert.equal(mixed.report.execution.suite.status, "passed");
+  assert.equal(mixed.code, 2, mixed.stdout);
+  assert.equal(mixed.report.status, "NO_VERIFICADO");
+  assert.equal(mixed.report.details.find((row) => row.name === "classify").value, 2);
+  for (const file of foreignFiles) {
+    const row = mixed.report.details.find((entry) => entry.file.endsWith(`/${file}`));
+    assert.equal(row.status, "NO_VERIFICADO");
+    assert.equal(row.code, "unsupported_language");
+    assert.equal(row.value, null);
+  }
+  assert.equal(mixed.report.details.length, 4, "known documents and data are inputs, not unsupported code");
+  await configurePythonProject(root, (config) => { config.integration.python.scope = ["work dir/src/policy.scala"]; });
+  const explicit = await crap(root);
+  assert.equal(explicit.report.execution.suite.status, "passed");
+  assert.equal(explicit.code, 2, explicit.stdout);
+  assert.equal(explicit.report.status, "NO_VERIFICADO");
+  assert.equal(explicit.report.details.length, 1);
+  assert.equal(explicit.report.details[0].code, "unsupported_language");
+  for (const file of foreignFiles) await rm(path.join(root, "work dir/src", file));
+  await configurePythonProject(root, (config) => { config.integration.python.scope = ["work dir/src"]; });
+  const supported = await crap(root);
+  assert.equal(supported.code, 0, supported.stdout);
+  assert.equal(supported.report.details.length, 1);
+  await configurePythonProject(root, (config) => { config.integration.python.scope = ["work dir/src/guide.md", "work dir/src/options.json"]; });
+  const resources = await crap(root);
+  assert.equal(resources.code, 0, resources.stdout);
+  assert.equal(resources.report.status, "NO_APLICA");
+  assert.equal(resources.report.code, "no_executable_code");
+});
+
+test("installed C.R.A.P. reports executed annotations without losing bodies, defaults or decorators", async (t) => {
+  const { root } = await pythonProject(t);
+  const subject = path.join(root, "work dir/src/subject.py");
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  const source = await readFile(subject, "utf8");
+  const suite = await readFile(checks, "utf8");
+  const expression = `${"int if len(()) == 0 else (".repeat(8)}str${")".repeat(8)}`;
+  await writeFile(subject, source.replace("def classify(value):", `def classify(value: (${expression})):`));
+  await writeFile(checks, `${suite}\n    assert classify.__annotations__["value"] is int\n`);
+  const annotated = await crap(root);
+  assert.equal(annotated.report.execution.suite.status, "passed", annotated.stdout);
+  assert.equal(annotated.code, 2, annotated.stdout);
+  assert.equal(annotated.report.status, "NO_VERIFICADO");
+  const body = annotated.report.details.find((row) => row.kind === "function" && row.name === "classify");
+  assert.equal(body.value, 2);
+  assert.equal(body.coverage.fraction, 1);
+  const annotation = annotated.report.details.find((row) => row.kind === "annotations");
+  assert.equal(annotation.code, "annotation_coverage_unsupported");
+  assert.equal(annotation.value, null, "line coverage cannot prove independent annotation coverage");
+  assert.equal(annotation.coverage.fraction, null);
+  assert.equal(annotation.evaluation, annotated.report.execution.python.version[1] >= 14 ? "deferred" : "eager");
+  const repeated = await crap(root);
+  assert.deepEqual(repeated.report.details, annotated.report.details);
+  await writeFile(subject, source.replace("def classify(value):",
+    `def classify(value: (${expression}), /, *args: int, key: int = None, **kwargs: int) -> int:`));
+  await writeFile(checks, `${suite}\n    assert classify.__annotations__ == dict.fromkeys(['value', 'args', 'key', 'kwargs', 'return'], int)\n`);
+  const allAnnotations = await crap(root);
+  assert.equal(allAnnotations.report.execution.suite.status, "passed", allAnnotations.stdout);
+  assert.equal(allAnnotations.code, 2, allAnnotations.stdout);
+  assert.notEqual(allAnnotations.report.details.find((row) => row.kind === "annotations").fingerprint, annotation.fingerprint);
+  assert.equal(allAnnotations.report.details.find((row) => row.name === "classify").value, 2);
+  await writeFile(subject, source.replace("def classify(value):", `def classify(value = (${expression})):`));
+  await writeFile(checks, suite);
+  const defaults = await crap(root);
+  assert.equal(defaults.code, 1, defaults.stdout);
+  assert.equal(defaults.report.details.find((row) => row.kind === "module").complexity, 9);
+  assert.equal(defaults.report.details.find((row) => row.kind === "module").value, 9);
+  assert.equal(defaults.report.details.find((row) => row.name === "classify").value, 2);
+  const decorator = `${"identity if len(()) == 0 else (".repeat(8)}identity${")".repeat(8)}`;
+  await writeFile(subject, `def identity(function):\n    return function\n\n@(${decorator})\n${source}`);
+  const decorated = await crap(root);
+  assert.equal(decorated.code, 1, decorated.stdout);
+  assert.equal(decorated.report.details.find((row) => row.kind === "module").complexity, 9);
+  assert.equal(decorated.report.details.find((row) => row.kind === "module").value, 9);
+  assert.equal(decorated.report.details.find((row) => row.name === "classify").value, 2);
+});
+
+test("installed annotation limitations distinguish stringized and unobserved evaluation", async (t) => {
+  const { root } = await pythonProject(t);
+  const subject = path.join(root, "work dir/src/subject.py");
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  await writeFile(subject, `from __future__ import annotations\n${(await readFile(subject, "utf8"))
+    .replace("def classify(value):", "def classify(value: (int if len(()) == 0 else str)) -> int:")}`);
+  await writeFile(checks, `${await readFile(checks, "utf8")}\n    from typing import get_type_hints\n    assert isinstance(classify.__annotations__["value"], str)\n    assert get_type_hints(classify)["value"] is int\n`);
+  const stringized = await crap(root);
+  assert.equal(stringized.report.execution.suite.status, "passed", stringized.stdout);
+  assert.equal(stringized.code, 2, stringized.stdout);
+  assert.equal(stringized.report.details.find((row) => row.kind === "annotations").evaluation, "stringized");
+  assert.equal(stringized.report.details.find((row) => row.name === "classify").value, 2);
+  const wrapper = path.join(root, "work dir/wrapper space.py");
+  await writeFile(wrapper, (await readFile(wrapper, "utf8"))
+    .replace("raise SystemExit", "os.environ.pop('PYTEST_PLUGINS', None)\nraise SystemExit"));
+  const unobserved = await crap(root);
+  assert.equal(unobserved.code, 2, unobserved.stdout);
+  assert.equal(unobserved.report.execution.code, "pytest_unobserved");
+  const annotation = unobserved.report.details.find((row) => row.kind === "annotations");
+  assert.equal(annotation.evaluation, "unknown", "the private interpreter cannot replace the unobserved project version");
+  assert.equal(annotation.code, "annotation_coverage_unsupported");
+  assert.equal(annotation.value, null);
+  assert.equal(annotation.coverage.fraction, null);
 });

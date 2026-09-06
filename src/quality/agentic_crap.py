@@ -35,7 +35,26 @@ class ExecutionBody(ast.NodeTransformer):
                        body=node.body, orelse=node.orelse, type_comment=None)
 
 
-def execution_scopes(tree):
+def annotation_evaluation(tree, python_version):
+    # The private tool's interpreter need not be the interpreter running pytest.
+    if not isinstance(python_version, list) or len(python_version) < 2:
+        return "unknown"
+    if python_version[0] != 3 or type(python_version[1]) is not int or python_version[1] < 11:
+        return "unknown"
+    if any(isinstance(node, ast.ImportFrom) and node.module == "__future__"
+           and any(alias.name == "annotations" for alias in node.names) for node in tree.body):
+        return "stringized"
+    return "deferred" if python_version[1] >= 14 else "eager"
+
+
+def function_annotations(node):
+    arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs,
+                 node.args.vararg, node.args.kwarg]
+    values = [arg.annotation for arg in arguments if arg is not None and arg.annotation is not None]
+    return [*values, *([node.returns] if node.returns is not None else [])]
+
+
+def execution_scopes(tree, evaluation):
     module = {"name": "<module>", "kind": "module", "node": tree,
               "line": 1, "endLine": max((getattr(n, "end_lineno", 1) or 1 for n in ast.walk(tree)), default=1)}
     module["lines"] = set(range(1, module["endLine"] + 1))
@@ -49,6 +68,13 @@ def execution_scopes(tree):
                        "node": node, "line": node.lineno, "endLine": node.end_lineno,
                        "lines": lines, "sharedHeader": node.body[0].lineno == node.lineno}
             scopes.append(current)
+            annotations = function_annotations(node)
+            if annotations:
+                scopes.append({"name": current["name"] + ".__annotations__", "kind": "annotations",
+                               "node": ast.Module(body=[ast.Expr(value=value) for value in annotations], type_ignores=[]),
+                               "line": min(value.lineno for value in annotations),
+                               "endLine": max(value.end_lineno for value in annotations),
+                               "evaluation": evaluation})
             for child in node.body:
                 visit(child, current, [*names, node.name])
         else:
@@ -111,7 +137,7 @@ def coverage_for(scope, file, coverage):
         return {"status": "attribution_missing", "fraction": None}
 
 
-def analyze_file(entry, coverage, limit):
+def analyze_file(entry, coverage, limit, python_version):
     file = entry["path"]
     common = {"file": file, "limit": limit, "sourceHash": entry["sha256"]}
     if entry["kind"] != "measured_code":
@@ -123,7 +149,7 @@ def analyze_file(entry, coverage, limit):
                  "status": "NO_VERIFICADO", "code": "unsupported_syntax", "value": None}]
     rows = []
     occurrences = {}
-    for scope in execution_scopes(tree):
+    for scope in execution_scopes(tree, annotation_evaluation(tree, python_version)):
         normalized = normalized_body(scope)
         if scope["kind"] == "module" and not executable_body(normalized.body[0].body):
             continue
@@ -133,6 +159,14 @@ def analyze_file(entry, coverage, limit):
         row = {**common, "id": hashlib.sha256(identifier.encode()).hexdigest(),
                **{key: scope[key] for key in ["name", "kind", "line", "endLine"]},
                "fingerprint": hashlib.sha256(ast.dump(normalized).encode()).hexdigest()}
+        if scope["kind"] == "annotations":
+            # Header lines conflate defining the function, defaults and annotations.
+            # Deferred/stringized annotations can also run later via introspection.
+            # Keep their own identity and limitation instead of inventing coverage.
+            rows.append({**row, "evaluation": scope["evaluation"], "status": "NO_VERIFICADO",
+                         "code": "annotation_coverage_unsupported", "value": None,
+                         "coverage": {"status": "attribution_missing", "fraction": None}})
+            continue
         if any(isinstance(node, ast.Lambda) for node in ast.walk(normalized)):
             rows.append({**row, "status": "NO_VERIFICADO", "code": "unsupported_construct", "value": None})
             continue
@@ -156,11 +190,11 @@ def main():
     rows = []
     for entry in request["sources"]:
         try:
-            rows.extend(analyze_file(entry, request["coverage"], request["limit"]))
+            rows.extend(analyze_file(entry, request["coverage"], request["limit"], request.get("pythonVersion")))
         except Exception:
             rows.append({"file": entry["path"], "line": 1, "limit": request["limit"],
                          "status": "NO_VERIFICADO", "code": "crap_analysis_failed", "value": None})
-    print(json.dumps({"engine": {"name": "crap4py", "version": version, "sha256": engine_hash, "adapter": "execution-scopes-v1"}, "details": rows}))
+    print(json.dumps({"engine": {"name": "crap4py", "version": version, "sha256": engine_hash, "adapter": "execution-scopes-v2"}, "details": rows}))
     return 0
 
 
