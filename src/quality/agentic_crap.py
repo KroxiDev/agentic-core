@@ -28,6 +28,24 @@ class ExecutionBody(ast.NodeTransformer):
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
+    def visit_ClassDef(self, node):
+        # Bounds/defaults of type parameters are lazy; bases and decorators are not.
+        node.type_params = []
+        return self.generic_visit(node)
+
+    def visit_AnnAssign(self, node):
+        if node.value is not None:
+            return self.visit(ast.Assign(targets=[node.target], value=node.value))
+        if isinstance(node.target, ast.Name):
+            return ast.Pass()
+        # Without a value, attribute/subscript targets still evaluate their operands.
+        node.annotation = ast.Constant(value=None)
+        return self.generic_visit(node)
+
+    def visit_TypeAlias(self, node):
+        # Binding the alias does not evaluate its value or type parameter expressions.
+        return ast.Assign(targets=[node.name], value=ast.Constant(value=None))
+
     def visit_AsyncFor(self, node):
         # The pinned engine's For rule also describes the branching of async for.
         node = self.generic_visit(node)
@@ -54,13 +72,36 @@ def function_annotations(node):
     return [*values, *([node.returns] if node.returns is not None else [])]
 
 
+def type_parameter_annotations(node):
+    return [value for parameter in getattr(node, "type_params", [])
+            for field in ("bound", "default_value")
+            if (value := getattr(parameter, field, None)) is not None]
+
+
+def source_lines(node):
+    return set(range(node.lineno, node.end_lineno + 1))
+
+
 def execution_scopes(tree, evaluation):
     module = {"name": "<module>", "kind": "module", "node": tree,
               "line": 1, "endLine": max((getattr(n, "end_lineno", 1) or 1 for n in ast.walk(tree)), default=1)}
     module["lines"] = set(range(1, module["endLine"] + 1))
     scopes = [module]
 
-    def visit(node, owner, names):
+    def annotations(values, name, mode):
+        if values:
+            scopes.append({"name": name, "kind": "annotations",
+                           "node": ast.Module(body=[ast.Expr(value=value) for value in values], type_ignores=[]),
+                           "line": min(value.lineno for value in values),
+                           "endLine": max(value.end_lineno for value in values), "evaluation": mode})
+
+    def visit(node, owner, names, block="module"):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) or type(node).__name__ == "TypeAlias":
+            name = ".".join([*names, node.name.id if isinstance(node.name, ast.Name) else node.name])
+            parameters = type_parameter_annotations(node)
+            annotations(parameters, name + ".__type_params__", "unknown" if evaluation == "unknown" else "deferred")
+            for value in parameters:
+                owner["lines"] -= source_lines(value) - {node.lineno}
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             lines = set(range(node.body[0].lineno, node.end_lineno + 1))
             owner["lines"] -= lines
@@ -68,19 +109,28 @@ def execution_scopes(tree, evaluation):
                        "node": node, "line": node.lineno, "endLine": node.end_lineno,
                        "lines": lines, "sharedHeader": node.body[0].lineno == node.lineno}
             scopes.append(current)
-            annotations = function_annotations(node)
-            if annotations:
-                scopes.append({"name": current["name"] + ".__annotations__", "kind": "annotations",
-                               "node": ast.Module(body=[ast.Expr(value=value) for value in annotations], type_ignores=[]),
-                               "line": min(value.lineno for value in annotations),
-                               "endLine": max(value.end_lineno for value in annotations),
-                               "evaluation": evaluation})
+            annotations(function_annotations(node), current["name"] + ".__annotations__", evaluation)
             for child in node.body:
-                visit(child, current, [*names, node.name])
+                visit(child, current, [*names, node.name], "function")
+        elif isinstance(node, ast.AnnAssign):
+            # Local annotations are never evaluated or stored. Non-simple targets
+            # are not evaluated in deferred/stringized mode either.
+            if block != "function" and (node.simple or evaluation in ("eager", "unknown")):
+                target = node.target.id if isinstance(node.target, ast.Name) else "<target>"
+                annotations([node.annotation], ".".join([*names, target, "__annotations__"]), evaluation)
+            retained = {node.lineno} | source_lines(node.target)
+            if node.value is not None:
+                retained |= source_lines(node.value)
+                visit(node.value, owner, names, block)
+            owner["lines"] -= source_lines(node.annotation) - retained
+            visit(node.target, owner, names, block)
+        elif type(node).__name__ == "TypeAlias":
+            annotations([node.value], name + ".__value__", "unknown" if evaluation == "unknown" else "deferred")
+            owner["lines"] -= source_lines(node.value) - {node.lineno}
         else:
             context = [*names, node.name] if isinstance(node, ast.ClassDef) else names
             for child in ast.iter_child_nodes(node):
-                visit(child, owner, context)
+                visit(child, owner, context, "class" if isinstance(node, ast.ClassDef) else block)
 
     for node in tree.body:
         visit(node, module, [])
@@ -160,12 +210,18 @@ def analyze_file(entry, coverage, limit, python_version):
                **{key: scope[key] for key in ["name", "kind", "line", "endLine"]},
                "fingerprint": hashlib.sha256(ast.dump(normalized).encode()).hexdigest()}
         if scope["kind"] == "annotations":
-            # Header lines conflate defining the function, defaults and annotations.
-            # Deferred/stringized annotations can also run later via introspection.
+            # Declaration lines conflate eager execution and annotation scopes.
+            # Annotations, alias values and type parameters can run on introspection.
             # Keep their own identity and limitation instead of inventing coverage.
             rows.append({**row, "evaluation": scope["evaluation"], "status": "NO_VERIFICADO",
                          "code": "annotation_coverage_unsupported", "value": None,
                          "coverage": {"status": "attribution_missing", "fraction": None}})
+            continue
+        if any(isinstance(node, ast.GeneratorExp) for node in ast.walk(normalized)):
+            # Creation executes the first iterable, but not the deferred body.
+            # Line coverage cannot separate them, including on a single line.
+            rows.append({**row, "status": "NO_VERIFICADO", "code": "generator_coverage_unsupported",
+                         "value": None, "coverage": {"status": "attribution_missing", "fraction": None}})
             continue
         if any(isinstance(node, ast.Lambda) for node in ast.walk(normalized)):
             rows.append({**row, "status": "NO_VERIFICADO", "code": "unsupported_construct", "value": None})
@@ -194,7 +250,7 @@ def main():
         except Exception:
             rows.append({"file": entry["path"], "line": 1, "limit": request["limit"],
                          "status": "NO_VERIFICADO", "code": "crap_analysis_failed", "value": None})
-    print(json.dumps({"engine": {"name": "crap4py", "version": version, "sha256": engine_hash, "adapter": "execution-scopes-v2"}, "details": rows}))
+    print(json.dumps({"engine": {"name": "crap4py", "version": version, "sha256": engine_hash, "adapter": "execution-scopes-v3"}, "details": rows}))
     return 0
 
 

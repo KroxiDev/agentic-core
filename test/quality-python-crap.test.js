@@ -254,3 +254,129 @@ test("installed annotation limitations distinguish stringized and unobserved eva
   assert.equal(annotation.value, null);
   assert.equal(annotation.coverage.fraction, null);
 });
+
+test("installed variable annotations cannot inherit coverage from their declarations", async (t) => {
+  const { root } = await pythonProject(t);
+  const subject = path.join(root, "work dir/src/subject.py");
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  const source = await readFile(subject, "utf8");
+  const suite = await readFile(checks, "utf8");
+  const expression = "int if (touched.append(1) or True) else str";
+  for (const classScope of [false, true]) {
+    const declaration = `observed: (${expression}) = 1\n`;
+    await writeFile(subject, `${source}\ntouched = []\n${classScope ? `class Declared:\n    ${declaration}` : declaration}`);
+    for (const evaluate of [false, true]) {
+      await writeFile(checks, `${suite}\n    import src.subject as subject\n    target = ${classScope ? "subject.Declared" : "subject"}\n    assert target.observed == 1\n    assert subject.touched == ([] if sys.version_info >= (3, 14) else [1])\n${evaluate ? '    assert target.__annotations__["observed"] is int\n    assert subject.touched == [1]\n' : ""}`);
+      const result = await crap(root);
+      assert.equal(result.report.execution.suite.status, "passed", result.stdout);
+      assert.equal(result.code, 2, result.stdout);
+      assert.equal(result.report.status, "NO_VERIFICADO");
+      const annotation = result.report.details.find((row) => row.kind === "annotations");
+      assert.equal(annotation.code, "annotation_coverage_unsupported");
+      assert.equal(annotation.value, null);
+      assert.equal(annotation.coverage.fraction, null);
+      assert.equal(annotation.evaluation, result.report.execution.python.version[1] >= 14 ? "deferred" : "eager");
+      assert.equal(result.report.details.find((row) => row.kind === "module").complexity, 1,
+        "the annotation is not counted again as assignment or class execution");
+      assert.equal(result.report.details.find((row) => row.name === "classify").value, 2);
+    }
+  }
+});
+
+test("installed generator expressions cannot inherit coverage from creation", async (t) => {
+  const { root } = await pythonProject(t);
+  const subject = path.join(root, "work dir/src/subject.py");
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  const source = await readFile(subject, "utf8");
+  const suite = await readFile(checks, "utf8");
+  for (const functionScope of [true, false]) {
+    const expression = "(touched.append(value) for value in [1, 2] if value > 0)";
+    await writeFile(subject, `${source}\ntouched = []\n${functionScope ? `def build():\n    return ${expression}` : `values = ${expression}`}\n`);
+    for (const consume of [false, true]) {
+      await writeFile(checks, `${suite}\n    import inspect\n    import src.subject as subject\n    values = ${functionScope ? "subject.build()" : "subject.values"}\n    assert inspect.isgenerator(values)\n    assert subject.touched == []\n${consume ? "    assert list(values) == [None, None]\n    assert subject.touched == [1, 2]\n" : ""}`);
+      const result = await crap(root);
+      assert.equal(result.report.execution.suite.status, "passed", result.stdout);
+      assert.equal(result.code, 2, result.stdout);
+      assert.equal(result.report.status, "NO_VERIFICADO");
+      const limited = result.report.details.find((row) => functionScope ? row.name === "build" : row.kind === "module");
+      assert.equal(limited.code, "generator_coverage_unsupported");
+      assert.equal(limited.value, null);
+      assert.equal(limited.coverage.fraction, null);
+      assert.equal(result.report.details.find((row) => row.name === "classify").value, 2);
+      assert.equal(result.report.details.length, functionScope ? 3 : 2, "no duplicated generator metric");
+      if (functionScope) assert.equal(result.report.details.find((row) => row.kind === "module").value, 1);
+    }
+  }
+});
+
+test("installed lazy type aliases and type parameters retain limitations independently of evaluation", async (t) => {
+  const { root } = await pythonProject(t);
+  const minor = (await crap(root)).report.execution.python.version[1];
+  if (minor < 12) {
+    t.skip("TypeAlias and type parameter syntax require Python 3.12 or later");
+    return;
+  }
+  const subject = path.join(root, "work dir/src/subject.py");
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  const source = await readFile(subject, "utf8");
+  const suite = await readFile(checks, "utf8");
+  const parameters = (owner) => `T: (int if (touched.append('${owner}.bound') or True) else str), U: (int, (str if (touched.append('${owner}.constraints') or True) else bytes))${minor >= 13 ? `, V = (int if (touched.append('${owner}.default') or True) else str), **P = [int, str], *Ts = *tuple[int, str]` : ""}`;
+  await writeFile(subject, `${source}\ntouched = []\ntype Plain = int if (touched.append('Plain.value') or True) else str\ntype Alias[${parameters("Alias")}] = int if (touched.append('Alias.value') or True) else str\ndef generic[${parameters("generic")}]():\n    return 42\nclass Generic[${parameters("Generic")}]:\n    observed = 1\n`);
+  const verifyDeclarations = "    import src.subject as subject\n    assert subject.generic() == 42\n    assert subject.Generic.observed == 1\n    assert subject.Alias.__name__ == 'Alias'\n    assert subject.touched == []\n";
+  const evaluate = `    assert subject.Plain.__value__ is int\n    assert subject.Alias.__value__ is int\n    for target in [subject.Alias, subject.generic, subject.Generic]:\n        params = target.__type_params__\n        assert params[0].__bound__ is int\n        assert params[1].__constraints__ == (int, str)\n${minor >= 13 ? "        assert params[2].__default__ is int\n        assert params[3].__default__ == [int, str]\n        assert params[4].__default__.__unpacked__\n        assert params[4].__default__.__args__ == (int, str)\n" : ""}    assert subject.touched == ['Plain.value', 'Alias.value', *[owner + '.' + field for owner in ['Alias', 'generic', 'Generic'] for field in ${minor >= 13 ? "['bound', 'constraints', 'default']" : "['bound', 'constraints']"}]]\n`;
+  let first;
+  for (const force of [false, true]) {
+    await writeFile(checks, `${suite}\n${verifyDeclarations}${force ? evaluate : ""}`);
+    const result = await crap(root);
+    assert.equal(result.report.execution.suite.status, "passed", result.stdout);
+    assert.equal(result.code, 2, result.stdout);
+    const annotations = result.report.details.filter((row) => row.kind === "annotations");
+    assert.deepEqual(annotations.map((row) => row.name).sort(),
+      ["Alias.__type_params__", "Alias.__value__", "Generic.__type_params__", "Plain.__value__", "generic.__type_params__"]);
+    for (const row of annotations) {
+      assert.equal(row.code, "annotation_coverage_unsupported");
+      assert.equal(row.evaluation, "deferred");
+      assert.equal(row.value, null);
+      assert.equal(row.coverage.fraction, null);
+    }
+    assert.equal(result.report.details.find((row) => row.kind === "module").value, 1);
+    assert.equal(result.report.details.find((row) => row.name === "generic").value, 1);
+    assert.equal(result.report.details.find((row) => row.name === "classify").value, 2);
+    if (first) assert.deepEqual(annotations, first, "forcing evaluation does not manufacture an independent metric");
+    first = annotations;
+  }
+  const wrapper = path.join(root, "work dir/wrapper space.py");
+  await writeFile(wrapper, (await readFile(wrapper, "utf8"))
+    .replace("raise SystemExit", "os.environ.pop('PYTEST_PLUGINS', None)\nraise SystemExit"));
+  const unobserved = await crap(root);
+  assert.equal(unobserved.report.execution.code, "pytest_unobserved");
+  assert.equal(unobserved.code, 2, unobserved.stdout);
+  assert.ok(unobserved.report.details.filter((row) => row.kind === "annotations")
+    .every((row) => row.evaluation === "unknown" && row.value === null && row.coverage.fraction === null));
+});
+
+test("installed variable annotation projection preserves assignments and never-evaluated local annotations", async (t) => {
+  const { root } = await pythonProject(t);
+  const subject = path.join(root, "work dir/src/subject.py");
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  const source = await readFile(subject, "utf8");
+  const suite = await readFile(checks, "utf8");
+  const annotation = "int if (touched.append(1) or True) else str";
+  await writeFile(subject, `${source}\ntouched = []\ndef local(value):\n    observed: (${annotation}) = 1 if value else 2\n    return observed\n`);
+  await writeFile(checks, `${suite}\n    import src.subject as subject\n    assert subject.local(True) == 1\n    assert subject.local(False) == 2\n    assert subject.touched == []\n`);
+  const local = await crap(root);
+  assert.equal(local.code, 0, local.stdout);
+  assert.equal(local.report.details.find((row) => row.name === "local").complexity, 2);
+  assert.equal(local.report.details.filter((row) => row.kind === "annotations").length, 0,
+    "a local annotation has no executable annotation scope");
+  await writeFile(subject, `from __future__ import annotations\n${source}\ntouched = []\nobserved: (${annotation}) = 1\nclass Declared:\n    observed: (${annotation}) = 2\n`);
+  await writeFile(checks, `${suite}\n    from typing import get_type_hints\n    import src.subject as subject\n    assert subject.observed == 1\n    assert subject.Declared.observed == 2\n    assert subject.touched == []\n    assert get_type_hints(subject)['observed'] is int\n    assert get_type_hints(subject.Declared)['observed'] is int\n    assert subject.touched == [1, 1]\n`);
+  const stringized = await crap(root);
+  assert.equal(stringized.report.execution.suite.status, "passed", stringized.stdout);
+  assert.equal(stringized.code, 2, stringized.stdout);
+  const annotations = stringized.report.details.filter((row) => row.kind === "annotations");
+  assert.equal(annotations.length, 2);
+  assert.ok(annotations.every((row) => row.evaluation === "stringized" && row.value === null && row.coverage.fraction === null));
+  assert.equal(stringized.report.details.find((row) => row.kind === "module").value, 1);
+  assert.equal(stringized.report.details.find((row) => row.name === "classify").value, 2);
+});
