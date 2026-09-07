@@ -114,6 +114,8 @@ test("Normal preserves residual scope, shared retries and final acceptance", asy
     "Retira una observación únicamente con evidencia de su resolución",
     "evaluación satisfactoria sobre ese mismo estado final",
     "renueva la verificación y la evaluación afectadas",
+    "developer_instructions` íntegro", "fork_turns=none",
+    "selección semántica explícita", "detén el despacho",
   ]) assert.ok(skill.includes(phrase), `Normal contract is missing: ${phrase}`);
   assert.doesNotMatch(skill, /Planificador independiente solo si|plan breve del coordinador/);
   const profile = await text("adapters/codex/agents/agentic-read.toml");
