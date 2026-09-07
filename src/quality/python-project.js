@@ -80,6 +80,7 @@ async function observe(root, config, python, context, temporary) {
   let executionError;
   try { execution = await executeCommand(command, { cwd: context.cwd, env, timeoutMs }); }
   catch (error) { error.effectiveCommand = effective; executionError = error; }
+  effective.timeoutMs = execution?.timeoutMs ?? executionError?.timeoutMs ?? timeoutMs;
   const reports = (await readdir(temporary)).filter((name) => /^pytest-[a-f0-9]+\.json$/u.test(name));
   if (reports.length !== 1) {
     if (executionError) return integrationFailure(executionError);

@@ -29,13 +29,16 @@ async function stopTree(child) {
 export async function executeCommand(command, { cwd, env, timeoutMs, account = true }) {
   const budget = account ? verificationBudget.getStore() : null;
   const reservation = budget ? await budget.reserve(timeoutMs) : null;
+  const effectiveTimeoutMs = reservation?.timeoutMs ?? timeoutMs;
   const started = performance.now();
   let terminationFailed = false;
   try {
-    return await spawnCommand(command, { cwd, env, timeoutMs: reservation?.timeoutMs ?? timeoutMs,
+    const result = await spawnCommand(command, { cwd, env, timeoutMs: effectiveTimeoutMs,
       budgetLimited: reservation?.budgetLimited });
+    return { ...result, timeoutMs: effectiveTimeoutMs };
   } catch (error) {
     terminationFailed = error.code === "termination_failed";
+    error.timeoutMs = effectiveTimeoutMs;
     throw error;
   } finally {
     if (budget) await budget.settle(reservation, Math.ceil(performance.now() - started), terminationFailed);
