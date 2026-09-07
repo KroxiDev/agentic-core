@@ -51,7 +51,11 @@ Sin selección explícita, una terminal interactiva pregunta proveedor y lenguaj
 
 El payload se valida por origen declarado, inventario y hashes, independientemente del bootstrap. El runtime queda en `.agentic-core/runtime` y las herramientas en `.agentic-core/tools`, sin modificar dependencias, manifests, lockfiles ni el entorno del consumidor. Los wheels y licencias viajan con el paquete; instalar no requiere red. La operación rechaza conflictos y revierte sus escrituras ante fallos.
 
-La integración añade únicamente un bloque de Codex a `AGENTS.md`, conserva su contenido previo y la política canónica en `.agentic-core/golden-rules.md`. El ignore local excluye `/quality/` y `/tools/`.
+La integración añade únicamente un bloque de Codex a `AGENTS.md` y los recursos de Light
+(`.codex/agents/agentic-production.toml`, `.codex/agents/agentic-tests.toml`,
+`.agents/skills/orquestar/SKILL.md` y `.agents/skills/agentic-tdd/SKILL.md`). Conserva el
+contenido previo y la política canónica en `.agentic-core/golden-rules.md`. El ignore local
+excluye `/quality/` y `/tools/`.
 
 ## Baseline de tarea Python (esquema 3)
 
@@ -154,7 +158,7 @@ npx.cmd --yes github:KroxiDev/agentic-core update .
 | `--dry-run` | — | No | No |
 | `--force` | — | No | No |
 
-En el esquema 3, actualizar, migrar y desinstalar quedan pendientes de #57; los comandos informan esa limitación sin modificar archivos. El resto de esta sección describe el esquema 2.
+En el esquema 3, `update` restaura transaccionalmente los recursos Codex de Light, el bloque gestionado, el runtime y las herramientas privadas cuando su ownership es demostrable. `--force` autoriza reemplazar recursos propios divergentes; no reemplaza estado ajeno. Las configuraciones legacy se migran conservando `.agentic-core/runs` y cualquier recurso no demostrado.
 
 `update` comprueba ownership e integridad antes de reemplazar recursos de forma transaccional. `--force` solo autoriza reemplazar recursos propios divergentes; no autoriza cambios ajenos. Al migrar una instalación anterior, elimina el runtime de protocolo que todavía sea reconociblemente propio, instala la política semántica y conserva `.agentic-core/runs` como estado legacy sin interpretarlo ni reclamarlo como estado vigente.
 
@@ -165,7 +169,6 @@ En el esquema 3, actualizar, migrar y desinstalar quedan pendientes de #57; los 
 ```powershell
 npx.cmd --yes github:KroxiDev/agentic-core doctor .
 npx.cmd --yes github:KroxiDev/agentic-core doctor . --dry-run
-npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair
 ```
 
 #### Esquema CLI
@@ -173,9 +176,8 @@ npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair
 | Opción | Valor | Requerida | Repetible |
 | --- | --- | --- | --- |
 | `--dry-run` | — | No | No |
-| `--repair` | — | No | No |
 
-En el esquema 3, `doctor` explica configuración, límites, intérpretes y versiones, y comprueba la integridad del runtime y las herramientas sin ejecutar la suite del consumidor. `--repair` queda reservado al esquema 2.
+En el esquema 3, `doctor` explica configuración, límites, intérpretes y versiones, y comprueba la integridad del runtime, las herramientas y los cuatro recursos Codex de Light sin ejecutar la suite del consumidor. Las divergencias se informan y se corrigen mediante `update` explícito.
 
 En el esquema 2, `doctor` valida recursos, bloques gestionados, configuración, runtime autocontenido, ownership, hashes e integridad de `QualitySession`. Las sesiones o recibos corruptos se reportan y preservan; no se reescribe evidencia histórica. Los directorios operativos del runtime anterior se informan como estado legacy preservado.
 
@@ -195,7 +197,7 @@ npx.cmd --yes github:KroxiDev/agentic-core uninstall .
 | `--dry-run` | — | No | No |
 | `--force` | — | No | No |
 
-En el esquema 2, la desinstalación retira transaccionalmente los recursos propios no divergentes y `.agentic-core/quality`. Conserva archivos ajenos, recursos divergentes no autorizados y `.agentic-core/runs` legacy para revisión manual.
+La desinstalación de esquema 3 retira transaccionalmente los recursos propios no divergentes, el runtime, las herramientas y el bloque de `AGENTS.md`. Conserva archivos ajenos, recursos divergentes, estado de calidad con contenido externo y `.agentic-core/runs` legacy para revisión manual.
 
 ## Formato de salida
 
@@ -216,20 +218,23 @@ El usuario elige el modo; la capa lo conserva sin cuestionarlo ni recomendar otr
 Directo resuelve el encargo con un único agente, conserva las Golden Rules y permite las
 comprobaciones pertinentes sin imponer baseline, preparación de calidad o `QUALITY_OK`.
 Por ejemplo, `Corrige esta función` y `Orquesta Directo corrige esta función` usan Directo;
-`/orquestar` selecciona Normal y comunica que su secuencia sigue pendiente.
+`/orquestar` selecciona Normal y comunica que su secuencia sigue pendiente en #52.
 
 Una solicitud ordinaria de documentación también es un encargo directo. La ausencia de
 Documentador no añade documentación a otras tareas; puede recomendarse al cerrar el encargo.
 En un flujo orquestado, Documentador requiere petición expresa y actúa siempre al final.
 
-Light, Normal y Full se reconocen; la secuencia de roles queda pendiente de #51, #52 y #53,
-pero el gate local de calidad de #46 ya exige sus controles instalados. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección vive
-en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
-La verificación de archivos instalados no acredita por sí sola el comportamiento en Codex real.
+Light ejecuta Implementador → Tester con los perfiles instalados, un contador compartido y hasta
+dos rondas adicionales; Normal y Full conservan sus secuencias pendientes de #52 y #53. El gate
+local de calidad exige `prepare` antes de editar y `verify` antes de completar; en Light Mutation
+Testing es `not_applicable`. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección
+vive en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
+La verificación de archivos instalados no acredita por sí sola el comportamiento en Codex real;
+la validación nativa debe distinguir evidencia del host, simulación y restricciones semánticas.
 
 ### Instalaciones anteriores (esquema 2)
 
-Una solicitud que comienza con `Orquesta`, `/orquestar` o `$orquestar` debe cargar y seguir la skill instalada `.agents/skills/orquestar/SKILL.md`. `Orquesta` sin modo significa `normal`. Esta garantía positiva vive en los bloques gestionados de `AGENTS.md` y `CLAUDE.md`, de modo que `Orquesta normal` no se resuelve con agentes genéricos sin cargar la skill.
+Una solicitud que comienza con `Orquesta`, `/orquestar` o `$orquestar` debe cargar y seguir la skill instalada `.agents/skills/orquestar/SKILL.md`. `Orquesta` sin modo significa `normal`. En esta entrega, la garantía positiva vive en el bloque gestionado de `AGENTS.md`, de modo que `Orquesta normal` no se resuelve con agentes genéricos sin cargar la skill.
 
 Una solicitud sin esos activadores se ejecuta directamente: no activa coordinación, no crea una sesión de calidad por sí sola y no crea agentes.
 
@@ -239,15 +244,21 @@ La coordinación mantiene como máximo un agente activo. Los roles reciben alcan
 
 | Modo | Coordinación semántica | Gate determinista |
 | --- | --- | --- |
-| `light` | Implementador; TDD cuando corresponda. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
+| `light` | Implementador → Tester; TDD cuando corresponda; hasta dos rondas adicionales compartidas. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
 | `normal` | Plan breve; Planificador solo ante una decisión HOW material; Implementador; Verificador independiente; máximo dos ciclos de corrección; Documentador solo si corresponde. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
 | `full` | Planificador con exploración; Implementador; Evaluador independiente; máximo dos ciclos de corrección; Documentador solo si corresponde. | `prepare` antes de editar y `verify` antes de completar; C.R.A.P. y Mutation Testing obligatorios. |
 
-El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Planificador, Verificador y Evaluador solo leen producción y no la modifican. El Documentador modifica únicamente documentación.
+El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Verificador y Evaluador solo leen producción y no la modifican. El Documentador modifica únicamente documentación.
 
-Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Los adapters Codex y Claude traducen discovery y formato nativos, pero comparten la misma política.
+Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Esta entrega instala y valida únicamente el recorrido nativo de Codex; Claude queda fuera del alcance de Light.
 
-El mapping rol → perfil vive en la skill canónica `.agents/skills/orquestar/SKILL.md`; el shim de discovery de Claude solo remite a ella. Si el paquete en ejecución contiene una revisión distinta de ese recurso instalado, `doctor` informa la divergencia hasta que `agentic-core update` instala transaccionalmente la revisión del paquete. El perfil `agentic-docs` mantiene “solo documentación” como instrucción semántica, pero todavía no impone una restricción técnica de escritura por ruta; reforzar ese límite queda pendiente.
+Cada instancia recibe propósito, responsabilidades, alcance, entradas, criterios de devolución, Golden Rules y contexto pertinente. En Light, las entregas entre Implementador y Tester son prosa breve con objetivo, alcance, aceptación, decisiones condicionantes, resultado, defectos y referencias; no incluyen la conversación completa, reportes completos ni JSON. Un rechazo agrupa los defectos y crea una nueva instancia de Implementador seguida de un nuevo Tester, con dos rondas adicionales como límite compartido. El Tester puede corregir tests dentro del alcance, pero nunca producción.
+
+La máquina semántica de Light tiene una ronda inicial `Implementador → Tester`; cada rechazo abre una única ronda adicional y conserva el contador al cambiar de rol. Al alcanzar dos rondas adicionales, la tarea queda pendiente con sus causas, sin aprobación ni cambio automático de modo.
+
+Las esperas atienden resultados, intervenciones del usuario y vencimientos mediante eventos disponibles en Codex, renovables hasta 60 segundos. Tras 5 minutos sin novedades se comprueba activamente el estado; la lentitud o el silencio por sí solos no reinician trabajo. No se dejan daemon, hooks nuevos ni promesas posteriores a la sesión, y el presupuesto acumulado cuenta comprobaciones, no tiempo de agentes.
+
+El mapping rol → perfil vive en la skill canónica instalada `.agents/skills/orquestar/SKILL.md`; Light instala únicamente `agentic-production`, `agentic-tests` y la dependencia directa `agentic-tdd`. Si alguno diverge, `doctor` informa la divergencia y `agentic-core update` puede restaurarlo transaccionalmente con ownership demostrado. Normal y Full siguen pendientes de #52 y #53.
 
 ### Límites de permisos
 
@@ -265,7 +276,9 @@ Las operaciones marcadas requieren autorización explícita del usuario; la coor
 
 ## QualitySession
 
-### `agentic-quality prepare` — Preparar el baseline
+Estas opciones pertenecen únicamente a instalaciones anteriores. Las instalaciones nuevas de esquema 3 usan el baseline de tarea documentado arriba.
+
+### `agentic-quality prepare` — Preparar la QualitySession legacy
 
 Después de identificar el alcance y antes de modificar producción o tests:
 

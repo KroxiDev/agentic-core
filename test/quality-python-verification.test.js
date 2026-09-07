@@ -534,7 +534,7 @@ test("installed Full keeps a real command timeout inconclusive after the score p
   assert.doesNotMatch(report.receipt, /^QUALITY_OK/u);
 });
 
-test("installed Full keeps a real pytest interruption inconclusive after the score passes", async (t) => {
+test("installed Full keeps a real pytest interruption inconclusive", async (t) => {
   const root = await fullMutationProject(t, { threshold: 10, corpus: "interrupted" });
   const verified = await runPythonProject(root, ["verify"]);
   const report = parse(verified);
