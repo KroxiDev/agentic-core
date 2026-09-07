@@ -23,6 +23,7 @@ _state = {
 _coverage = None
 _phases = {"setup": 0, "call": 0, "teardown": 0}
 _failures = []
+_collection_errors = 0
 _root = Path(_settings["projectRoot"]).resolve()
 _measured = {str((_root / file).resolve()): file for file in _settings["measured"]}
 
@@ -120,6 +121,12 @@ def pytest_runtest_makereport(item, call):
         })
 
 
+def pytest_collectreport(report):
+    global _collection_errors
+    if report.failed:
+        _collection_errors += 1
+
+
 def pytest_collection_finish(session):
     _public_path(session.config.rootpath)
     _public_path(session.config.inipath)
@@ -142,6 +149,7 @@ def pytest_sessionfinish(session, exitstatus):
         "failed": session.testsfailed,
         "phases": dict(_phases),
         "failures": list(_failures),
+        "collectionErrors": _collection_errors,
         "root": _public_path(session.config.rootpath),
         "configuration": _public_path(session.config.inipath),
     }

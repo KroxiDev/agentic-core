@@ -7,6 +7,7 @@ import { runPythonQualityCli } from "./quality/python-project.js";
 import { runTaskQualityCli } from "./quality/task-baseline.js";
 import { runPythonCrapCli } from "./quality/python-crap.js";
 import { runPythonDryCli } from "./quality/python-dry.js";
+import { runPythonMutationCli } from "./quality/python-mutation.js";
 
 const [seam, ...args] = process.argv.slice(2);
 
@@ -17,6 +18,7 @@ try {
     if (await isPythonInstallation(process.cwd())) {
       process.exitCode = await (args[0] === "crap" ? runPythonCrapCli(args)
         : args[0] === "dry" ? runPythonDryCli(args)
+        : ["mutate", "mutation"].includes(args[0]) ? runPythonMutationCli(args)
         : ["prepare", "baseline", "verify"].includes(args[0]) ? runTaskQualityCli(args) : runPythonQualityCli(args));
     } else process.exitCode = await runQualityCli(args);
   } else {

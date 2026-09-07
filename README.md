@@ -124,6 +124,20 @@ El diferencial de C.R.A.P. aplica `limits.crap` al código nuevo y exige que los
 
 Light y Normal pueden cerrar con `approved` y `QUALITY_OK`; sus controles de mutación son `NO_APLICA`. Full ejecuta suite, DRY y C.R.A.P., pero declara Mutation Testing `NO_VERIFICADO` hasta que esté disponible la integración aislada correspondiente. `approved`, `rejected`, `NO_VERIFICADO` y `NO_APLICA` incluyen códigos de causa, y el estado agregado nunca convierte una medición ausente en un aprobado.
 
+### Ejecución individual de mutantes Python
+
+```powershell
+node .agentic-core/runtime-launcher.mjs agentic-quality mutate
+```
+
+`mutation` es alias de `mutate`. En esquema 3 se usa el alcance de `config.json`, sin `--target`. mutate4py 0.1.4 genera las modificaciones y el adaptador ejecuta el comando autoritativo completo, incluidos wrapper, argumentos, entorno, configuración y preparación. No instala herramientas en el entorno del proyecto.
+
+El informe `.agentic-core/quality/mutation.json` distingue `killed`, `survived`, `uncovered` conocido, `timeout`, `error` e `interrupted`. Solo los fallos atribuidos a las pruebas cuentan como detección. Los tres últimos estados son inconclusos; no se calcula un score ni se emite `QUALITY_OK` desde esta ejecución individual. La selección incremental y agregación Full corresponden a #50.
+
+Una referencia aprobada determina el timeout solicitado por mutante: tres veces su duración, con un mínimo de 1000 ms, limitado por `limits.operation.commandTimeoutMs` y el presupuesto restante de la tarea. El informe muestra el límite efectivo y conserva resultados parciales cuando se agota el presupuesto. La ejecución usa un worker, dentro del máximo configurado, y reutiliza una copia para todos los archivos; verifica inputs, permisos y dependencias, restaura cada mutación y retira los outputs entre pruebas. Nunca restaura archivos del proyecto original sobre cambios ajenos.
+
+Con tarea activa se reutiliza un informe completo y concluyente únicamente si sus inputs, comando, configuración y entorno siguen vigentes. Los resultados inconclusos se vuelven a comprobar dentro del presupuesto restante. Una tarea distinta retira solo informes internos íntegros y propios.
+
 ## Actualización
 
 ### `agentic-core update`

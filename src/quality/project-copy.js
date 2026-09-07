@@ -93,12 +93,12 @@ async function copyChanges(checkpoint, copyRoot) {
   return changed;
 }
 
-export async function verifyProjectIntegrity(checkpoint, unit, copyRoot, phase) {
+export async function verifyProjectIntegrity(checkpoint, unit, copyRoot, phase, copyCheckpoint = checkpoint) {
   const current = await captureProjectInputs(checkpoint.root, unit);
   const before = new Map(checkpoint.inventory.map((entry) => [entry.path, JSON.stringify(entry)]));
   const after = new Map(current.inventory.map((entry) => [entry.path, JSON.stringify(entry)]));
   const original = [...new Set([...before.keys(), ...after.keys()])].filter((file) => before.get(file) !== after.get(file));
-  const copy = await copyChanges(checkpoint, copyRoot);
+  const copy = await copyChanges(copyCheckpoint, copyRoot);
   return { status: original.length || copy.length || current.issues.length ? "NO_VERIFICADO" : "preserved", phase,
     original, copy, incompatibleInputs: current.issues.length, restored: false };
 }

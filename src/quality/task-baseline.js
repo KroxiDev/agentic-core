@@ -20,6 +20,7 @@ const qualityDirectory = ".agentic-core/quality";
 const verificationReports = [
   { relative: `${qualityDirectory}/crap.json`, kind: "crap" },
   { relative: `${qualityDirectory}/dry.json`, kind: "dry" },
+  { relative: `${qualityDirectory}/mutation.json`, kind: "mutation" },
 ];
 const resolutionReference = `${qualityDirectory}/dry-resolutions.json`;
 const hash = (value) => inputHash(JSON.stringify(value));

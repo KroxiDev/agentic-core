@@ -19,6 +19,7 @@ const expectedInventory = [
   "bin/runtime-loader.js",
   "dist/runtime/agentic_crap.py",
   "dist/runtime/agentic_dry.py",
+  "dist/runtime/agentic_mutation.py",
   "dist/runtime/agentic_pytest.py",
   "dist/runtime/agentic-core.mjs",
   "dist/runtime/LICENSE",
