@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -70,10 +71,114 @@ test("installed task baseline preserves the actual worktree and separates repair
   assert.equal(parse(final).verification.controls.evidence.code, "quality_conditions_changed");
   assert.doesNotMatch(final.stdout, /QUALITY_OK/u);
   const different = await runPythonProject(root, ["prepare", "--task", "different"]);
-  assert.equal(parse(different).code, "task_already_active");
+  assert.equal(parse(different).code, "invalid_usage");
   assert.equal(await readFile(evidence, "utf8"), baseline);
   await writeFile(evidence, baseline.replace('"objective":"issue:43"', '"objective":"tampered"'));
   assert.equal(parse(await runPythonProject(root, ["baseline"])).code, "task_evidence_invalid");
+});
+
+test("installed task verification reuses current evidence and replaces only owned artifacts", async (t) => {
+  const firstProject = await pythonProject(t);
+  const secondProject = await pythonProject(t);
+  const projects = [firstProject, secondProject];
+  const counters = [];
+  for (const { root } of projects) {
+    const counter = path.join(tmpdir(), `agentic-core-47-${path.basename(root)}.txt`);
+    counters.push(counter);
+    const wrapper = path.join(root, "work dir/wrapper space.py");
+    const source = await readFile(wrapper, "utf8");
+    await writeFile(wrapper, source.replace("import os, subprocess, sys", "import os, subprocess, sys, tempfile")
+      .replace("Path('prepared.txt').write_text(sys.argv[1])", `counter = Path(tempfile.gettempdir()) / os.environ['QUALITY_COUNTER_NAME']
+counter.write_text(str(int(counter.read_text()) + 1 if counter.exists() else 1))
+Path('prepared.txt').write_text(sys.argv[1])`));
+  }
+  t.after(() => Promise.all(counters.map((counter) => rm(counter, { force: true }))));
+  const count = (counter) => readFile(counter, "utf8").then(Number);
+  const counterEnvironments = counters.map((counter) => ({ QUALITY_COUNTER_NAME: path.basename(counter) }));
+
+  const firstPrepared = await runPythonProject(firstProject.root, [
+    "prepare", "--task", "first", "--mode", "normal", "--objective", "issue:47",
+  ], counterEnvironments[0]);
+  assert.equal(firstPrepared.code, 0, firstPrepared.stdout + firstPrepared.stderr);
+  const firstVerified = await runPythonProject(firstProject.root, ["verify"], counterEnvironments[0]);
+  assert.equal(firstVerified.code, 0, firstVerified.stdout + firstVerified.stderr);
+  assert.equal(await count(counters[0]), 2);
+  const repeated = await runPythonProject(firstProject.root, ["verify"], counterEnvironments[0]);
+  assert.equal(repeated.code, 0, repeated.stdout + repeated.stderr);
+  assert.equal(parse(repeated).reused, true);
+  assert.equal(await count(counters[0]), 2);
+
+  const subject = path.join(firstProject.root, "work dir/src/subject.py");
+  await writeFile(subject, `${await readFile(subject, "utf8")}\n# relevant input changed\n`);
+  const changed = await runPythonProject(firstProject.root, ["verify"], counterEnvironments[0]);
+  assert.equal(parse(changed).reused, undefined);
+  assert.equal(await count(counters[0]), 3);
+
+  const standaloneCrap = await runPythonProject(firstProject.root, ["crap"], counterEnvironments[0]);
+  assert.equal(standaloneCrap.code, 0, standaloneCrap.stdout + standaloneCrap.stderr);
+  assert.equal(await count(counters[0]), 4);
+  const standaloneDry = await runPythonProject(firstProject.root, ["dry"], counterEnvironments[0]);
+  assert.equal(standaloneDry.code, 0, standaloneDry.stdout + standaloneDry.stderr);
+  const resolutionsPath = path.join(firstProject.root, ".agentic-core/quality/dry-resolutions.json");
+  await writeFile(resolutionsPath, JSON.stringify({ schemaVersion: 1, resolutions: [] }));
+  const privateEvidence = path.join(firstProject.root, ".agentic-core/quality/unknown-result.json");
+  const savedResult = path.join(firstProject.root, "saved-result.md");
+  await writeFile(privateEvidence, "keep this unknown result\n");
+  await writeFile(savedResult, "keep this result outside internal evidence\n");
+  const replaced = await runPythonProject(firstProject.root, [
+    "prepare", "--task", "second", "--mode", "normal", "--objective", "issue:47-correction",
+  ], counterEnvironments[0]);
+  const replacedReport = parse(replaced);
+  assert.equal(replaced.code, 0, replaced.stdout + replaced.stderr);
+  assert.equal(replacedReport.reused, false);
+  assert.equal(replacedReport.replaced, true);
+  assert.equal(replacedReport.task.id, "second");
+  assert.equal(await count(counters[0]), 5);
+  await access(privateEvidence);
+  await access(savedResult);
+  await assert.rejects(() => access(path.join(firstProject.root, ".agentic-core/quality/verification.json")), { code: "ENOENT" });
+  await assert.rejects(() => access(path.join(firstProject.root, ".agentic-core/quality/crap.json")), { code: "ENOENT" });
+  await assert.rejects(() => access(path.join(firstProject.root, ".agentic-core/quality/dry.json")), { code: "ENOENT" });
+  await assert.rejects(() => access(resolutionsPath), { code: "ENOENT" });
+
+  const secondVerified = await runPythonProject(firstProject.root, ["verify"], counterEnvironments[0]);
+  assert.equal(secondVerified.code, 0, secondVerified.stdout + secondVerified.stderr);
+  assert.equal(await count(counters[0]), 6);
+  const secondRepeated = await runPythonProject(firstProject.root, ["verify"], counterEnvironments[0]);
+  assert.equal(parse(secondRepeated).reused, true);
+  assert.equal(await count(counters[0]), 6);
+
+  const independentPrepared = await runPythonProject(secondProject.root, [
+    "prepare", "--task", "independent", "--mode", "normal", "--objective", "issue:47-independent",
+  ], counterEnvironments[1]);
+  assert.equal(independentPrepared.code, 0, independentPrepared.stdout + independentPrepared.stderr);
+  const independentVerified = await runPythonProject(secondProject.root, ["verify"], counterEnvironments[1]);
+  assert.equal(independentVerified.code, 0, independentVerified.stdout + independentVerified.stderr);
+  const independentRepeated = await runPythonProject(secondProject.root, ["verify"], counterEnvironments[1]);
+  assert.equal(parse(independentRepeated).reused, true);
+  assert.equal(await count(counters[1]), 2);
+});
+
+test("installed new task preserves active evidence when the previous verdict is corrupt", async (t) => {
+  const { root } = await pythonProject(t);
+  const prepared = await runPythonProject(root, [
+    "prepare", "--task", "current", "--mode", "normal", "--objective", "issue:47",
+  ]);
+  assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
+  const verified = await runPythonProject(root, ["verify"]);
+  assert.equal(verified.code, 0, verified.stdout + verified.stderr);
+  const activePath = path.join(root, ".agentic-core/quality/active-task.json");
+  const verdictPath = path.join(root, ".agentic-core/quality/verification.json");
+  const active = await readFile(activePath, "utf8");
+  const corrupt = "verdict from an unknown producer\n";
+  await writeFile(verdictPath, corrupt);
+  const replacement = await runPythonProject(root, [
+    "prepare", "--task", "next", "--mode", "normal", "--objective", "issue:47-next",
+  ]);
+  assert.equal(replacement.code, 2, replacement.stdout + replacement.stderr);
+  assert.equal(parse(replacement).code, "task_evidence_cleanup_failed");
+  assert.equal(await readFile(activePath, "utf8"), active);
+  assert.equal(await readFile(verdictPath, "utf8"), corrupt);
 });
 
 for (const mode of ["light", "full"]) {

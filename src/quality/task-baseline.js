@@ -1,13 +1,26 @@
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { readConfiguration } from "../installation/install.js";
 import { writeTransaction } from "../transaction.js";
 import { IntegrationError } from "./command.js";
 import { captureProjectInputs, inputHash, privateInputContent, publicCheckpoint } from "./project-inputs.js";
+import { dependencyFingerprint } from "./project-copy.js";
 import { projectTestIdentity, runProjectTests } from "./python-project.js";
-import { capturePythonQualityBaseline, verifyPythonTask } from "./python-verification.js";
+import { parseDryResolutions } from "./python-dry.js";
+import {
+  capturePythonQualityBaseline,
+  readVerificationReport,
+  verificationReference,
+  verifyPythonTask,
+} from "./python-verification.js";
 
 const reference = ".agentic-core/quality/active-task.json";
+const qualityDirectory = ".agentic-core/quality";
+const verificationReports = [
+  { relative: `${qualityDirectory}/crap.json`, kind: "crap" },
+  { relative: `${qualityDirectory}/dry.json`, kind: "dry" },
+];
+const resolutionReference = `${qualityDirectory}/dry-resolutions.json`;
 const hash = (value) => inputHash(JSON.stringify(value));
 const modes = new Set(["light", "normal", "full"]);
 
@@ -33,6 +46,78 @@ async function evidencePath(root, create = false) {
   return file;
 }
 
+function cleanupError(message, exitCode = 2) {
+  return new IntegrationError("task_evidence_cleanup_failed", message, exitCode);
+}
+
+async function qualityToolsIdentity(root) {
+  try { return await dependencyFingerprint([path.join(root, ".agentic-core/tools")]); }
+  catch { return null; }
+}
+
+function ownedReport(content, kind) {
+  try {
+    const parsed = JSON.parse(content.toString("utf8"));
+    return parsed?.kind === kind && parsed.result?.command === kind && parsed.result?.schemaVersion === 1
+      && parsed.result?.reference === `${qualityDirectory}/${kind}.json`
+      && parsed.sha256 === hash(parsed.result);
+  } catch { return false; }
+}
+
+function ownedResolutions(content) {
+  try {
+    parseDryResolutions(content);
+    return true;
+  } catch { return false; }
+}
+
+async function cleanupFile(root, relative, validate = undefined) {
+  const file = path.join(root, relative);
+  let details;
+  try { details = await lstat(file); }
+  catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw cleanupError(`No se pudo inspeccionar ${relative} para iniciar la nueva tarea; se conserva la evidencia existente`, 5);
+  }
+  if (!details.isFile() || details.isSymbolicLink()) {
+    throw cleanupError(`No se puede limpiar ${relative}: no es un archivo regular seguro y se conserva`, 2);
+  }
+  let content;
+  try { content = await readFile(file); }
+  catch { throw cleanupError(`No se pudo leer ${relative} para demostrar ownership; se conserva`, 2); }
+  if (validate) {
+    if (!validate(content)) {
+      throw cleanupError(`No se puede limpiar ${relative}: la evidencia no demuestra ownership y se conserva`, 2);
+    }
+  }
+  return { type: "delete", path: file, expectedContent: content };
+}
+
+async function cleanupInternalEvidence(root, expectedTask) {
+  const operations = [];
+  let verification;
+  try { verification = await readVerificationReport(root, expectedTask); }
+  catch {
+    throw cleanupError("No se puede limpiar el veredicto interno: está corrupto, es ajeno o no se puede validar; se conserva", 2);
+  }
+  if (verification && !expectedTask) {
+    throw cleanupError("No se puede limpiar el veredicto interno sin una tarea activa que demuestre ownership; se conserva", 2);
+  }
+  if (verification) {
+    const operation = await cleanupFile(root, verificationReference,
+      (content) => inputHash(content) === verification.sha256);
+    if (!operation) throw cleanupError("El veredicto cambió durante la planificación de limpieza; se conserva la tarea", 2);
+    operations.push(operation);
+  }
+  for (const report of verificationReports) {
+    const file = await cleanupFile(root, report.relative, (content) => ownedReport(content, report.kind));
+    if (file) operations.push(file);
+  }
+  const resolutions = await cleanupFile(root, resolutionReference, ownedResolutions);
+  if (resolutions) operations.push(resolutions);
+  return operations;
+}
+
 export async function readActiveTask(root) {
   const file = await evidencePath(root);
   if (!file) return null;
@@ -46,7 +131,7 @@ export async function readActiveTask(root) {
       || task.initial.quality !== undefined && (task.initial.quality?.schemaVersion !== 1
         || !["captured", "NO_VERIFICADO"].includes(task.initial.quality.status)
         || !task.initial.quality.crap || !task.initial.quality.dry)) throw new Error("identity");
-    return { task, sha256 };
+    return { task, sha256, content: Buffer.from(content) };
   } catch {
     throw new IntegrationError("task_evidence_invalid", "La evidencia inicial está corrupta; no se reemplaza ni se usa para aprobar", 2);
   }
@@ -96,33 +181,45 @@ export async function taskFreshness(root, task) {
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const checkpoint = await captureProjectInputs(root, config.integration.python);
   const { identity } = await projectTestIdentity(root, config);
+  const qualityTools = await qualityToolsIdentity(root);
   const initial = new Map(task.initial.inputs.inventory.map((entry) => [entry.path, entry]));
   const current = new Map(checkpoint.inventory.map((entry) => [entry.path, entry]));
   const changed = [...new Set([...initial.keys(), ...current.keys()])].filter((file) => hash(initial.get(file) ?? null) !== hash(current.get(file) ?? null));
+  const configurationHash = hash(config);
+  const configurationChanged = configurationHash !== task.initial.result.configurationHash;
+  const identityChanged = identity !== task.initial.result.executionIdentity;
+  const toolsKnown = task.initial.environment?.qualityTools !== undefined;
+  const conditionsChanged = toolsKnown
+    ? configurationChanged || identityChanged || qualityTools !== task.initial.environment.qualityTools
+    : configurationChanged || identityChanged;
   return { status: checkpoint.issues.length ? "NO_VERIFICADO" : "compared",
-    changed, conditionsChanged: identity !== task.initial.result.executionIdentity,
+    changed, conditionsChanged,
     inputsChanged: checkpoint.digest !== task.initial.inputs.digest,
     evidenceCurrent: task.initial.valid && !checkpoint.issues.length
-      && identity === task.initial.result.executionIdentity && checkpoint.digest === task.initial.inputs.digest,
-    baselinePreserved: true, checkpoint: publicCheckpoint(checkpoint) };
+      && !conditionsChanged && checkpoint.digest === task.initial.inputs.digest,
+    baselinePreserved: true, checkpoint: publicCheckpoint(checkpoint), configurationHash,
+    executionIdentity: identity, qualityTools };
 }
 
 async function prepare(root, args) {
   const requested = options(args);
   const loaded = await readActiveTask(root);
-  if (loaded) {
-    if (requested.id && requested.id !== loaded.task.id || requested.mode && requested.mode !== loaded.task.mode
-      || requested.objective && requested.objective !== loaded.task.objective
-      || requested.repairTests.length && hash(requested.repairTests) !== hash(loaded.task.repairTests)) {
-      throw new IntegrationError("task_already_active", "Hay una tarea activa distinta; su punto de partida no se reemplaza durante continuaciones", 4);
+  if (loaded && (!requested.id || requested.id === loaded.task.id)) {
+    const continues = (!requested.mode || requested.mode === loaded.task.mode)
+      && (!requested.objective || requested.objective === loaded.task.objective)
+      && (!requested.repairTests.length || hash(requested.repairTests) === hash(loaded.task.repairTests));
+    if (continues) {
+      return { command: "prepare", status: loaded.task.initial.valid ? "prepared" : "NO_VERIFICADO",
+        code: "baseline_preserved", message: "Se conserva el inicio de la tarea; consulte baseline para comparar los inputs actuales",
+        exitCode: loaded.task.initial.valid ? 0 : 2, reused: true, task: taskSummary(loaded) };
     }
-    return { command: "prepare", status: loaded.task.initial.valid ? "prepared" : "NO_VERIFICADO",
-      code: "baseline_preserved", message: "Se conserva el inicio de la tarea; consulte baseline para comparar los inputs actuales",
-      exitCode: loaded.task.initial.valid ? 0 : 2, reused: true, task: taskSummary(loaded) };
+    throw new IntegrationError("task_metadata_conflict",
+      "La metadata no coincide con la tarea activa; conserve sus valores para continuar o use un --task distinto para iniciar otra tarea", 4);
   }
   if (!requested.id || !requested.mode || !requested.objective) {
     throw new IntegrationError("invalid_usage", "La primera preparación requiere --task, --mode y --objective", 4);
   }
+  const cleanup = await cleanupInternalEvidence(root, loaded?.task);
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const before = await captureProjectInputs(root, config.integration.python);
   for (const repairTest of requested.repairTests) {
@@ -149,19 +246,31 @@ async function prepare(root, args) {
       result, failures,
       environment: { node: process.version, platform: process.platform, arch: process.arch,
         python: result.python ?? null, runner: result.effectiveCommand ?? null,
-        configurationHash: result.configurationHash ?? null, executionIdentity: result.executionIdentity ?? null } } };
-  const saved = { task, sha256: hash(task) };
-  // Exclusive creation prevents a concurrent prepare from overwriting another task.
-  const activePath = await evidencePath(root, true);
-  await writeFile(activePath, `${JSON.stringify(saved)}\n`, { flag: "wx" });
+        configurationHash: result.configurationHash ?? null, executionIdentity: result.executionIdentity ?? null,
+        qualityTools: await qualityToolsIdentity(root) } } };
   const quality = await capturePythonQualityBaseline(root, { checkpoint: before, execution: result });
   const enrichedTask = { ...task, initial: { ...task.initial, quality } };
   const enriched = { task: enrichedTask, sha256: hash(enrichedTask) };
   const current = await readActiveTask(root);
-  if (!current || current.sha256 !== saved.sha256) {
+  if (loaded ? current?.sha256 !== loaded.sha256 : current) {
     throw new IntegrationError("task_already_active", "La tarea activa cambió durante la captura; se conserva la evidencia existente", 4);
   }
-  await writeTransaction(root, [{ path: activePath, content: Buffer.from(`${JSON.stringify(enriched)}\n`) }]);
+  const activePath = await evidencePath(root, true);
+  try {
+    await writeTransaction(root, [
+      ...cleanup,
+      { path: activePath, content: Buffer.from(`${JSON.stringify(enriched)}\n`), expectedContent: loaded?.content ?? null },
+    ]);
+  } catch (error) {
+    if (error instanceof IntegrationError) throw error;
+    if (error.code === "ERR_TRANSACTION_CONFLICT") {
+      throw cleanupError("La evidencia cambió durante la captura o limpieza; se conservan la tarea y los archivos divergentes. Revise el cambio antes de reintentar", 2);
+    }
+    if (error.code === "ERR_RESTORATION_FAILED") {
+      throw cleanupError("La restauración quedó incompleta; se conservan los cambios concurrentes y el respaldo de recuperación. Revise la evidencia antes de reintentar", 5);
+    }
+    throw cleanupError("No se pudo retirar la evidencia interna anterior sin afectar la nueva tarea; se conserva el estado previo", 5);
+  }
   // A partial quality baseline is useful evidence even when it cannot support
   // approval yet; the final verifier will keep that control unverified.
   const prepared = valid;
@@ -170,7 +279,7 @@ async function prepare(root, args) {
     message: prepared ? "Inicio y mediciones de calidad capturados; los fallos iniciales se conservan y la suite final debe aprobar. Los fallos ajenos no amplían el alcance"
       : !valid ? "No se obtuvo un baseline válido; se conserva el punto inicial y la causa sin fabricar una aprobación"
         : "El inicio se conserva, pero una medición de calidad quedó incompleta; no se fabrica evidencia de aprobación",
-    exitCode: prepared ? 0 : 2, reused: false, task: taskSummary(enriched) };
+    exitCode: prepared ? 0 : 2, reused: false, replaced: Boolean(loaded), task: taskSummary(enriched) };
 }
 
 async function inspect(root, args, verify) {
@@ -182,7 +291,8 @@ async function inspect(root, args, verify) {
     return { command: "baseline", status: "reported", code: "baseline_preserved", exitCode: 0,
       message: "Comparación contra el inicio real de la tarea; no se ejecutaron pruebas", task: taskSummary(loaded), freshness };
   }
-  const result = await verifyPythonTask(root, loaded.task);
+  const stored = await readVerificationReport(root, loaded.task);
+  const result = await verifyPythonTask(root, loaded.task, { previous: stored?.report });
   return { ...result, task: taskSummary(loaded) };
 }
 

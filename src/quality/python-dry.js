@@ -198,8 +198,8 @@ function invalidBaseline(reason) {
   return { status: "NO_VERIFICADO", reason, sources: [], inventory: [], digest: null };
 }
 
-async function loadBaseline(root, config) {
-  const loaded = await readActiveTask(root);
+async function loadBaseline(root, config, activeTask) {
+  const loaded = activeTask === undefined ? await readActiveTask(root) : activeTask;
   if (!loaded) return { status: "not_requested", reason: null, sources: [], inventory: [], digest: null };
   const task = loaded.task;
   if (!task.initial.valid) return invalidBaseline("baseline_initial_invalid");
@@ -256,18 +256,7 @@ async function loadBaseline(root, config) {
     digest: task.initial.inputs.digest };
 }
 
-async function readResolutions(root, inputsDigest, configurationHash) {
-  const file = path.join(root, resolutionReference);
-  let content;
-  try {
-    const details = await lstat(file);
-    if (!details.isFile() || details.isSymbolicLink()) throw new IntegrationError("dry_resolution_unsafe", "El archivo de resoluciones DRY no es seguro", 2);
-    content = await readFile(file);
-  } catch (error) {
-    if (error?.code === "ENOENT") return { status: "missing", entries: [], sha256: null, used: [], unused: [] };
-    if (error instanceof IntegrationError) throw error;
-    throw new IntegrationError("dry_resolution_unreadable", "No se pudo leer el archivo de resoluciones DRY", 2);
-  }
+export function parseDryResolutions(content) {
   if (privateInputContent(content)) throw new IntegrationError("private_dry_resolution", "La resolución DRY contiene datos privados", 4);
   let parsed;
   try { parsed = JSON.parse(content.toString("utf8")); }
@@ -289,6 +278,23 @@ async function readResolutions(root, inputsDigest, configurationHash) {
     seen.add(candidate);
     return { candidate, decision, reason: reason.trim() };
   });
+  return { ...parsed, resolutions: normalized };
+}
+
+async function readResolutions(root, inputsDigest, configurationHash) {
+  const file = path.join(root, resolutionReference);
+  let content;
+  try {
+    const details = await lstat(file);
+    if (!details.isFile() || details.isSymbolicLink()) throw new IntegrationError("dry_resolution_unsafe", "El archivo de resoluciones DRY no es seguro", 2);
+    content = await readFile(file);
+  } catch (error) {
+    if (error?.code === "ENOENT") return { status: "missing", entries: [], sha256: null, used: [], unused: [] };
+    if (error instanceof IntegrationError) throw error;
+    throw new IntegrationError("dry_resolution_unreadable", "No se pudo leer el archivo de resoluciones DRY", 2);
+  }
+  const parsed = parseDryResolutions(content);
+  const normalized = parsed.resolutions;
   const current = parsed.inputs === inputsDigest && parsed.configuration === configurationHash;
   return {
     status: current ? "current" : "stale",
@@ -386,7 +392,7 @@ function reportBase({ status, code, exitCode, config, checkpoint, baseline, engi
   };
 }
 
-async function finishReport(root, parameters) {
+async function finishReport(root, { ignoreStoredResolutions = false, ...parameters }) {
   const { config, checkpoint, configurationHash, resolutions } = parameters;
   const after = await captureProjectInputs(root, config.integration.python);
   let code;
@@ -395,27 +401,31 @@ async function finishReport(root, parameters) {
   try {
     if (hash(await readConfiguration(path.join(root, ".agentic-core/config.json"))) !== configurationHash) code = "dry_configuration_changed";
   } catch { code = "dry_configuration_changed"; }
-  try {
-    const finalResolutions = await readResolutions(root, checkpoint.digest, configurationHash);
-    if (finalResolutions.sha256 !== resolutions.sha256) code = "dry_resolutions_changed";
-  } catch { code = "dry_resolutions_changed"; }
+  if (!ignoreStoredResolutions) {
+    try {
+      const finalResolutions = await readResolutions(root, checkpoint.digest, configurationHash);
+      if (finalResolutions.sha256 !== resolutions.sha256) code = "dry_resolutions_changed";
+    } catch { code = "dry_resolutions_changed"; }
+  }
   return reportBase({ ...parameters, ...(code ? { status: "NO_VERIFICADO", code, exitCode: 2 } : {}) });
 }
 
-export async function runPythonDry(root) {
+export async function runPythonDry(root, { activeTask, ignoreStoredResolutions = false } = {}) {
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const configurationHash = hash(config);
   const budget = commandBudget(config.limits.operation);
   const before = await captureProjectInputs(root, config.integration.python);
   const currentSources = sourceEntries(before);
-  const baseline = await loadBaseline(root, config);
+  const baseline = await loadBaseline(root, config, activeTask);
   baseline.changedFiles = baseline.status === "captured"
     ? [...new Set([...baseline.inventory.map((entry) => entry.path), ...before.inventory.map((entry) => entry.path)])]
       .filter((file) => baseline.inventory.find((entry) => entry.path === file)?.sha256
         !== before.inventory.find((entry) => entry.path === file)?.sha256)
       .sort()
     : [];
-  const resolutions = await readResolutions(root, before.digest, configurationHash);
+  const resolutions = ignoreStoredResolutions
+    ? { status: "missing", entries: [], sha256: null, used: [], unused: [] }
+    : await readResolutions(root, before.digest, configurationHash);
   const engineInfo = engine;
   if (before.issues.length) {
     return reportBase({ status: "NO_VERIFICADO", code: "input_checkpoint_incompatible", config,
@@ -446,7 +456,8 @@ export async function runPythonDry(root) {
     return finishReport(root, { status: "NO_VERIFICADO", code: error?.code ?? "dry_engine_failed", exitCode: error?.exitCode ?? 5,
       config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
   }
-  return finishReport(root, { config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash, ...current });
+  return finishReport(root, { config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash,
+    ignoreStoredResolutions, ...current });
 }
 
 async function saveReport(root, result) {
