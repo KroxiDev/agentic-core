@@ -6,6 +6,7 @@ import { readConfiguration } from "../installation/install.js";
 import { privatePython } from "../installation/python.js";
 import { writeTransaction } from "../transaction.js";
 import { commandBudget, executeCommand, IntegrationError } from "./command.js";
+import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { captureProjectInputs, inputHash, matchesInput, publicCheckpoint } from "./project-inputs.js";
 import { projectTestIdentity, runProjectTests } from "./python-project.js";
 
@@ -80,7 +81,11 @@ async function measure(root, config, checkpoint, execution, budget) {
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 
-export async function runPythonCrap(root, { checkpoint: suppliedCheckpoint, execution: suppliedExecution } = {}) {
+export async function runPythonCrap(root, options = {}) {
+  return withCurrentTaskBudget(root, () => measurePythonCrap(root, options));
+}
+
+async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, execution: suppliedExecution } = {}) {
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const budget = commandBudget(config.limits.operation);
   const before = suppliedCheckpoint ?? await captureProjectInputs(root, config.integration.python);
@@ -125,12 +130,13 @@ export async function runPythonCrapCli(args, io = process) {
   } catch (error) {
     const typed = typeof error.code === "string" && Number.isInteger(error.exitCode);
     const { reference: _unsaved, ...partial } = result ?? {};
-    result = { ...partial, command: "crap", status: "NO_VERIFICADO", code: typed ? error.code : "crap_internal_error",
+    result = { ...partial, budget: error.budget, command: "crap", status: "NO_VERIFICADO", code: typed ? error.code : "crap_internal_error",
       message: typed ? error.message : "No se pudo completar o conservar la medición C.R.A.P.", exitCode: typed ? error.exitCode : 5 };
   }
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
   else {
     io.stdout.write(`${result.status} [${result.code}] ${result.message}\n`);
+    io.stdout.write(formatBudget(result.budget));
     const priority = { NO_VERIFICADO: 0, rejected: 1, approved: 2, NO_APLICA: 3 };
     const rows = [...result.details ?? []].sort((left, right) => priority[left.status] - priority[right.status]);
     for (const row of rows.slice(0, 8)) io.stdout.write(`${row.file}:${row.line} ${row.name ?? ""}: ${row.value ?? "sin medición"}; límite ${row.limit}; ${row.message}\n`);

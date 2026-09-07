@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { readConfiguration } from "../installation/install.js";
 import { privatePython } from "../installation/python.js";
 import { IntegrationError, commandBudget, executeCommand } from "./command.js";
+import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { captureProjectInputs, publicCheckpoint } from "./project-inputs.js";
 import { createProjectCopy, dependencyFingerprint, isolatedCommand, publicArgument, publicArguments, verifyProjectIntegrity } from "./project-copy.js";
 
@@ -27,7 +28,7 @@ export async function projectTestIdentity(root, config) {
 async function inspectInterpreter(executable, context) {
   const result = await executeCommand({ executable, args: ["-c",
     "import json,sys,sysconfig,importlib.util; print(json.dumps({'executable':sys.executable,'version':list(sys.version_info[:3]),'dependencies':list(set([sysconfig.get_path('purelib'),sysconfig.get_path('platlib')])),'pytest':importlib.util.find_spec('pytest') is not None}))"] },
-  { ...context, timeoutMs: context.budget() });
+  { ...context, timeoutMs: context.budget(), account: false });
   if (result.exitCode !== 0) throw new IntegrationError("python_unavailable", "No se pudo inspeccionar el intérprete seleccionado");
   let python;
   try { python = JSON.parse(result.stdout); }
@@ -79,6 +80,7 @@ async function observe(root, config, python, context, temporary) {
   let executionError;
   try { execution = await executeCommand(command, { cwd: context.cwd, env, timeoutMs }); }
   catch (error) { error.effectiveCommand = effective; executionError = error; }
+  effective.timeoutMs = execution?.timeoutMs ?? executionError?.timeoutMs ?? timeoutMs;
   const reports = (await readdir(temporary)).filter((name) => /^pytest-[a-f0-9]+\.json$/u.test(name));
   if (reports.length !== 1) {
     if (executionError) return integrationFailure(executionError);
@@ -123,6 +125,11 @@ async function observe(root, config, python, context, temporary) {
 }
 
 export async function runProjectTests(projectRoot) {
+  try { return await withCurrentTaskBudget(projectRoot, () => executeProjectTests(projectRoot)); }
+  catch (error) { return { command: "test", status: "NO_VERIFICADO", ...integrationFailure(error) }; }
+}
+
+async function executeProjectTests(projectRoot) {
   let effectiveCommand;
   let config;
   try {
@@ -169,10 +176,10 @@ export async function runProjectTests(projectRoot) {
 }
 
 function integrationFailure(error) {
-  const typed = error instanceof IntegrationError;
+  const typed = error instanceof IntegrationError || (typeof error.code === "string" && Number.isInteger(error.exitCode));
   return { code: typed ? error.code : "integration_internal_error", exitCode: typed ? error.exitCode : 5,
     message: typed ? error.message : "Fallo interno de integración; no se obtuvo evidencia completa",
-    effectiveCommand: error.effectiveCommand,
+    effectiveCommand: error.effectiveCommand, budget: error.budget,
     suite: { status: "NO_VERIFICADO" }, coverage: { status: "unknown", files: null } };
 }
 
@@ -188,6 +195,6 @@ export async function runPythonQualityCli(args, io = process) {
       message: "Use agentic-quality test, dry o los comandos de tarea prepare, baseline y verify",
       exitCode: ["prepare", "verify", "scan", "crap", "mutate", "mutation"].includes(args[0]) ? 2 : 4 };
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
-  else io.stdout.write(`${result.status} [${result.code}] ${result.message}\n`);
+  else io.stdout.write(`${result.status} [${result.code}] ${result.message}\n${formatBudget(result.budget)}`);
   return result.exitCode;
 }

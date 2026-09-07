@@ -10,7 +10,7 @@ export class InstallationError extends Error {
 
 const text = { type: "string", minLength: 1 };
 const strings = { type: "array", items: text };
-const positive = { type: "number", exclusiveMinimum: 0 };
+const milliseconds = { type: "integer", minimum: 1, maximum: 2147483647 };
 const object = (properties) => ({ type: "object", additionalProperties: false, required: Object.keys(properties), properties });
 export const CONFIG_SCHEMA = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -36,7 +36,7 @@ export const CONFIG_SCHEMA = {
       dry: object({ similarity: { type: "number", minimum: 0, maximum: 1 }, minLines: { type: "integer", minimum: 1 }, minNodes: { type: "integer", minimum: 1 } }),
       crap: { type: "number", minimum: 0 },
       mutationScore: { type: "number", exclusiveMinimum: 0, maximum: 100 },
-      operation: object({ commandTimeoutMs: positive, totalBudgetMs: positive, workers: { type: "integer", minimum: 1, maximum: 4 } }),
+      operation: object({ commandTimeoutMs: milliseconds, totalBudgetMs: milliseconds, workers: { type: "integer", minimum: 1, maximum: 4 } }),
     }),
   }),
 };

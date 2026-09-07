@@ -3,6 +3,7 @@ import path from "node:path";
 import { readConfiguration } from "../installation/install.js";
 import { writeTransaction } from "../transaction.js";
 import { IntegrationError } from "./command.js";
+import { budgetSummary } from "./task-budget.js";
 import { compareCodeUnits } from "./order.js";
 import { captureProjectInputs, inputHash, publicCheckpoint } from "./project-inputs.js";
 import { dependencyFingerprint } from "./project-copy.js";
@@ -319,6 +320,9 @@ function aggregateStatus({ baseline, evidence, tests, dry, crap, mutation }) {
 }
 
 function aggregateCode(status, { baseline, evidence, tests, dry, crap, mutation }) {
+  const limit = [tests, dry, crap, mutation].find((control) =>
+    ["budget_exhausted", "command_timeout", "concurrency_limit", "budget_interrupted", "termination_failed"].includes(control.code));
+  if (limit) return limit.code;
   if (baseline.status === noVerification && baseline.code === "baseline_invalid") return baseline.code;
   if (tests.status === "rejected") return tests.code;
   if (evidence.status === noVerification) return evidence.code;
@@ -586,6 +590,7 @@ export async function verifyPythonTask(root, task, { previous } = {}) {
     $schema: schema,
     schemaVersion: 1,
     command: "verify",
+    budget: budgetSummary(),
     task: { id: task.id, mode: task.mode, objective: task.objective, scope: task.scope },
     mode: task.mode,
     scopes: task.scope,
