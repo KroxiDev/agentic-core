@@ -11,6 +11,10 @@
 
 The reproducible build uses `esbuild` 0.28.2 as a development-only dependency. `esbuild` executes while preparing the package or building the repository, but its implementation and platform binary are not copied into the production artifact or persisted runtime.
 
+## Herramientas Python privadas
+
+El runtime incluye mutate4py 0.1.4 para generar mutantes; la ejecución usa el comando autoritativo de la instalación. Su wheel conserva la licencia MIT completa. Las versiones, atribuciones y licencias de las herramientas Python se detallan en `third_party/python/NOTICE.md`, también distribuido con el runtime.
+
 ## @jridgewell/trace-mapping 0.3.31
 
 Copyright 2024 Justin Ridgewell <justin@ridgewell.name>

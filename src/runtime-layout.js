@@ -34,6 +34,7 @@ export const RUNTIME_PAYLOAD_COPIES = [
   { source: "src/quality/agentic_pytest.py", target: "agentic_pytest.py" },
   { source: "src/quality/agentic_crap.py", target: "agentic_crap.py" },
   { source: "src/quality/agentic_dry.py", target: "agentic_dry.py" },
+  { source: "src/quality/agentic_mutation.py", target: "agentic_mutation.py" },
   { source: "LICENSE", target: "LICENSE" },
   { source: "THIRD_PARTY_NOTICES.md", target: "THIRD_PARTY_NOTICES.md" },
   { source: "node_modules/typescript/LICENSE.txt", target: "third_party/typescript/LICENSE.txt" },
