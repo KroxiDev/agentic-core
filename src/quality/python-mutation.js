@@ -126,15 +126,25 @@ function intersectsChangedLines(changed, range) {
 }
 
 function publicMutant(mutant, status, reason) {
-  const { content: _content, ...detail } = mutant;
+  const { content: _content, staticEquivalence: _staticEquivalence, ...detail } = mutant;
   return { ...detail, status, ...(reason ? { reason } : {}) };
 }
 
 function staticEquivalent(mutant) {
-  if (mutant.mutatedHash !== mutant.sourceHash) return null;
+  if (mutant.mutatedHash === mutant.sourceHash) {
+    return {
+      reason: "La mutación produce exactamente los mismos bytes que el código original",
+      staticProof: `sha256(original) = sha256(mutated) = ${mutant.sourceHash}`,
+    };
+  }
+  const astProof = mutant.staticEquivalence;
+  if (astProof?.kind !== "python_ast"
+    || astProof.sourceHash !== mutant.sourceHash
+    || astProof.mutatedHash !== mutant.mutatedHash
+    || typeof astProof.astHash !== "string" || !/^[a-f0-9]{64}$/u.test(astProof.astHash)) return null;
   return {
-    reason: "La mutación produce exactamente los mismos bytes que el código original",
-    staticProof: `sha256(original) = sha256(mutated) = ${mutant.sourceHash}`,
+    reason: "La mutación conserva exactamente el AST de Python; solo cambia comentarios o formato",
+    staticProof: `sha256(ast(original)) = sha256(ast(mutated)) = ${astProof.astHash}`,
   };
 }
 
@@ -253,13 +263,19 @@ async function generate(root, checkpoint, copy, timeoutMs) {
   const ids = new Set();
   for (const mutant of document.mutants) {
     const entry = sources.find((source) => source.path === mutant.file);
+    const astProof = mutant.staticEquivalence;
     if (!entry || entry.sha256 !== mutant.sourceHash || ids.has(mutant.id)
       || !Number.isInteger(mutant.line) || mutant.line < 1
       || !Number.isInteger(mutant.column) || mutant.column < 0
       || !Number.isInteger(mutant.endLine) || mutant.endLine < mutant.line
       || !Number.isInteger(mutant.endColumn) || mutant.endColumn < 0
       || mutant.endLine === mutant.line && mutant.endColumn < mutant.column
-      || inputHash(Buffer.from(mutant.content, "base64")) !== mutant.mutatedHash) {
+      || inputHash(Buffer.from(mutant.content, "base64")) !== mutant.mutatedHash
+      || astProof !== undefined && (astProof?.kind !== "python_ast"
+        || astProof.sourceHash !== mutant.sourceHash
+        || astProof.mutatedHash !== mutant.mutatedHash
+        || mutant.mutatedHash === mutant.sourceHash
+        || typeof astProof.astHash !== "string" || !/^[a-f0-9]{64}$/u.test(astProof.astHash))) {
       throw fail("invalid_mutation_evidence", "El generador devolvió un mutante sin identidad íntegra");
     }
     ids.add(mutant.id);

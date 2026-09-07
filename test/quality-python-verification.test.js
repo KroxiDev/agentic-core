@@ -59,35 +59,115 @@ const inconclusiveMutationSource = [
   "",
 ].join("\n");
 
-async function fullMutationProject(t, { threshold, corpus = "complete" }) {
+const fullMutationCorpora = {
+  complete: {
+    source: completeMutationSource,
+    imports: "from src.subject import classify, detected, survivor",
+    assertions: [
+      "    assert detected(2) is False",
+      "    assert survivor(9) is True",
+    ].join("\n"),
+  },
+  inconclusive: {
+    source: inconclusiveMutationSource,
+    imports: "from src.subject import classify, detected, survivor, untouched, broken",
+    assertions: [
+      "    assert detected(2) is False",
+      "    assert survivor(9) is True",
+      "    assert broken(2) is None",
+    ].join("\n"),
+  },
+  timeout: {
+    source: [
+      "",
+      "def detected(value):",
+      "    return value > 2",
+      "",
+      "def slow(value):",
+      "    if value > 2:",
+      "        import time",
+      "        time.sleep(15)",
+      "    return value",
+      "",
+    ].join("\n"),
+    imports: "from src.subject import classify, detected, slow",
+    assertions: [
+      "    assert detected(2) is False",
+      "    assert slow(2) == 2",
+    ].join("\n"),
+  },
+  interrupted: {
+    source: [
+      "",
+      "def interrupted(value):",
+      "    if value > 2:",
+      "        raise KeyboardInterrupt()",
+      "    return value",
+      "",
+    ].join("\n"),
+    imports: "from src.subject import classify, interrupted",
+    assertions: "    assert interrupted(2) == 2",
+  },
+  budget: {
+    source: [
+      "",
+      "def detected(value):",
+      "    return value > 2",
+      "",
+      "def budget_limited(value):",
+      "    return value > 2",
+      "",
+      "def pending(value):",
+      "    return value > 7",
+      "",
+    ].join("\n"),
+    imports: "from src.subject import classify, detected, budget_limited, pending",
+    assertions: [
+      "    time.sleep(2)",
+      "    assert detected(2) is False",
+      "    assert budget_limited(2) is False",
+      "    assert pending(1) is False",
+    ].join("\n"),
+  },
+  equivalent: {
+    source: [
+      "",
+      "def detected(value):",
+      "    return value > 2",
+      "",
+      "def equivalent(value):",
+      "    return (value # >",
+      "            > 1)",
+      "",
+    ].join("\n"),
+    imports: "from src.subject import classify, detected, equivalent",
+    assertions: [
+      "    assert detected(2) is False",
+      "    assert equivalent(1) is False",
+    ].join("\n"),
+  },
+};
+
+async function fullMutationProject(t, { threshold, corpus = "complete", commandTimeoutMs, totalBudgetMs }) {
   const { root } = await pythonProject(t);
   await configurePythonProject(root, (config) => {
     config.limits.crap = 100;
     config.limits.mutationScore = threshold;
+    if (commandTimeoutMs !== undefined) config.limits.operation.commandTimeoutMs = commandTimeoutMs;
+    if (totalBudgetMs !== undefined) config.limits.operation.totalBudgetMs = totalBudgetMs;
   });
   const prepared = await runPythonProject(root, prepare("full"));
   assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
+  const selectedCorpus = fullMutationCorpora[corpus];
+  assert.ok(selectedCorpus, `Unknown Full corpus: ${corpus}`);
   const subject = path.join(root, "work dir/src/subject.py");
   const source = await readFile(subject, "utf8");
-  await writeFile(subject, source + (corpus === "inconclusive" ? inconclusiveMutationSource : completeMutationSource));
+  await writeFile(subject, source + selectedCorpus.source);
   const checks = path.join(root, "work dir/python checks/check_subject.py");
-  const imports = corpus === "inconclusive"
-    ? "from src.subject import classify, detected, survivor, untouched, broken"
-    : "from src.subject import classify, detected, survivor";
-  const assertions = corpus === "inconclusive"
-    ? [
-      "    assert detected(2) is False",
-      "    assert survivor(9) is True",
-      "    assert broken(2) is None",
-    ].join("\n")
-    : [
-      "    assert detected(2) is False",
-      "    assert survivor(9) is True",
-    ].join("\n");
   const checksSource = await readFile(checks, "utf8");
   await writeFile(checks, checksSource
-    .replace("from src.subject import classify", imports)
-    .replace("    assert classify(0) == 'other'", `    assert classify(0) == 'other'\n${assertions}`));
+    .replace("from src.subject import classify", selectedCorpus.imports)
+    .replace("    assert classify(0) == 'other'", `    assert classify(0) == 'other'\n${selectedCorpus.assertions}`));
   return root;
 }
 
@@ -425,6 +505,115 @@ test("installed Full keeps an error inconclusive after the score passes", async 
   assert.equal(mutation.selection.required.length, 4);
   assert.equal(mutation.details.length, 4);
   assert.doesNotMatch(report.receipt, /^QUALITY_OK/u);
+});
+
+test("installed Full keeps a real command timeout inconclusive after the score passes", async (t) => {
+  const root = await fullMutationProject(t, { threshold: 10, corpus: "timeout", commandTimeoutMs: 5000 });
+  const verified = await runPythonProject(root, ["verify"]);
+  const report = parse(verified);
+  const mutation = report.verification.mutation;
+  assert.equal(verified.code, 2, verified.stdout + verified.stderr);
+  assert.equal(report.status, "NO_VERIFICADO");
+  assert.equal(report.code, "mutation_inconclusive");
+  assert.equal(mutation.status, "NO_VERIFICADO");
+  assert.equal(mutation.score.threshold, 10);
+  assert.equal(mutation.score.denominator, 2);
+  assert.equal(mutation.score.detected, 1);
+  assert.equal(mutation.score.percentage, 50);
+  assert.ok(mutation.score.percentage > mutation.score.threshold);
+  assert.equal(mutation.summary.timeout, 1);
+  assert.equal(mutation.summary.error, 0);
+  assert.equal(mutation.summary.interrupted, 0);
+  assert.equal(mutation.summary.pending, 0);
+  assert.equal(mutation.inventory.generated, 4);
+  assert.equal(mutation.inventory.required, 2);
+  assert.equal(mutation.inventory.preexisting, 2);
+  assert.equal(mutation.selection.required.length, 2);
+  assert.equal(mutation.details.length, 2);
+  assert.equal(mutation.details.find((item) => item.status === "timeout")?.code, "command_timeout");
+  assert.doesNotMatch(report.receipt, /^QUALITY_OK/u);
+});
+
+test("installed Full keeps a real pytest interruption inconclusive after the score passes", async (t) => {
+  const root = await fullMutationProject(t, { threshold: 10, corpus: "interrupted" });
+  const verified = await runPythonProject(root, ["verify"]);
+  const report = parse(verified);
+  const mutation = report.verification.mutation;
+  assert.equal(verified.code, 6, verified.stdout + verified.stderr);
+  assert.equal(report.status, "NO_VERIFICADO");
+  assert.equal(report.code, "pytest_interrupted");
+  assert.equal(mutation.status, "NO_VERIFICADO");
+  assert.equal(mutation.score.threshold, 10);
+  assert.equal(mutation.score.denominator, 1);
+  assert.equal(mutation.score.detected, 0);
+  assert.equal(mutation.score.percentage, 0);
+  assert.equal(mutation.score.inconclusive, 1);
+  assert.equal(mutation.summary.interrupted, 1);
+  assert.equal(mutation.summary.pending, 0);
+  assert.equal(mutation.inventory.generated, 3);
+  assert.equal(mutation.inventory.required, 1);
+  assert.equal(mutation.inventory.preexisting, 2);
+  assert.equal(mutation.selection.required.length, 1);
+  assert.equal(mutation.details.length, 1);
+  assert.equal(mutation.details[0].code, "pytest_interrupted");
+  assert.doesNotMatch(report.receipt, /^QUALITY_OK/u);
+});
+
+test("installed Full preserves pending mutants when the real shared budget is exhausted after the score passes", async (t) => {
+  const root = await fullMutationProject(t, {
+    threshold: 10, corpus: "budget", commandTimeoutMs: 30000, totalBudgetMs: 12000,
+  });
+  const verified = await runPythonProject(root, ["verify"]);
+  const report = parse(verified);
+  const mutation = report.verification.mutation;
+  assert.equal(verified.code, 6, verified.stdout + verified.stderr);
+  assert.equal(report.status, "NO_VERIFICADO");
+  assert.equal(report.code, "budget_exhausted");
+  assert.equal(mutation.status, "NO_VERIFICADO");
+  assert.equal(mutation.score.threshold, 10);
+  assert.equal(mutation.score.denominator, 3);
+  assert.equal(mutation.score.detected, 1);
+  assert.equal(mutation.score.percentage, 33.33);
+  assert.ok(mutation.score.percentage > mutation.score.threshold);
+  assert.equal(mutation.score.inconclusive, 2);
+  assert.equal(mutation.summary.interrupted, 1);
+  assert.equal(mutation.summary.pending, 1);
+  assert.equal(mutation.summary.timeout, 0);
+  assert.equal(mutation.inventory.generated, 5);
+  assert.equal(mutation.inventory.required, 3);
+  assert.equal(mutation.inventory.preexisting, 2);
+  assert.equal(mutation.selection.required.length, 3);
+  assert.equal(mutation.details.length, 2);
+  assert.equal(mutation.details.at(-1).code, "budget_exhausted");
+  assert.equal(mutation.budget.remainingMs, 0);
+  assert.doesNotMatch(report.receipt, /^QUALITY_OK/u);
+});
+
+test("installed Full excludes an engine-generated AST-equivalent mutation with static evidence", async (t) => {
+  const root = await fullMutationProject(t, { threshold: 90, corpus: "equivalent" });
+  const verified = await runPythonProject(root, ["verify"]);
+  const report = parse(verified);
+  const mutation = report.verification.mutation;
+  assert.equal(verified.code, 0, verified.stdout + verified.stderr);
+  assert.equal(report.status, "approved");
+  assert.equal(mutation.status, "approved");
+  assert.equal(mutation.score.threshold, 90);
+  assert.equal(mutation.score.denominator, 2);
+  assert.equal(mutation.score.detected, 2);
+  assert.equal(mutation.score.percentage, 100);
+  assert.equal(mutation.score.equivalent, 1);
+  assert.equal(mutation.summary.pending, 0);
+  assert.equal(mutation.summary.inconclusive, 0);
+  assert.equal(mutation.inventory.generated, 5);
+  assert.equal(mutation.inventory.required, 2);
+  assert.equal(mutation.inventory.preexisting, 2);
+  assert.equal(mutation.inventory.equivalent, 1);
+  assert.equal(mutation.selection.required.length, 2);
+  assert.equal(mutation.selection.equivalent.length, 1);
+  assert.match(mutation.selection.equivalent[0].evidence.reason, /AST de Python/u);
+  assert.match(mutation.selection.equivalent[0].evidence.staticProof, /sha256\(ast\(original\)\)/u);
+  assert.equal(mutation.details.length, 2);
+  assert.match(report.receipt, /^QUALITY_OK/u);
 });
 
 test("mutation aggregation preserves an exhausted budget as inconclusive", () => {
