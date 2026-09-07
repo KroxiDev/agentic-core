@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { compareCrap, verificationConsistency, verificationExit } from "../src/quality/python-verification.js";
+import { aggregateMutation, compareCrap, verificationConsistency, verificationExit } from "../src/quality/python-verification.js";
 import { configurePythonProject, pythonProject, runPythonProject } from "./support/python-project.mjs";
 
 const parse = (result) => JSON.parse(result.stdout);
@@ -260,16 +260,70 @@ test("configuration changes and foreign verification evidence cannot produce a c
   assert.doesNotMatch(conflict.stdout, /QUALITY_OK/u);
 });
 
-test("Full remains unverified until mutation evidence is integrated", async (t) => {
+test("Full reports an explicit empty incremental mutation denominator", async (t) => {
   const { root } = await pythonProject(t);
   const prepared = await runPythonProject(root, prepare("full"));
   assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
   const verified = await runPythonProject(root, ["verify"]);
   const report = parse(verified);
-  assert.equal(verified.code, 2, verified.stdout + verified.stderr);
+  assert.equal(verified.code, 0, verified.stdout + verified.stderr);
+  assert.equal(report.status, "approved");
+  assert.equal(report.verification.mutation.status, "NO_APLICA");
+  assert.equal(report.verification.mutation.code, "no_incremental_mutants");
+  assert.equal(report.verification.mutation.score.percentage, null);
+  assert.equal(report.verification.mutation.inventory.required, 0);
+  assert.match(report.receipt, /^QUALITY_OK/u);
+});
+
+test("Full executes every changed-line mutant and applies a configured score", async (t) => {
+  const { root } = await pythonProject(t);
+  await configurePythonProject(root, (config) => { config.limits.mutationScore = 50; });
+  const prepared = await runPythonProject(root, prepare("full"));
+  assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
+  const subject = path.join(root, "work dir/src/subject.py");
+  const source = await readFile(subject, "utf8");
+  await writeFile(subject, source.replace("value > 0", "value >= 0"));
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  await writeFile(checks, (await readFile(checks, "utf8")).replace(
+    "classify(0) == 'other'",
+    "classify(0) == 'positive'\n    assert classify(-1) == 'other'",
+  ));
+
+  const verified = await runPythonProject(root, ["verify"]);
+  const report = parse(verified);
+  assert.equal(verified.code, 0, verified.stdout + verified.stderr);
+  assert.equal(report.status, "approved");
+  assert.equal(report.verification.mutation.status, "approved");
+  assert.equal(report.verification.mutation.score.threshold, 50);
+  assert.ok(report.verification.mutation.score.denominator > 0);
+  assert.equal(report.verification.mutation.score.detected, report.verification.mutation.score.denominator);
+  assert.equal(report.verification.mutation.summary.pending, 0);
+  assert.equal(report.verification.mutation.selection.changedFiles.length, 1);
+  assert.equal(report.verification.mutation.selection.required.length,
+    report.verification.mutation.details.length);
+});
+
+test("mutation score never approves an inconclusive required mutant", () => {
+  const report = aggregateMutation({
+    command: "mutation",
+    code: "mutation_execution_complete",
+    complete: true,
+    integrity: { status: "preserved" },
+    selection: {
+      counts: { generated: 3 },
+      required: [{ id: "killed-1" }, { id: "killed-2" }, { id: "timeout-1" }],
+      preexisting: [],
+      equivalent: [],
+    },
+    details: [
+      { id: "killed-1", status: "killed" },
+      { id: "killed-2", status: "killed" },
+      { id: "timeout-1", status: "timeout" },
+    ],
+    summary: { killed: 2, timeout: 1 },
+  }, 50);
+  assert.equal(report.score.percentage, 66.67);
   assert.equal(report.status, "NO_VERIFICADO");
-  assert.equal(report.code, "mutation_not_integrated");
-  assert.equal(report.verification.mutation.status, "NO_VERIFICADO");
-  assert.equal(report.verification.mutation.executed, false);
-  assert.doesNotMatch(report.receipt, /^QUALITY_OK/u);
+  assert.equal(report.code, "mutation_inconclusive");
+  assert.equal(report.score.inconclusive, 1);
 });

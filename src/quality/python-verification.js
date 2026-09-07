@@ -339,11 +339,129 @@ function aggregateCode(status, { baseline, evidence, tests, dry, crap, mutation 
   return "quality_approved";
 }
 
-function aggregateMessage(status, code) {
-  if (status === "approved") return "Suite, DRY y C.R.A.P. cumplen los controles de la tarea";
+function aggregateMessage(status, code, mode, mutation) {
+  if (status === "approved") {
+    return mode === "full"
+      ? mutation?.status === "NO_APLICA"
+        ? "Suite, DRY y C.R.A.P. cumplen; no hay mutantes incrementales exigibles"
+        : "Suite, DRY, C.R.A.P. y Mutation Testing cumplen los controles de la tarea"
+      : "Suite, DRY y C.R.A.P. cumplen los controles de la tarea";
+  }
   if (status === "NO_APLICA") return "La tarea no contiene código Python ejecutable en el alcance";
   if (status === "rejected") return `La verificación rechazó la tarea por ${code}`;
   return `La verificación no tiene evidencia completa por ${code}`;
+}
+
+export function aggregateMutation(report, threshold) {
+  const selection = report?.selection;
+  const required = Array.isArray(selection?.required) ? selection.required : [];
+  const preexisting = Array.isArray(selection?.preexisting) ? selection.preexisting : [];
+  const equivalent = Array.isArray(selection?.equivalent) ? selection.equivalent : [];
+  const details = Array.isArray(report?.details) ? report.details : [];
+  const requiredIds = new Set(required.map((mutant) => mutant.id));
+  const requiredDetails = details.filter((detail) => requiredIds.has(detail.id));
+  const detailIds = new Set(requiredDetails.map((detail) => detail.id));
+  const missing = required.filter((mutant) => !detailIds.has(mutant.id));
+  const count = (status) => requiredDetails.filter((detail) => detail.status === status).length;
+  const killed = count("killed");
+  const survived = count("survived");
+  const uncovered = count("uncovered");
+  const timeout = count("timeout");
+  const errors = count("error");
+  const interrupted = count("interrupted");
+  const invalid = requiredDetails.filter((detail) => !["killed", "survived", "uncovered", "timeout", "error", "interrupted"].includes(detail.status)).length;
+  const pending = Math.max(Number.isInteger(report?.pending) ? report.pending : 0, missing.length);
+  const inconclusive = timeout + errors + interrupted + invalid + pending;
+  const denominator = required.length;
+  const percentage = denominator === 0 ? null : Number(((killed / denominator) * 100).toFixed(2));
+  const score = {
+    detected: killed,
+    denominator,
+    percentage,
+    threshold,
+    survived,
+    uncovered,
+    inconclusive,
+    equivalent: equivalent.length,
+  };
+  const inventory = {
+    generated: selection?.counts?.generated ?? report?.generated ?? 0,
+    required: denominator,
+    preexisting: preexisting.length,
+    equivalent: equivalent.length,
+  };
+  const summary = {
+    ...(report?.summary ?? {}),
+    killed,
+    survived,
+    uncovered,
+    timeout,
+    error: errors,
+    interrupted,
+    invalid,
+    pending,
+    inconclusive,
+    denominator,
+    preexisting: preexisting.length,
+    equivalent: equivalent.length,
+  };
+  const executable = Boolean(selection);
+  const complete = report?.complete === true && report?.integrity?.status === "preserved"
+    && missing.length === 0 && inconclusive === 0;
+  const base = {
+    ...report,
+    command: "mutation",
+    required: true,
+    executed: Boolean(report?.generated !== undefined || details.length > 0),
+    selection,
+    score,
+    mutationScore: percentage,
+    inventory,
+    summary,
+  };
+  if (!executable) {
+    return {
+      ...base,
+      status: noVerification,
+      code: report?.code ?? "mutation_selection_missing",
+      message: report?.message ?? "Full no pudo obtener un inventario incremental verificable de mutantes",
+      exitCode: report?.exitCode ?? 2,
+    };
+  }
+  if (!complete) {
+    return {
+      ...base,
+      status: noVerification,
+      code: report?.code === "mutation_execution_complete" ? "mutation_inconclusive" : report?.code ?? "mutation_inconclusive",
+      message: "La evidencia de mutación contiene mutantes requeridos inconclusos o incompletos",
+      exitCode: report?.exitCode ?? 2,
+    };
+  }
+  if (denominator === 0) {
+    return {
+      ...base,
+      status: "NO_APLICA",
+      code: "no_incremental_mutants",
+      message: "El inventario incremental no contiene mutantes exigibles; no se asigna un score automático de 100",
+      exitCode: 0,
+    };
+  }
+  if (percentage >= threshold) {
+    return {
+      ...base,
+      status: "approved",
+      code: "mutation_score_approved",
+      message: `Mutation score ${percentage}% cumple el mínimo configurado de ${threshold}%`,
+      exitCode: 0,
+    };
+  }
+  return {
+    ...base,
+    status: "rejected",
+    code: "mutation_score_below_limit",
+    message: `Mutation score ${percentage}% no alcanza el mínimo configurado de ${threshold}%`,
+    exitCode: 1,
+  };
 }
 
 function mutationFor(mode) {
@@ -351,8 +469,8 @@ function mutationFor(mode) {
     return {
       command: "mutation",
       status: noVerification,
-      code: "mutation_not_integrated",
-      message: "Full requiere Mutation Testing; esta integración se completa en la tarea de mutación",
+      code: "mutation_selection_incomplete",
+      message: "Full requiere un inventario y un score de mutación incrementales verificables",
       required: true,
       executed: false,
     };
@@ -565,8 +683,27 @@ export async function verifyPythonTask(root, task, { previous } = {}) {
       dry: baselineQualityValue?.dry?.identity ?? null,
     },
   };
-  const mutation = mutationFor(task.mode);
-  reuse.mutation = { reused: false, reason: mutation.required ? "control_pending" : "not_required" };
+  let mutation;
+  if (task.mode !== "full") {
+    mutation = mutationFor(task.mode);
+  } else if (tests.status === "approved" && dry.status !== noVerification
+    && crap.status !== noVerification && evidence.status === "approved") {
+    try {
+      const { runPythonMutation } = await import("./python-mutation.js");
+      const rawMutation = await runPythonMutation(root, { incremental: true });
+      mutation = aggregateMutation(rawMutation, config.limits.mutationScore);
+    } catch (error) {
+      mutation = { ...controlFailure("mutation", error), required: true, executed: true };
+    }
+  } else {
+    mutation = {
+      ...mutationFor("full"),
+      code: "mutation_prerequisites_failed",
+      message: "Full no puede ejecutar Mutation Testing porque falta evidencia previa aprobada",
+    };
+  }
+  reuse.mutation = { reused: mutation.reused === true,
+    reason: mutation.reused ? "evidence_current" : mutation.required ? "control_pending" : "not_required" };
   const controls = {
     baseline: controlStatus(baseline),
     evidence: controlStatus(evidence),
@@ -596,7 +733,7 @@ export async function verifyPythonTask(root, task, { previous } = {}) {
     scopes: task.scope,
     status,
     code,
-    message: aggregateMessage(status, code),
+    message: aggregateMessage(status, code, task.mode, mutation),
     baseline,
     freshness: taskFreshness,
     changes: changes.sort((left, right) => compareCodeUnits(left.path, right.path)
@@ -615,6 +752,11 @@ export async function verifyPythonTask(root, task, { previous } = {}) {
         python: tests.python ?? null,
         dry: dry.engine ?? null,
         crap: crap.engine ?? null,
+      },
+      mutation: {
+        identity: mutation.evidenceIdentity ?? null,
+        selection: mutation.selection?.version ?? null,
+        threshold: mutation.score?.threshold ?? config.limits.mutationScore,
       },
     },
     controls,

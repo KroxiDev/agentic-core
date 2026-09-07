@@ -16,6 +16,141 @@ const reference = ".agentic-core/quality/mutation.json";
 const hash = (value) => inputHash(JSON.stringify(value));
 const fail = (code, message) => new IntegrationError(code, message);
 const terminal = new Set(["budget_exhausted", "budget_interrupted", "termination_failed", "command_interrupted", "pytest_interrupted"]);
+const selectionVersion = "baseline-delta-v1";
+
+function lines(value) {
+  return value.toString("utf8").split(/\r?\n/u);
+}
+
+// Myers' diff gives a stable line delta without depending on Git or on the
+// user's repository state. Only current lines introduced or changed by the
+// task are candidates for incremental mutation.
+function changedLines(before, after) {
+  const left = lines(before);
+  const right = lines(after);
+  const maximum = left.length + right.length;
+  const trace = [];
+  let vector = new Map([[1, 0]]);
+  let distance = 0;
+  for (; distance <= maximum; distance += 1) {
+    trace.push(new Map(vector));
+    for (let diagonal = -distance; diagonal <= distance; diagonal += 2) {
+      const down = diagonal === -distance
+        || diagonal !== distance && (vector.get(diagonal - 1) ?? -Infinity) < (vector.get(diagonal + 1) ?? -Infinity);
+      let x = down ? (vector.get(diagonal + 1) ?? 0) : (vector.get(diagonal - 1) ?? 0) + 1;
+      let y = x - diagonal;
+      while (x < left.length && y < right.length && left[x] === right[y]) {
+        x += 1;
+        y += 1;
+      }
+      vector.set(diagonal, x);
+      if (x >= left.length && y >= right.length) break;
+    }
+    if ((vector.get(left.length - right.length) ?? -1) >= left.length) break;
+  }
+
+  const changed = new Set();
+  let x = left.length;
+  let y = right.length;
+  for (let currentDistance = distance; currentDistance > 0; currentDistance -= 1) {
+    const previous = trace[currentDistance];
+    const diagonal = x - y;
+    const down = diagonal === -currentDistance
+      || diagonal !== currentDistance
+        && (previous.get(diagonal - 1) ?? -Infinity) < (previous.get(diagonal + 1) ?? -Infinity);
+    const previousDiagonal = down ? diagonal + 1 : diagonal - 1;
+    const previousX = previous.get(previousDiagonal) ?? 0;
+    const previousY = previousX - previousDiagonal;
+    while (x > previousX && y > previousY) {
+      x -= 1;
+      y -= 1;
+    }
+    if (x === previousX) {
+      y -= 1;
+      changed.add(y + 1);
+    } else {
+      x -= 1;
+    }
+  }
+  return changed;
+}
+
+function publicMutant(mutant, status, reason) {
+  const { content: _content, ...detail } = mutant;
+  return { ...detail, status, ...(reason ? { reason } : {}) };
+}
+
+function staticEquivalent(mutant) {
+  if (mutant.mutatedHash !== mutant.sourceHash) return null;
+  return {
+    reason: "La mutación produce exactamente los mismos bytes que el código original",
+    staticProof: `sha256(original) = sha256(mutated) = ${mutant.sourceHash}`,
+  };
+}
+
+function baselineEntries(task) {
+  const sources = task?.initial?.sources;
+  if (!Array.isArray(sources)) throw fail("mutation_baseline_invalid", "El baseline de la tarea no contiene el inventario de fuentes necesario para seleccionar mutantes");
+  return sources.filter((entry) => entry.kind === "measured_code" && entry.path.endsWith(".py")).map((entry) => {
+    const content = Buffer.from(entry.content ?? "", "base64");
+    if (inputHash(content) !== entry.sha256) {
+      throw fail("mutation_baseline_invalid", "El baseline de la tarea no coincide con el contenido de sus fuentes");
+    }
+    return { ...entry, content };
+  });
+}
+
+export function selectIncrementalMutants(task, checkpoint, mutants) {
+  const baseline = new Map(baselineEntries(task).map((entry) => [entry.path, entry]));
+  const current = new Map(checkpoint.entries
+    .filter((entry) => entry.kind === "measured_code" && entry.path.endsWith(".py"))
+    .map((entry) => [entry.path, entry]));
+  const changed = new Map();
+  const changedFiles = [...new Set([...baseline.keys(), ...current.keys()])].sort()
+    .flatMap((file) => {
+      const previous = baseline.get(file);
+      const next = current.get(file);
+      if (previous?.sha256 === next?.sha256) return [];
+      if (previous && next) changed.set(file, changedLines(previous.content, next.content));
+      return [{ path: file, change: previous ? next ? "modified" : "deleted" : "added",
+        before: previous?.sha256 ?? null, after: next?.sha256 ?? null }];
+    });
+  const required = [];
+  const preexisting = [];
+  const equivalent = [];
+  for (const mutant of mutants) {
+    const proof = staticEquivalent(mutant);
+    if (proof) {
+      equivalent.push({ ...publicMutant(mutant, "equivalent"), evidence: proof });
+      continue;
+    }
+    const previous = baseline.get(mutant.file);
+    const next = current.get(mutant.file);
+    const sourceChanged = !previous || !next || previous.sha256 !== next.sha256;
+    if (!sourceChanged) {
+      preexisting.push(publicMutant(mutant, "preexisting", "El archivo no cambió desde el baseline real de la tarea"));
+      continue;
+    }
+    const currentLineChanged = !previous || changed.get(mutant.file)?.has(mutant.line) === true;
+    if (currentLineChanged) required.push(publicMutant(mutant, "required"));
+    else preexisting.push(publicMutant(mutant, "preexisting", "The mutant is outside the changed line delta"));
+  }
+  return {
+    version: selectionVersion,
+    method: "baseline_delta",
+    scope: task.scope,
+    baseline: { taskId: task.id, inputs: task.initial.inputs.digest,
+      files: [...baseline.values()].map(({ content: _content, path, sha256 }) => ({ path, sha256 })) },
+    current: { inputs: checkpoint.digest,
+      files: [...current.values()].map(({ path, sha256 }) => ({ path, sha256 })) },
+    changedFiles,
+    required,
+    preexisting,
+    equivalent,
+    counts: { generated: mutants.length, required: required.length,
+      preexisting: preexisting.length, equivalent: equivalent.length },
+  };
+}
 
 function classify(result) {
   if (result.code === "tests_passed") return "survived";
@@ -97,7 +232,7 @@ async function resetOutputs(checkpoint, copyRoot) {
   await visit(copyRoot);
 }
 
-async function executeMutants(root, config, checkpoint, identity, report) {
+async function executeMutants(root, config, checkpoint, identity, report, selectionTask = null) {
   const unit = config.integration.python;
   const copy = await createProjectCopy(checkpoint);
   let terminationConfirmed = true;
@@ -130,8 +265,13 @@ async function executeMutants(root, config, checkpoint, identity, report) {
     report.timeout = { referenceMs, multiplier: 3, minimumMs: 1000,
       requestedMs: Math.min(config.limits.operation.commandTimeoutMs, Math.max(1000, referenceMs * 3)) };
     const mutants = await generate(root, checkpoint, copy, config.limits.operation.commandTimeoutMs);
+    const selection = selectionTask ? selectIncrementalMutants(selectionTask, checkpoint, mutants) : null;
+    const selectedIds = selection ? new Set(selection.required.map((mutant) => mutant.id)) : null;
+    const selectedMutants = selectedIds ? mutants.filter((mutant) => selectedIds.has(mutant.id)) : mutants;
+    if (selection) report.selection = selection;
     report.generated = mutants.length;
-    for (const mutant of mutants) {
+    report.selected = selectedMutants.length;
+    for (const mutant of selectedMutants) {
       const { content, ...detail } = mutant;
       const coverage = baseline.coverage.files?.[mutant.file];
       if (!coverage || !Array.isArray(coverage.executed_lines) || !Array.isArray(coverage.missing_lines)) {
@@ -183,7 +323,7 @@ async function executeMutants(root, config, checkpoint, identity, report) {
   }
 }
 
-export async function runPythonMutation(root) {
+export async function runPythonMutation(root, { incremental = false } = {}) {
   try {
     return await withCurrentTaskBudget(root, async () => {
       const stored = await storedReport(root);
@@ -195,24 +335,30 @@ export async function runPythonMutation(root) {
       const identity = await projectTestIdentity(root, config);
       identity.protectedPaths.push(path.join(root, ".agentic-core/tools"));
       identity.dependencies = await dependencyFingerprint(identity.protectedPaths);
-      const evidenceIdentity = hash({ task, inputs: publicCheckpoint(checkpoint), execution: identity.identity, dependencies: identity.dependencies });
+      const selectionTask = incremental && task ? task : null;
+      const evidenceIdentity = hash({ task, inputs: publicCheckpoint(checkpoint), execution: identity.identity,
+        dependencies: identity.dependencies, mutation: { selection: selectionTask ? selectionVersion : "complete",
+          threshold: config.limits.mutationScore, configuration: hash(config) } });
       if (task && stored.result?.evidenceIdentity === evidenceIdentity && stored.result.complete
         && stored.result.integrity?.status === "preserved"
+        && (!selectionTask || stored.result.selection?.version === selectionVersion)
         && stored.result.details.every((item) => ["killed", "survived", "uncovered"].includes(item.status))) {
         return { ...stored.result, reused: true, budget: budgetSummary() };
       }
       const report = { command: "mutation", schemaVersion: 1, reference, status: "NO_VERIFICADO", exitCode: 2,
-        code: "mutation_execution_incomplete", message: "Ejecución individual de mutantes; la selección y aprobación Full requieren #50",
+        code: "mutation_execution_incomplete", message: selectionTask
+          ? "Ejecución incremental de mutantes para el veredicto Full"
+          : "Ejecución individual de mutantes; el comando no emite un score de aprobación",
         engine: { name: "mutate4py", version: PYTHON_TOOLS.mutate4py }, taskId: task?.id ?? null, evidenceIdentity,
         inputs: publicCheckpoint(checkpoint), complete: false, details: [], reused: false };
-      try { await executeMutants(root, config, checkpoint, identity, report); }
+      try { await executeMutants(root, config, checkpoint, identity, report, selectionTask); }
       catch (error) {
         report.code = error.code ?? "mutation_internal_error";
         report.exitCode = error.exitCode ?? 5;
         report.message = error instanceof IntegrationError ? error.message : "La mutación no pudo completarse; consulte la integridad y los resultados parciales";
       }
       report.summary = Object.fromEntries(["killed", "survived", "uncovered", "timeout", "error", "interrupted"].map((status) => [status, report.details.filter((item) => item.status === status).length]));
-      report.pending = Math.max(0, (report.generated ?? 0) - report.details.length);
+      report.pending = Math.max(0, (report.selected ?? report.generated ?? 0) - report.details.length);
       report.budget = budgetSummary();
       if ((await readActiveTask(root))?.sha256 !== active?.sha256) throw fail("task_metadata_conflict", "La tarea cambió durante la mutación; se conserva el informe previo");
       await writeTransaction(root, [{ path: path.join(root, reference), expectedContent: stored.content,

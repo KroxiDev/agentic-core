@@ -3,6 +3,8 @@ import { chmod, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { hashDirectory } from "../src/transaction.js";
+import { inputHash } from "../src/quality/project-inputs.js";
+import { selectIncrementalMutants } from "../src/quality/python-mutation.js";
 import { configurePythonProject, pythonProject, runPythonProject } from "./support/python-project.mjs";
 
 const parse = (result) => JSON.parse(result.stdout);
@@ -47,6 +49,29 @@ def test_contract():
   return project;
 }
 
+test("incremental mutation selection records required, preexisting and equivalent evidence", () => {
+  const before = Buffer.from("def classify(value):\n    return value > 0\n");
+  const after = Buffer.from("def classify(value):\n    return value >= 0\n");
+  const beforeHash = inputHash(before);
+  const afterHash = inputHash(after);
+  const task = { id: "selection-task", scope: ["src"], initial: {
+    inputs: { digest: "baseline-inputs" },
+    sources: [{ path: "src/subject.py", kind: "measured_code", sha256: beforeHash, content: before.toString("base64") }],
+  } };
+  const checkpoint = { digest: "current-inputs", entries: [
+    { path: "src/subject.py", kind: "measured_code", sha256: afterHash, content: after },
+  ] };
+  const selection = selectIncrementalMutants(task, checkpoint, [
+    { id: "required", file: "src/subject.py", line: 2, sourceHash: afterHash, mutatedHash: "mutated" },
+    { id: "preexisting", file: "src/subject.py", line: 1, sourceHash: afterHash, mutatedHash: "mutated" },
+    { id: "equivalent", file: "src/subject.py", line: 2, sourceHash: afterHash, mutatedHash: afterHash },
+  ]);
+  assert.deepEqual(selection.required.map(({ id }) => id), ["required"]);
+  assert.deepEqual(selection.preexisting.map(({ id }) => id), ["preexisting"]);
+  assert.equal(selection.equivalent[0].id, "equivalent");
+  assert.match(selection.equivalent[0].evidence.staticProof, /sha256\(original\)/u);
+});
+
 test("installed mutate4py executes the authoritative corpus and distinguishes five states", async (t) => {
   const { root } = await corpus(t);
   const before = await hashDirectory(path.join(root, "work dir"));
@@ -81,8 +106,9 @@ test("installed mutation reuses only current task evidence and cleans it on repl
   assert.equal(changed.reused, false);
   assert.ok(changed.budget.consumedMs > first.budget.consumedMs);
   const full = parse(await runPythonProject(root, ["verify"]));
-  assert.equal(full.status, "NO_VERIFICADO");
-  assert.doesNotMatch(full.receipt, /^QUALITY_OK/u);
+  assert.equal(full.status, "approved");
+  assert.equal(full.verification.mutation.status, "NO_APLICA");
+  assert.match(full.receipt, /^QUALITY_OK/u);
   await runPythonProject(root, ["prepare", "--task", "next", "--mode", "normal", "--objective", "next"]);
   await assert.rejects(readFile(path.join(root, first.reference)), { code: "ENOENT" });
 });
