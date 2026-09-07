@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { initialize } from "../src/init.js";
+import { hashDirectory } from "../src/transaction.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -158,6 +160,88 @@ test("both CLI entry points work from an installed package", async (t) => {
     encoding: "utf8",
   });
   assert.match(doctor.stdout, /DIAGNÓSTICO/);
+});
+
+test("installed package maintains schema 3 and legacy projects transactionally", async (t) => {
+  const packDirectory = await temporaryDirectory(t, "agentic-core-maintenance-pack-");
+  const packageConsumer = await temporaryDirectory(t, "agentic core package host ");
+  const cache = await temporaryDirectory(t, "agentic-core-maintenance-cache-");
+  const { stdout } = await runNpm(
+    ["pack", "--ignore-scripts", "--json", "--pack-destination", packDirectory],
+    { cache, cwd: repositoryRoot, encoding: "utf8" },
+  );
+  const [pack] = JSON.parse(stdout);
+  await runNpm(
+    ["install", path.join(packDirectory, pack.filename), "--prefix", packageConsumer, "--no-audit", "--no-fund"],
+    { cache, cwd: packageConsumer, encoding: "utf8" },
+  );
+  const binary = path.join(packageConsumer, "node_modules", "@kroxidev", "agentic-core", "bin", "agentic-core.js");
+  const environment = { ...process.env, AGENTIC_CORE_OUTPUT: "json", NODE_ENV: "test" };
+  const runMaintenance = async (root, args, env = environment) => {
+    try {
+      return { ...await execFileAsync(process.execPath, [binary, ...args], {
+        cwd: root,
+        encoding: "utf8",
+        env,
+      }), code: 0 };
+    } catch (error) {
+      if (typeof error.code !== "number") throw error;
+      return { stdout: error.stdout, stderr: error.stderr, code: error.code };
+    }
+  };
+  const assertConsumerRuns = async (root, python) => {
+    const execution = await execFileAsync(python, ["consumer.py"], { cwd: root, encoding: "utf8" });
+    assert.equal(execution.stdout.trim(), "consumer-ok");
+  };
+
+  const currentConsumer = await temporaryDirectory(t, "agentic core current package consumer ");
+  await writeFile(path.join(currentConsumer, "consumer.py"), "print('consumer-ok')\n");
+  const initialized = await runMaintenance(currentConsumer, [
+    "init", currentConsumer, "--provider", "codex", "--language", "python",
+  ]);
+  assert.equal(initialized.code, 0, initialized.stderr);
+  const python = JSON.parse(initialized.stdout).python.executable;
+  await assertConsumerRuns(currentConsumer, python);
+
+  const rulesPath = path.join(currentConsumer, ".agentic-core", "golden-rules.md");
+  await writeFile(rulesPath, "outdated owned rules\n");
+  const beforeFailedUpdate = await hashDirectory(currentConsumer);
+  const failedUpdate = await runMaintenance(currentConsumer, ["update", currentConsumer, "--force"], {
+    ...environment,
+    AGENTIC_CORE_TEST_FAIL_AFTER_WRITE: "1",
+  });
+  assert.equal(failedUpdate.code, 5, failedUpdate.stderr);
+  assert.equal(await hashDirectory(currentConsumer), beforeFailedUpdate);
+  const updatePreview = await runMaintenance(currentConsumer, ["update", currentConsumer, "--force", "--dry-run"]);
+  assert.equal(updatePreview.code, 0, updatePreview.stderr);
+  assert.equal(JSON.parse(updatePreview.stdout).status, "ready");
+  const updated = await runMaintenance(currentConsumer, ["update", currentConsumer, "--force"]);
+  assert.equal(updated.code, 0, updated.stderr);
+  const repeated = await runMaintenance(currentConsumer, ["update", currentConsumer, "--dry-run"]);
+  assert.equal(repeated.code, 0, repeated.stderr);
+  assert.equal(JSON.parse(repeated.stdout).plan.actions.length, 0);
+
+  const legacyConsumer = await temporaryDirectory(t, "agentic core legacy package consumer ");
+  await writeFile(path.join(legacyConsumer, "consumer.py"), "print('consumer-ok')\n");
+  await initialize(legacyConsumer);
+  await writeFile(path.join(legacyConsumer, "AGENTS.md"), "# Consumer instructions\n");
+  const migrationPreview = await runMaintenance(legacyConsumer, ["update", legacyConsumer, "--dry-run"]);
+  assert.equal(migrationPreview.code, 0, migrationPreview.stderr);
+  assert.equal(JSON.parse(migrationPreview.stdout).plan.options.migration, true);
+  const migrated = await runMaintenance(legacyConsumer, ["update", legacyConsumer]);
+  assert.equal(migrated.code, 0, migrated.stderr);
+  assert.match(await readFile(path.join(legacyConsumer, "AGENTS.md"), "utf8"), /AGENTIC_CORE_START/u);
+  await assertConsumerRuns(legacyConsumer, python);
+
+  await mkdir(path.join(currentConsumer, ".agentic-core", "quality"), { recursive: true });
+  const foreign = path.join(currentConsumer, ".agentic-core", "quality", "foreign.txt");
+  await writeFile(foreign, "preserve me\n");
+  const uninstallPreview = await runMaintenance(currentConsumer, ["uninstall", currentConsumer, "--dry-run"]);
+  assert.equal(uninstallPreview.code, 0, uninstallPreview.stderr);
+  const uninstalled = await runMaintenance(currentConsumer, ["uninstall", currentConsumer]);
+  assert.equal(uninstalled.code, 0, uninstalled.stderr);
+  assert.equal(await readFile(foreign, "utf8"), "preserve me\n");
+  await assertConsumerRuns(currentConsumer, python);
 });
 
 test("a one-shot npm exec candidate previews cleanly and leaves both persisted runtime seams usable", async (t) => {

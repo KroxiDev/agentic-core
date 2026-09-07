@@ -922,14 +922,23 @@ async function migrateLegacyInstallation(loaded, options = {}) {
     }
     if (state.kind !== "file") {
       preserved.push(`legacy managed block: ${block.path}`);
+      if (block.path === "AGENTS.md") blockers.push(unsafeResource(block.path));
       continue;
     }
     const found = managedState(state.content, block.startMarker, block.endMarker);
-    if (found.kind !== "block") {
+    if (found.kind === "ambiguous") {
       preserved.push(`legacy managed block: ${block.path}`);
+      if (block.path === "AGENTS.md") blockers.push({
+        code: "ambiguous_managed_block",
+        message: `El bloque gestionado de ${block.path} es ambiguo y se conserva`,
+      });
       continue;
     }
     if (block.path === "AGENTS.md") {
+      if (found.kind === "missing") {
+        addFileOperation(operations, actions, project, block.path, state, appendManaged(state.content), "append_managed_block");
+        continue;
+      }
       const replacement = replaceManaged(state.content, block.startMarker, block.endMarker);
       if (replacement && !state.content.equals(replacement)) {
         if (hash(found.content) === block.sha256 || options.force) {
@@ -939,7 +948,7 @@ async function migrateLegacyInstallation(loaded, options = {}) {
           blockers.push(forceRequired(`${block.path}#agentic-core`));
         }
       }
-    } else if (hash(found.content) === block.sha256) {
+    } else if (found.kind === "block" && hash(found.content) === block.sha256) {
       const replacement = removeManaged(state.content, block.startMarker, block.endMarker);
       if (replacement !== undefined) {
         operations.push({ path: target, content: replacement, expectedContent: state.content });

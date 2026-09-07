@@ -185,7 +185,9 @@ async function missingParentDirectories(projectRoot, operations) {
 }
 
 export async function writeTransaction(projectDirectory, operations, {
+  beforeDirectoryPublish,
   failAfterWrite,
+  renameDirectory = rename,
   temporaryRoot = tmpdir(),
 } = {}) {
   const projectRoot = path.resolve(projectDirectory);
@@ -299,10 +301,21 @@ export async function writeTransaction(projectDirectory, operations, {
         if (await hashDirectory(temporaryPath) !== operation.sourceSha256) {
           throw new Error(`Runtime source changed while it was copied: ${operation.sourcePath ?? operation.path}`);
         }
+        if (beforeDirectoryPublish) await beforeDirectoryPublish(operation.path, temporaryPath);
+        if (guarded) {
+          await assertExpectedState(operation, await inspect(operation.path));
+          applied.set(operation.path, {
+            operation,
+            ...(operation.expectedTreeSha256 !== undefined
+              ? { expectedTreeSha256: operation.expectedTreeSha256 }
+              : {}),
+          });
+        }
         if (["directory", "file"].includes(snapshots.get(operation.path).kind)) {
           await rm(operation.path, { recursive: true, force: true });
+          if (guarded) applied.set(operation.path, { operation, expectedTreeSha256: null });
         }
-        await rename(temporaryPath, operation.path);
+        await renameDirectory(temporaryPath, operation.path);
         temporaryPaths.delete(temporaryPath);
         if (guarded) {
           applied.set(operation.path, { operation, expectedTreeSha256: operation.sourceSha256 });
@@ -349,7 +362,7 @@ export async function writeTransaction(projectDirectory, operations, {
       const snapshot = snapshots.get(operation.path);
       try {
         if (expectedContent !== undefined || expectedTreeSha256 !== undefined) {
-          await assertExpectedState({ expectedContent, expectedTreeSha256 }, await inspect(operation.path));
+          await assertExpectedState({ path: operation.path, expectedContent, expectedTreeSha256 }, await inspect(operation.path));
         }
         await rm(operation.path, { recursive: true, force: true });
         if (snapshot.kind === "file") {
