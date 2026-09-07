@@ -214,23 +214,32 @@ test("schema 2 migration restores a missing managed AGENTS block without changin
   assert.equal(JSON.parse(doctor.stdout).status, "healthy");
 });
 
-test("schema 2 migration blocks ambiguous AGENTS markers before publishing schema 3 ownership", async (t) => {
-  const root = await createTestProject(t);
-  await initialize(root);
-  const productRoot = path.join(root, ".agentic-core");
-  const agentsPath = path.join(root, "AGENTS.md");
-  const ambiguous = "# Consumer instructions\n<!-- AGENTIC_CORE_START -->\nunterminated\n";
-  await writeFile(agentsPath, ambiguous);
-  const previousManifest = await readFile(path.join(productRoot, "ownership.json"));
+for (const [scenario, ambiguous] of [
+  ["unterminated", "# Consumer instructions\n<!-- AGENTIC_CORE_START -->\nunterminated\n"],
+  ["orphan end", "<!-- AGENTIC_CORE_END -->\n"],
+  ["end before block", "<!-- AGENTIC_CORE_END -->\n<!-- AGENTIC_CORE_START -->\nmanaged\n<!-- AGENTIC_CORE_END -->\n"],
+]) {
+  test(`schema 2 migration blocks ${scenario} AGENTS markers before publishing schema 3 ownership`, async (t) => {
+    const root = await createTestProject(t);
+    await initialize(root);
+    const productRoot = path.join(root, ".agentic-core");
+    const agentsPath = path.join(root, "AGENTS.md");
+    await writeFile(agentsPath, ambiguous);
+    const before = await hashDirectory(root);
+    const previousManifest = await readFile(path.join(productRoot, "ownership.json"));
 
-  const preview = await run(root, ["update", root, "--dry-run"]);
-  assert.equal(preview.code, 4, preview.stderr);
-  const result = JSON.parse(preview.stdout);
-  assert.equal(result.status, "blocked");
-  assert.equal(result.plan.error.code, "ambiguous_managed_block");
-  assert.equal(await readFile(agentsPath, "utf8"), ambiguous);
-  assert.deepEqual(await readFile(path.join(productRoot, "ownership.json")), previousManifest);
-});
+    const preview = await run(root, ["update", root, "--dry-run"]);
+    assert.equal(preview.code, 4, preview.stderr);
+    const result = JSON.parse(preview.stdout);
+    assert.equal(result.status, "blocked");
+    assert.equal(result.plan.error.code, "ambiguous_managed_block");
+    const applied = await run(root, ["update", root, "--force"]);
+    assert.notEqual(applied.code, 0, applied.stdout + applied.stderr);
+    assert.equal(await hashDirectory(root), before);
+    assert.equal(await readFile(agentsPath, "utf8"), ambiguous);
+    assert.deepEqual(await readFile(path.join(productRoot, "ownership.json")), previousManifest);
+  });
+}
 
 for (const collision of [false, true]) {
   test(`pre-Light schema 3 update ${collision ? "preserves unowned profiles" : "installs Light without force"}`, async (t) => {

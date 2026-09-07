@@ -158,7 +158,7 @@ npx.cmd --yes github:KroxiDev/agentic-core update .
 | `--dry-run` | — | No | No |
 | `--force` | — | No | No |
 
-En el esquema 3, `update` actualiza transaccionalmente los recursos Codex de Light, el bloque gestionado, el runtime y las herramientas privadas cuando su ownership es demostrable, y migra esquemas 1 y 2. `--dry-run` muestra el plan sin escribir; `--force` autoriza reemplazar recursos propios divergentes. La configuraci?n v?lida conserva sus valores y se normaliza al esquema cerrado 3.
+En el esquema 3, `update` actualiza transaccionalmente los recursos Codex de Light, el bloque gestionado, el runtime y las herramientas privadas cuando su ownership es demostrable, y migra esquemas 1 y 2. `--dry-run` muestra el plan sin escribir; `--force` autoriza reemplazar recursos propios divergentes. La configuración válida conserva sus valores y se normaliza al esquema cerrado 3.
 
 `update` comprueba ownership e integridad antes de reemplazar recursos de forma transaccional. `--force` solo autoriza reemplazar recursos propios divergentes; no autoriza cambios ajenos. Al migrar una instalación anterior, elimina el runtime de protocolo que todavía sea reconociblemente propio, instala la política semántica y conserva `.agentic-core/runs` como estado legacy sin interpretarlo ni reclamarlo como estado vigente.
 

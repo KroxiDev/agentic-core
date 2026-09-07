@@ -449,9 +449,9 @@ function managedState(existing, startMarker = START, endMarker = END) {
   const start = Buffer.from(startMarker);
   const end = Buffer.from(endMarker);
   const startIndex = existing.indexOf(start);
-  const endIndex = existing.indexOf(end, startIndex + start.length);
+  const endIndex = existing.indexOf(end);
   if (startIndex < 0 && endIndex < 0) return { kind: "missing" };
-  const unambiguous = startIndex >= 0 && endIndex >= 0
+  const unambiguous = startIndex >= 0 && endIndex >= startIndex + start.length
     && existing.lastIndexOf(start) === startIndex && existing.lastIndexOf(end) === endIndex;
   if (!unambiguous) return { kind: "ambiguous" };
   return { kind: "block", content: existing.subarray(startIndex, endIndex + end.length) };
