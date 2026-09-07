@@ -16,6 +16,7 @@ const schema = "https://kroxidev.dev/agentic-core/python-quality-verification.sc
 const hash = (value) => inputHash(JSON.stringify(value));
 const noVerification = "NO_VERIFICADO";
 const acceptedStatuses = new Set(["approved", "rejected", "NO_VERIFICADO", "NO_APLICA"]);
+const reusableStatuses = new Set(["approved", "rejected", "NO_APLICA"]);
 
 function isFiniteValue(value) {
   return typeof value === "number" && Number.isFinite(value);
@@ -75,16 +76,11 @@ async function inspectExistingReport(root, taskId, expectedTask) {
   if (integrity !== hash(evidence)) {
     throw new IntegrationError("quality_report_conflict", "El veredicto existente está corrupto; se conserva sin reemplazarlo", 2);
   }
-  return report;
+  return { report, sha256: inputHash(content) };
 }
 
 export async function readVerificationReport(root, expectedTask) {
-  const report = await inspectExistingReport(root, expectedTask?.id, expectedTask);
-  if (!report) return null;
-  return {
-    report,
-    sha256: inputHash(await readFile(path.join(root, reference))),
-  };
+  return inspectExistingReport(root, expectedTask?.id, expectedTask);
 }
 
 function compactReport(report) {
@@ -462,15 +458,62 @@ export async function capturePythonQualityBaseline(root, { checkpoint, execution
   };
 }
 
-export async function verifyPythonTask(root, task) {
+async function resolutionHash(root) {
+  try {
+    const file = path.join(root, ".agentic-core/quality/dry-resolutions.json");
+    const details = await lstat(file);
+    if (!details.isFile() || details.isSymbolicLink()) return undefined;
+    return inputHash(await readFile(file));
+  } catch (error) {
+    return error?.code === "ENOENT" ? null : undefined;
+  }
+}
+
+function controlReuse(previous, name, task, checkpoint, environment, resolutions) {
+  const result = (reason) => ({ reused: reason === "evidence_current", reason });
+  const control = previous?.[name];
+  if (!control) return result("evidence_missing");
+  if (!sameTask(previous.task, task) || previous.baseline?.checkpoint !== task.initial.inputs.digest) {
+    return result("task_evidence_incompatible");
+  }
+  if (!reusableStatuses.has(control.status)) return result("control_pending");
+  const inputs = name === "dry" ? control.hashes?.inputs : control.inputs?.digest;
+  if (checkpoint.issues.length || inputs !== checkpoint.digest) return result("quality_inputs_changed");
+  const priorEnvironment = previous.environment?.verificationStart ?? previous.environment?.current;
+  const configuration = name === "dry" ? control.hashes?.configuration
+    : name === "tests" ? control.configurationHash : control.execution?.configurationHash;
+  const identity = name === "dry" ? priorEnvironment?.executionIdentity
+    : name === "tests" ? control.executionIdentity : control.execution?.executionIdentity;
+  if (!environment.executionIdentity || configuration !== environment.configurationHash
+    || identity !== environment.executionIdentity
+    || ["node", "platform", "arch", "configurationHash", "executionIdentity"]
+      .some((key) => priorEnvironment?.[key] !== environment[key])) return result("quality_conditions_changed");
+  if (name !== "tests" && (typeof environment.qualityTools !== "string"
+    || priorEnvironment?.qualityTools !== environment.qualityTools)) return result("quality_tools_changed");
+  if (name === "tests" && control.integrity?.status !== "preserved") return result("control_pending");
+  if (name === "dry" && (resolutions === undefined || control.hashes?.resolutions !== resolutions)) {
+    return result("dry_resolutions_changed");
+  }
+  return result("evidence_current");
+}
+
+export async function verifyPythonTask(root, task, { previous } = {}) {
   const config = await readConfiguration(path.join(root, ".agentic-core", "config.json"));
   const before = await captureProjectInputs(root, config.integration.python);
-  const tests = await runProjectTests(root);
+  const startEnvironment = await currentEnvironment(root, previous?.tests ?? {});
+  const reuse = {
+    tests: controlReuse(previous, "tests", task, before, startEnvironment),
+  };
+  const tests = reuse.tests.reused ? previous.tests : await runProjectTests(root);
+  reuse.dry = controlReuse(previous, "dry", task, before, startEnvironment, await resolutionHash(root));
+  reuse.crap = controlReuse(previous, "crap", task, before, startEnvironment);
+  // C.R.A.P. depends on the suite's coverage, so a new execution requires a new measurement.
+  if (reuse.crap.reused && !reuse.tests.reused) reuse.crap = { reused: false, reason: "tests_executed" };
   let dry;
   let currentCrap;
-  try { dry = await runPythonDry(root); }
+  try { dry = reuse.dry.reused ? previous.dry : await runPythonDry(root); }
   catch (error) { dry = controlFailure("dry", error); }
-  try { currentCrap = await runPythonCrap(root, { execution: tests }); }
+  try { currentCrap = reuse.crap.reused ? previous.crap : await runPythonCrap(root, { execution: tests }); }
   catch (error) { currentCrap = controlFailure("crap", error); }
   const after = await captureProjectInputs(root, config.integration.python);
   const configHash = hash(config);
@@ -486,6 +529,13 @@ export async function verifyPythonTask(root, task) {
       identities: [tests.executionIdentity, currentCrap.execution?.executionIdentity,
         currentEnvironmentValue.executionIdentity],
     });
+  }
+  if (["configurationHash", "executionIdentity", "qualityTools"]
+    .some((key) => startEnvironment[key] !== currentEnvironmentValue[key])) {
+    evidence = { status: noVerification, code: "quality_conditions_changed" };
+  }
+  if (dry.status !== noVerification && dry.hashes?.resolutions !== await resolutionHash(root)) {
+    evidence = { status: noVerification, code: "dry_resolutions_changed" };
   }
   const crapBaseline = qualityBaselineControl(task);
   const crap = crapBaseline.report
@@ -512,6 +562,7 @@ export async function verifyPythonTask(root, task) {
     },
   };
   const mutation = mutationFor(task.mode);
+  reuse.mutation = { reused: false, reason: mutation.required ? "control_pending" : "not_required" };
   const controls = {
     baseline: controlStatus(baseline),
     evidence: controlStatus(evidence),
@@ -547,6 +598,7 @@ export async function verifyPythonTask(root, task) {
       || compareCodeUnits(left.kind ?? "", right.kind ?? "")),
     environment: {
       baseline: initialEnvironment(task),
+      verificationStart: startEnvironment,
       current: currentEnvironmentValue,
       status: tests.status === noVerification ? noVerification : "measured",
     },
@@ -561,6 +613,7 @@ export async function verifyPythonTask(root, task) {
       },
     },
     controls,
+    reuse,
     tests,
     dry,
     crap,
@@ -587,5 +640,6 @@ export async function verifyPythonTask(root, task) {
     report: persisted.reference,
     sha256: persisted.sha256,
     receipt,
+    ...(["tests", "dry", "crap"].every((name) => reuse[name].reused) && !mutation.required ? { reused: true } : {}),
   };
 }

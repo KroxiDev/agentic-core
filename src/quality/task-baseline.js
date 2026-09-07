@@ -6,6 +6,7 @@ import { IntegrationError } from "./command.js";
 import { captureProjectInputs, inputHash, privateInputContent, publicCheckpoint } from "./project-inputs.js";
 import { dependencyFingerprint } from "./project-copy.js";
 import { projectTestIdentity, runProjectTests } from "./python-project.js";
+import { parseDryResolutions } from "./python-dry.js";
 import {
   capturePythonQualityBaseline,
   readVerificationReport,
@@ -22,7 +23,6 @@ const verificationReports = [
 const resolutionReference = `${qualityDirectory}/dry-resolutions.json`;
 const hash = (value) => inputHash(JSON.stringify(value));
 const modes = new Set(["light", "normal", "full"]);
-const reusableStatuses = new Set(["approved", "rejected", "NO_APLICA"]);
 
 async function evidencePath(root, create = false) {
   for (const relative of [".agentic-core", ".agentic-core/quality"]) {
@@ -55,12 +55,6 @@ async function qualityToolsIdentity(root) {
   catch { return null; }
 }
 
-function sameTask(left, right) {
-  return left?.id === right?.id && left?.mode === right?.mode
-    && left?.objective === right?.objective
-    && JSON.stringify(left?.scope) === JSON.stringify(right?.scope);
-}
-
 function ownedReport(content, kind) {
   try {
     const parsed = JSON.parse(content.toString("utf8"));
@@ -71,22 +65,9 @@ function ownedReport(content, kind) {
 }
 
 function ownedResolutions(content) {
-  if (privateInputContent(content)) return false;
   try {
-    const parsed = JSON.parse(content.toString("utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)
-      || parsed.schemaVersion !== 1 || !Array.isArray(parsed.resolutions)) return false;
-    const seen = new Set();
-    return parsed.resolutions.every((entry) => {
-      const candidate = entry?.candidate ?? entry?.candidateId;
-      const valid = entry && typeof entry === "object" && !Array.isArray(entry)
-        && typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate)
-        && !seen.has(candidate) && entry.decision === "keep"
-        && typeof entry.reason === "string" && entry.reason.trim().length >= 3
-        && entry.reason.length <= 500 && !/[\r\n]/u.test(entry.reason);
-      if (valid) seen.add(candidate);
-      return valid;
-    });
+    parseDryResolutions(content);
+    return true;
   } catch { return false; }
 }
 
@@ -101,15 +82,15 @@ async function cleanupFile(root, relative, validate = undefined) {
   if (!details.isFile() || details.isSymbolicLink()) {
     throw cleanupError(`No se puede limpiar ${relative}: no es un archivo regular seguro y se conserva`, 2);
   }
+  let content;
+  try { content = await readFile(file); }
+  catch { throw cleanupError(`No se pudo leer ${relative} para demostrar ownership; se conserva`, 2); }
   if (validate) {
-    let content;
-    try { content = await readFile(file); }
-    catch { throw cleanupError(`No se pudo leer ${relative} para demostrar ownership; se conserva`, 2); }
     if (!validate(content)) {
       throw cleanupError(`No se puede limpiar ${relative}: la evidencia no demuestra ownership y se conserva`, 2);
     }
   }
-  return file;
+  return { type: "delete", path: file, expectedContent: content };
 }
 
 async function cleanupInternalEvidence(root, expectedTask) {
@@ -122,25 +103,19 @@ async function cleanupInternalEvidence(root, expectedTask) {
   if (verification && !expectedTask) {
     throw cleanupError("No se puede limpiar el veredicto interno sin una tarea activa que demuestre ownership; se conserva", 2);
   }
-  if (verification) operations.push({ type: "delete", path: path.join(root, verificationReference) });
+  if (verification) {
+    const operation = await cleanupFile(root, verificationReference,
+      (content) => inputHash(content) === verification.sha256);
+    if (!operation) throw cleanupError("El veredicto cambió durante la planificación de limpieza; se conserva la tarea", 2);
+    operations.push(operation);
+  }
   for (const report of verificationReports) {
     const file = await cleanupFile(root, report.relative, (content) => ownedReport(content, report.kind));
-    if (file) operations.push({ type: "delete", path: file });
+    if (file) operations.push(file);
   }
   const resolutions = await cleanupFile(root, resolutionReference, ownedResolutions);
-  if (resolutions) operations.push({ type: "delete", path: resolutions });
+  if (resolutions) operations.push(resolutions);
   return operations;
-}
-
-async function resolutionHash(root) {
-  try {
-    const file = path.join(root, resolutionReference);
-    const details = await lstat(file);
-    if (!details.isFile() || details.isSymbolicLink()) return undefined;
-    return inputHash(await readFile(file));
-  } catch (error) {
-    return error?.code === "ENOENT" ? null : undefined;
-  }
 }
 
 export async function readActiveTask(root) {
@@ -226,56 +201,11 @@ export async function taskFreshness(root, task) {
     executionIdentity: identity, qualityTools };
 }
 
-function reusableVerification(report, task, freshness, resolutions) {
-  if (!reusableStatuses.has(report?.status) || typeof freshness.qualityTools !== "string" || !sameTask(report.task, task)
-    || report.freshness?.status !== "compared" || freshness.status !== "compared"
-    || report.freshness?.checkpoint?.digest !== freshness.checkpoint.digest
-    || report.freshness.inputsChanged !== freshness.inputsChanged
-    || report.freshness.conditionsChanged !== freshness.conditionsChanged
-    || report.evidence?.inputs?.current !== freshness.checkpoint.digest
-    || report.evidence?.configuration?.current !== freshness.configurationHash
-    || report.environment?.current?.configurationHash !== freshness.configurationHash
-    || report.environment?.current?.executionIdentity !== freshness.executionIdentity
-    || report.environment?.current?.qualityTools !== freshness.qualityTools
-    || report.tests?.status === "NO_VERIFICADO"
-    || report.tests?.executionIdentity !== freshness.executionIdentity
-    || report.tests?.configurationHash !== freshness.configurationHash
-    || report.dry?.hashes?.inputs !== freshness.checkpoint.digest
-    || report.dry?.hashes?.configuration !== freshness.configurationHash
-    || report.dry?.hashes?.resolutions !== resolutions
-    || report.crap?.inputs?.digest !== freshness.checkpoint.digest
-    || report.crap?.execution?.configurationHash !== freshness.configurationHash
-    || report.crap?.execution?.executionIdentity !== freshness.executionIdentity) return false;
-  return true;
-}
-
-function cachedVerification(loaded, stored, freshness) {
-  const { report, sha256 } = stored;
-  const status = report.status;
-  const receiptStatus = status === "approved" || status === "NO_APLICA" ? "QUALITY_OK" : "QUALITY_FAILED";
-  return {
-    command: "verify",
-    status,
-    code: report.code,
-    exitCode: status === "approved" || status === "NO_APLICA" ? 0 : 1,
-    message: report.message,
-    task: loaded.task,
-    freshness,
-    result: report.tests,
-    verification: report,
-    report: verificationReference,
-    sha256,
-    receipt: `${receiptStatus} task=${loaded.task.id} mode=${loaded.task.mode} tests=${report.tests.status} dry=${report.dry.status} crap=${report.crap.status} mutation=${report.mutation.status} report=${verificationReference} sha256=${sha256}`,
-    reused: true,
-  };
-}
-
 async function prepare(root, args) {
   const requested = options(args);
   const loaded = await readActiveTask(root);
-  if (loaded) {
-    const continues = (!requested.id || requested.id === loaded.task.id)
-      && (!requested.mode || requested.mode === loaded.task.mode)
+  if (loaded && (!requested.id || requested.id === loaded.task.id)) {
+    const continues = (!requested.mode || requested.mode === loaded.task.mode)
       && (!requested.objective || requested.objective === loaded.task.objective)
       && (!requested.repairTests.length || hash(requested.repairTests) === hash(loaded.task.repairTests));
     if (continues) {
@@ -283,6 +213,8 @@ async function prepare(root, args) {
         code: "baseline_preserved", message: "Se conserva el inicio de la tarea; consulte baseline para comparar los inputs actuales",
         exitCode: loaded.task.initial.valid ? 0 : 2, reused: true, task: taskSummary(loaded) };
     }
+    throw new IntegrationError("task_metadata_conflict",
+      "La metadata no coincide con la tarea activa; conserve sus valores para continuar o use un --task distinto para iniciar otra tarea", 4);
   }
   if (!requested.id || !requested.mode || !requested.objective) {
     throw new IntegrationError("invalid_usage", "La primera preparación requiere --task, --mode y --objective", 4);
@@ -331,6 +263,9 @@ async function prepare(root, args) {
     ]);
   } catch (error) {
     if (error instanceof IntegrationError) throw error;
+    if (error.code === "ERR_TRANSACTION_CONFLICT") {
+      throw cleanupError("La evidencia cambió durante la captura o limpieza; se conservan la tarea y los archivos divergentes. Revise el cambio antes de reintentar", 2);
+    }
     throw cleanupError("No se pudo retirar la evidencia interna anterior sin afectar la nueva tarea; se conserva el estado previo", 5);
   }
   // A partial quality baseline is useful evidence even when it cannot support
@@ -354,14 +289,7 @@ async function inspect(root, args, verify) {
       message: "Comparación contra el inicio real de la tarea; no se ejecutaron pruebas", task: taskSummary(loaded), freshness };
   }
   const stored = await readVerificationReport(root, loaded.task);
-  if (stored) {
-    const freshness = await taskFreshness(root, loaded.task);
-    const resolutions = await resolutionHash(root);
-    if (reusableVerification(stored.report, loaded.task, freshness, resolutions)) {
-      return { ...cachedVerification(loaded, stored, freshness), task: taskSummary(loaded) };
-    }
-  }
-  const result = await verifyPythonTask(root, loaded.task);
+  const result = await verifyPythonTask(root, loaded.task, { previous: stored?.report });
   return { ...result, task: taskSummary(loaded) };
 }
 

@@ -15,6 +15,15 @@ async function inspect(targetPath) {
   }
 }
 
+function assertExpectedContent(operation, snapshot) {
+  if (operation.expectedContent === undefined) return;
+  if (snapshot.kind !== "file" || !snapshot.content.equals(operation.expectedContent)) {
+    const error = new Error("Transaction target changed; existing content is preserved");
+    error.code = "ERR_TRANSACTION_CONFLICT";
+    throw error;
+  }
+}
+
 function compareNames(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -179,6 +188,7 @@ export async function writeTransaction(projectDirectory, operations, {
   const snapshots = new Map();
   for (const operation of operations) {
     const snapshot = await inspect(operation.path);
+    assertExpectedContent(operation, snapshot);
     if (operation.type === "create_directory" && snapshot.kind !== "missing") {
       throw new Error(`El destino ya existe: ${operation.path}`);
     }
@@ -212,6 +222,7 @@ export async function writeTransaction(projectDirectory, operations, {
   await mkdir(temporaryRoot, { recursive: true });
   const backupRoot = await mkdtemp(path.join(temporaryRoot, "agentic-core-transaction-"));
   const temporaryPaths = new Set();
+  const applied = [];
 
   try {
     let backupIndex = 0;
@@ -229,6 +240,10 @@ export async function writeTransaction(projectDirectory, operations, {
 
     let writeCount = 0;
     for (const operation of operations) {
+      if (operation.expectedContent !== undefined) {
+        assertExpectedContent(operation, await inspect(operation.path));
+      }
+      applied.push(operation);
       if (operation.type === "create_directory") {
         await mkdir(operation.path, { recursive: true });
         await operation.prepare(operation.path);
@@ -237,7 +252,7 @@ export async function writeTransaction(projectDirectory, operations, {
         continue;
       }
       if (operation.type === "delete") {
-        await rm(operation.path, { recursive: true, force: true });
+        await rm(operation.path, { recursive: operation.expectedContent === undefined, force: true });
         writeCount += 1;
         if (failAfterWrite === writeCount) throw new Error("Simulated transaction failure");
         continue;
@@ -289,7 +304,7 @@ export async function writeTransaction(projectDirectory, operations, {
         restorationErrors.push(restorationError);
       }
     }
-    for (const operation of [...operations].reverse()) {
+    for (const operation of [...applied].reverse()) {
       const snapshot = snapshots.get(operation.path);
       try {
         await rm(operation.path, { recursive: true, force: true });

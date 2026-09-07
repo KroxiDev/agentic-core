@@ -256,18 +256,7 @@ async function loadBaseline(root, config, activeTask) {
     digest: task.initial.inputs.digest };
 }
 
-async function readResolutions(root, inputsDigest, configurationHash) {
-  const file = path.join(root, resolutionReference);
-  let content;
-  try {
-    const details = await lstat(file);
-    if (!details.isFile() || details.isSymbolicLink()) throw new IntegrationError("dry_resolution_unsafe", "El archivo de resoluciones DRY no es seguro", 2);
-    content = await readFile(file);
-  } catch (error) {
-    if (error?.code === "ENOENT") return { status: "missing", entries: [], sha256: null, used: [], unused: [] };
-    if (error instanceof IntegrationError) throw error;
-    throw new IntegrationError("dry_resolution_unreadable", "No se pudo leer el archivo de resoluciones DRY", 2);
-  }
+export function parseDryResolutions(content) {
   if (privateInputContent(content)) throw new IntegrationError("private_dry_resolution", "La resolución DRY contiene datos privados", 4);
   let parsed;
   try { parsed = JSON.parse(content.toString("utf8")); }
@@ -289,6 +278,23 @@ async function readResolutions(root, inputsDigest, configurationHash) {
     seen.add(candidate);
     return { candidate, decision, reason: reason.trim() };
   });
+  return { ...parsed, resolutions: normalized };
+}
+
+async function readResolutions(root, inputsDigest, configurationHash) {
+  const file = path.join(root, resolutionReference);
+  let content;
+  try {
+    const details = await lstat(file);
+    if (!details.isFile() || details.isSymbolicLink()) throw new IntegrationError("dry_resolution_unsafe", "El archivo de resoluciones DRY no es seguro", 2);
+    content = await readFile(file);
+  } catch (error) {
+    if (error?.code === "ENOENT") return { status: "missing", entries: [], sha256: null, used: [], unused: [] };
+    if (error instanceof IntegrationError) throw error;
+    throw new IntegrationError("dry_resolution_unreadable", "No se pudo leer el archivo de resoluciones DRY", 2);
+  }
+  const parsed = parseDryResolutions(content);
+  const normalized = parsed.resolutions;
   const current = parsed.inputs === inputsDigest && parsed.configuration === configurationHash;
   return {
     status: current ? "current" : "stale",
