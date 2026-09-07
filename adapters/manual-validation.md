@@ -16,7 +16,7 @@ Esta lista complementa las suites automatizadas. No convierte instrucciones de a
 1. Construir el runtime final con `npm.cmd run build:runtime` y comprobar `runtime-manifest.json`, hashes por archivo y `treeSha256` antes de instalarlo en fixtures limpias.
 2. Instalar los mismos bytes en una fixture Codex y otra Claude Code, al menos una con espacios en la ruta.
 3. Confirmar que `AGENTS.md` y `CLAUDE.md` contienen routing positivo para `Orquesta`, `/orquestar` y `$orquestar`, que `Orquesta` sin modo usa `normal` y que una solicitud sin activador continúa directa.
-4. Confirmar que los adapters conservan los nombres `agentic-read`, `agentic-production`, `agentic-tests` y `agentic-docs`, y expresan las mismas responsabilidades semánticas en ambos hosts.
+4. Confirmar que los adapters conservan los nombres `agentic-read`, `agentic-production`, `agentic-tests` y `agentic-docs`, expresan las mismas responsabilidades semánticas en ambos hosts y dan a Tester capacidad de corregir tests dentro del alcance, nunca producción.
 5. No registrar secretos, `.env`, datos personales ni contenido irrelevante en la evidencia.
 
 ## Routing visible
@@ -26,27 +26,40 @@ En cada host:
 1. Iniciar una solicitud con `Orquesta normal` y observar que se carga explícitamente `.agents/skills/orquestar/SKILL.md` antes de elegir roles.
 2. Repetir con `/orquestar light` y `$orquestar full`.
 3. Iniciar una solicitud sin activador y confirmar que se ejecuta directamente, sin cargar `orquestar`.
-4. Confirmar que los agentes devuelven prosa breve con resultado, bloqueantes y evidencia, no JSON de protocolo.
-5. Confirmar que nunca hay más de un agente activo.
+4. Confirmar que cada instancia recibe propósito, responsabilidades, alcance, entradas, criterios de devolución, Golden Rules y contexto pertinente, y que las entregas son prosa breve con objetivo, alcance, aceptación, decisiones condicionantes, resultado, defectos y referencias.
+5. Confirmar que nunca hay más de un agente activo y que las entregas no contienen la conversación completa, reportes completos ni JSON.
 
 ## Matriz semántica
 
 | Host | Modo | Roles esperados | Gate esperado |
 | --- | --- | --- | --- |
-| Codex | `light` | Implementador | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
+| Codex | `light` | Implementador → Tester; dos roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
 | Codex | `normal` | Planificador solo con HOW material → Implementador → Verificador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
 | Codex | `full` | Planificador → Implementador → Evaluador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P./Mutation en `verify`. |
-| Claude Code | `light` | Implementador | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
+| Claude Code | `light` | Implementador → Tester; dos roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
 | Claude Code | `normal` | Planificador solo con HOW material → Implementador → Verificador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
 | Claude Code | `full` | Planificador → Implementador → Evaluador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P./Mutation en `verify`. |
 
 Las frases de permisos son contratos semánticos:
 
-- Planificador, Evaluador y Verificador: “solo lee producción; no la modifiques”.
+- Planificador y Evaluador: “solo lee producción; no la modifiques”.
 - Implementador: “modifica únicamente producción y tests dentro del alcance”.
+- Tester: “solo lee producción; puede corregir únicamente tests dentro del alcance; nunca modifica producción”.
+- Verificador: “solo lee producción; no modifica tests ni documentación”.
 - Documentador: “solo documentación”.
 
 No atribuir a estas frases aislamiento técnico, permisos efectivos ni resistencia frente a un proceso adversarial.
+
+## Light real en Codex
+
+La evidencia nativa debe demostrar el comportamiento del host, no solo la presencia de archivos. En una fixture descartable:
+
+1. Construir e instalar los mismos bytes del runtime y comprobar que Codex carga `.agents/skills/orquestar/SKILL.md`, `agentic-production` y `agentic-tests`.
+2. Registrar versión de Codex, modelo efectivo, capacidades efectivas de cada perfil y el alcance entregado a cada instancia; no registrar secretos ni contexto personal.
+3. Ejecutar una solicitud `Orquesta Light` o `/orquestar light` que cambie producción y tests. Confirmar el orden Implementador → Tester, un solo agente activo, `prepare` antes de editar, tests/DRY/C.R.A.P. deterministas y `QUALITY_OK` vigente con Mutation `not_applicable`.
+4. Ejecutar una segunda fixture donde Tester rechace por un defecto reproducible. Confirmar que el coordinador agrupa las causas, crea una nueva instancia de Implementador y después un nuevo Tester, comparte el contador y conserva las causas pendientes al agotarlo.
+5. Observar una espera por resultado, intervención o vencimiento. Renovar como máximo 60 segundos por espera, comprobar activamente tras 5 minutos sin novedades y confirmar que la lentitud o el silencio no reinician trabajo.
+6. Etiquetar cada artefacto como evidencia nativa, simulación controlada o restricción semántica no demostrada técnicamente. La interpretación del agente no reemplaza el recibo de calidad.
 
 ## QualitySession
 

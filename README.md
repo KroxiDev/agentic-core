@@ -216,16 +216,19 @@ El usuario elige el modo; la capa lo conserva sin cuestionarlo ni recomendar otr
 Directo resuelve el encargo con un único agente, conserva las Golden Rules y permite las
 comprobaciones pertinentes sin imponer baseline, preparación de calidad o `QUALITY_OK`.
 Por ejemplo, `Corrige esta función` y `Orquesta Directo corrige esta función` usan Directo;
-`/orquestar` selecciona Normal y comunica que su secuencia sigue pendiente.
+`/orquestar` selecciona Normal y comunica que su secuencia sigue pendiente en #52.
 
 Una solicitud ordinaria de documentación también es un encargo directo. La ausencia de
 Documentador no añade documentación a otras tareas; puede recomendarse al cerrar el encargo.
 En un flujo orquestado, Documentador requiere petición expresa y actúa siempre al final.
 
-Light, Normal y Full se reconocen; la secuencia de roles queda pendiente de #51, #52 y #53,
-pero el gate local de calidad de #46 ya exige sus controles instalados. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección vive
-en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
-La verificación de archivos instalados no acredita por sí sola el comportamiento en Codex real.
+Light ejecuta Implementador → Tester con los perfiles instalados, un contador compartido y hasta
+dos rondas adicionales; Normal y Full conservan sus secuencias pendientes de #52 y #53. El gate
+local de calidad exige `prepare` antes de editar y `verify` antes de completar; en Light Mutation
+Testing es `not_applicable`. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección
+vive en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
+La verificación de archivos instalados no acredita por sí sola el comportamiento en Codex real;
+la validación nativa debe distinguir evidencia del host, simulación y restricciones semánticas.
 
 ### Instalaciones anteriores (esquema 2)
 
@@ -239,13 +242,17 @@ La coordinación mantiene como máximo un agente activo. Los roles reciben alcan
 
 | Modo | Coordinación semántica | Gate determinista |
 | --- | --- | --- |
-| `light` | Implementador; TDD cuando corresponda. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
+| `light` | Implementador → Tester; TDD cuando corresponda; hasta dos rondas adicionales compartidas. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
 | `normal` | Plan breve; Planificador solo ante una decisión HOW material; Implementador; Verificador independiente; máximo dos ciclos de corrección; Documentador solo si corresponde. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
 | `full` | Planificador con exploración; Implementador; Evaluador independiente; máximo dos ciclos de corrección; Documentador solo si corresponde. | `prepare` antes de editar y `verify` antes de completar; C.R.A.P. y Mutation Testing obligatorios. |
 
-El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Planificador, Verificador y Evaluador solo leen producción y no la modifican. El Documentador modifica únicamente documentación.
+El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Verificador y Evaluador solo leen producción y no la modifican. El Documentador modifica únicamente documentación.
 
 Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Los adapters Codex y Claude traducen discovery y formato nativos, pero comparten la misma política.
+
+Cada instancia recibe propósito, responsabilidades, alcance, entradas, criterios de devolución, Golden Rules y contexto pertinente. En Light, las entregas entre Implementador y Tester son prosa breve con objetivo, alcance, aceptación, decisiones condicionantes, resultado, defectos y referencias; no incluyen la conversación completa, reportes completos ni JSON. Un rechazo agrupa los defectos y crea una nueva instancia de Implementador seguida de un nuevo Tester, con dos rondas adicionales como límite compartido. El Tester puede corregir tests dentro del alcance, pero nunca producción.
+
+Las esperas atienden resultados, intervenciones del usuario y vencimientos mediante eventos disponibles en Codex, renovables hasta 60 segundos. Tras 5 minutos sin novedades se comprueba activamente el estado; la lentitud o el silencio por sí solos no reinician trabajo. No se dejan daemon, hooks nuevos ni promesas posteriores a la sesión, y el presupuesto acumulado cuenta comprobaciones, no tiempo de agentes.
 
 El mapping rol → perfil vive en la skill canónica `.agents/skills/orquestar/SKILL.md`; el shim de discovery de Claude solo remite a ella. Si el paquete en ejecución contiene una revisión distinta de ese recurso instalado, `doctor` informa la divergencia hasta que `agentic-core update` instala transaccionalmente la revisión del paquete. El perfil `agentic-docs` mantiene “solo documentación” como instrucción semántica, pero todavía no impone una restricción técnica de escritura por ruta; reforzar ese límite queda pendiente.
 

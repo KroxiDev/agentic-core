@@ -322,6 +322,7 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
   assert.deepEqual(modeRows.map(([mode]) => mode), ["light", "normal", "full"]);
   assertContainsEach(modeRows.flat().join("\n"), [
     "Implementador",
+    "Tester",
     "Planificador",
     "Verificador",
     "Evaluador",
@@ -491,6 +492,22 @@ test("manual validation covers both hosts without claiming security enforcement"
     "/orquestar light",
     "$orquestar full",
   ], "manual routing identifiers");
+  const lightValidation = headingSection(checklist, "Light real en Codex");
+  assertIncludesEach(inlineCode(lightValidation.body), [
+    "agentic-production",
+    "agentic-tests",
+    "Orquesta Light",
+    "/orquestar light",
+    "prepare",
+    "QUALITY_OK",
+    "not_applicable",
+  ], "native Light identifiers");
+  assertContainsEach(lightValidation.body, [
+    "60 segundos",
+    "5 minutos",
+    "evidencia nativa",
+    "simulación controlada",
+  ], "native Light evidence limits");
   assert.doesNotMatch(checklist, /agentic-core (?:start|resume|approve-mode-change|submit-handoff)/);
 });
 

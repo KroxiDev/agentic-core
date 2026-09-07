@@ -44,16 +44,22 @@ Los bloques gestionados de `AGENTS.md` y `CLAUDE.md` ordenan positivamente carga
 
 ### Modos
 
-- `light`: Implementador; `prepare` antes de editar si cambia comportamiento; TDD cuando corresponde; `verify` obligatorio.
+- `light`: `prepare` antes de editar; Implementador → Tester con los perfiles `agentic-production` y `agentic-tests`; TDD cuando corresponde; hasta dos rondas adicionales compartidas; `verify` obligatorio.
 - `normal`: plan breve del coordinador; Planificador solo ante una decisión HOW material; `prepare`; Implementador con TDD si cambia comportamiento; Verificador independiente; máximo dos ciclos de corrección; `verify`; Documentador solo si corresponde.
 - `full`: Planificador con la exploración necesaria; `prepare`; Implementador con TDD cuando corresponde; Evaluador independiente; máximo dos ciclos de corrección; `verify` con C.R.A.P. y Mutation Testing; Documentador solo si corresponde.
 
-Solo puede haber un agente activo. Los agentes responden en prosa breve con resultado, bloqueantes y evidencia. La ambigüedad se aclara semánticamente y no crea un retry de protocolo.
+Solo puede haber un agente activo. El coordinador no cuenta como rol base ni implementa producción. Cada instancia recibe propósito, responsabilidades, alcance, entradas, criterios de devolución, Golden Rules y contexto pertinente. Las entregas contienen objetivo, alcance, aceptación, decisiones condicionantes, resultado, defectos y referencias en prosa breve; no contienen la conversación completa, reportes completos ni JSON. La ambigüedad se aclara semánticamente y no crea un retry de protocolo.
+
+En Light, un rechazo del Tester agrupa los defectos y crea una nueva instancia de Implementador seguida de un nuevo Tester. El contador se comparte entre roles y permite como máximo dos rondas adicionales; agotarlo deja causas pendientes sin aprobación ni cambio de modo. El Tester puede corregir tests dentro del alcance, pero no producción, y la interpretación del agente no reemplaza el recibo vigente de calidad.
+
+La espera atiende resultados, intervenciones del usuario y vencimientos con eventos disponibles en Codex, renovables hasta 60 segundos. Tras 5 minutos sin novedades se comprueba activamente el estado; la lentitud o el silencio por sí solos no reinician trabajo. No hay daemon, hooks nuevos ni promesas después de terminar la sesión; el presupuesto acumulado corresponde a comprobaciones, no al tiempo de los agentes.
 
 ### Permisos
 
-- Planificador, Evaluador y Verificador: solo leen producción y no la modifican.
+- Planificador y Evaluador: solo leen producción y no la modifican.
 - Implementador: modifica únicamente producción y tests dentro del alcance.
+- Tester: solo lee producción; puede corregir únicamente tests dentro del alcance y nunca producción.
+- Verificador: solo lee producción y no modifica tests.
 - Documentador: solo documentación.
 - Operaciones destructivas, commit, push, publicación y cambios remotos requieren autorización explícita.
 

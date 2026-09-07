@@ -34,13 +34,14 @@ test("orquestar is semantic, mode-complete, and has no retired protocol", async 
   const skill = await text("skills/orquestar/SKILL.md");
   for (const activator of ["Orquesta", "/orquestar", "$orquestar"]) assert.match(skill, new RegExp(activator.replace("$", "\\$")));
   for (const mode of ["light", "normal", "full"]) assert.ok(skill.includes(`\`${mode}\``));
-  for (const role of ["Planificador", "Implementador", "Verificador", "Evaluador", "Documentador"]) {
+  for (const role of ["Planificador", "Implementador", "Tester", "Verificador", "Evaluador", "Documentador"]) {
     assert.match(skill, new RegExp(role));
   }
   const roleProfiles = new Map([
     ["Planificador", "agentic-read"],
     ["Evaluador", "agentic-read"],
     ["Implementador", "agentic-production"],
+    ["Tester", "agentic-tests"],
     ["Verificador", "agentic-tests"],
     ["Documentador", "agentic-docs"],
   ]);
@@ -60,6 +61,38 @@ test("orquestar is semantic, mode-complete, and has no retired protocol", async 
   assert.doesNotMatch(skill, /protocol_retry|sandbox_mode|HOST_SANDBOX|request_permissions|raw final/i);
 });
 
+test("Light defines the bounded Implementador to Tester loop and native waits", async () => {
+  const skill = await text("skills/orquestar/SKILL.md");
+  for (const phrase of [
+    "Propósito",
+    "Responsabilidades",
+    "Alcance",
+    "Entradas",
+    "Criterios de devolución",
+    "Golden Rules",
+    "Contexto pertinente",
+    "Implementador → Tester",
+    "dos roles base",
+    "El coordinador no cuenta",
+    "no implementa producción",
+    "nueva instancia de Implementador",
+    "contador compartido",
+    "dos rondas adicionales",
+    "sin aprobación ni cambio de modo",
+    "tests, DRY y C.R.A.P.",
+    "recibo vigente",
+    "eventos disponibles en Codex",
+    "60 segundos",
+    "5 minutos",
+    "lentitud o silencio por sí solos no reinician",
+    "fallo o límite aplicable",
+    "sin daemon, hooks nuevos ni promesas",
+    "presupuesto acumulado corresponde a comprobaciones",
+  ]) {
+    assert.ok(skill.includes(phrase), `Light contract is missing: ${phrase}`);
+  }
+});
+
 test("Claude discovery keeps the shared orquestar skill as its sole canonical source", async () => {
   const shim = await text("adapters/claude/skills/orquestar/SKILL.md");
   assert.match(shim, /Read and follow `.agents\/skills\/orquestar\/SKILL\.md` as the sole canonical skill/);
@@ -71,7 +104,7 @@ test("Codex and Claude profiles share the same semantic responsibilities", async
   const responsibilities = {
     read: ["solo lee producción; no la modifiques", "resultado, bloqueantes y evidencia"],
     production: ["modifica únicamente producción y tests dentro del alcance", "orden rojo-verde"],
-    tests: ["solo lee producción; no la modifiques", "No modifiques tests ni documentación"],
+    tests: ["solo lee producción; no la modifiques", "Tester", "corregir únicamente tests dentro del alcance"],
     docs: ["solo documentación", "Producción y tests son de solo lectura"],
   };
   for (const [profile, clauses] of Object.entries(responsibilities)) {
@@ -86,6 +119,8 @@ test("Codex and Claude profiles share the same semantic responsibilities", async
       assert.match(content, /prosa breve/);
     }
   }
+  const claudeTester = await text("adapters/claude/agents/agentic-tests.md");
+  assert.match(claudeTester, /tools: Read, Grep, Glob, Edit, Write/);
 });
 
 test("agentic-tdd keeps red-green semantic without retrospective duplication", async () => {
