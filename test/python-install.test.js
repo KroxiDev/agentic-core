@@ -13,6 +13,12 @@ const execute = promisify(execFile);
 const repository = path.resolve(import.meta.dirname, "..");
 const binary = path.join(repository, "bin/agentic-core.js");
 const selection = ["--provider", "codex", "--language", "python"];
+const lightResources = [
+  ["adapters/codex/agents/agentic-production.toml", ".codex/agents/agentic-production.toml"],
+  ["adapters/codex/agents/agentic-tests.toml", ".codex/agents/agentic-tests.toml"],
+  ["skills/orquestar/SKILL.md", ".agents/skills/orquestar/SKILL.md"],
+  ["skills/agentic-tdd/SKILL.md", ".agents/skills/agentic-tdd/SKILL.md"],
+];
 async function run(args, cwd, { entry = binary, env = {} } = {}) {
   try {
     return { ...await execute(process.execPath, [entry, ...args], { cwd, encoding: "utf8", windowsHide: true,
@@ -81,13 +87,27 @@ test("private tools and installed runtime survive the bootstrap and remain indep
     const agents = await readFile(path.join(project, "AGENTS.md"), "utf8");
     const block = agents.match(/<!-- AGENTIC_CORE_START -->[\s\S]*?<!-- AGENTIC_CORE_END -->/gu);
     assert.equal(block?.length, 1);
+    assert.match(block[0], /Light esta habilitado/u);
+    assert.match(block[0], /Normal y Full continuan pendientes/u);
     const owner = JSON.parse(await readFile(path.join(project, ".agentic-core/ownership.json"), "utf8"));
     assert.equal(owner.managedBlocks[0].sha256, createHash("sha256").update(block[0]).digest("hex"));
     assert.deepEqual(await readFile(path.join(project, ".agentic-core/golden-rules.md")),
       await readFile(path.join(repository, "golden-rules.md")));
     assert.ok(!(await readdir(path.join(project, ".agentic-core"))).includes("quality"));
-    assert.ok(!(await readdir(project)).includes(".codex"));
-    assert.ok(!(await readdir(project)).includes(".agents"));
+    assert.deepEqual(owner.resources.map(({ path: relative }) => relative), [
+      ".agentic-core/config.json",
+      ".agentic-core/config.schema.json",
+      ".agentic-core/golden-rules.md",
+      ".agentic-core/runtime-launcher.mjs",
+      ".agentic-core/.gitignore",
+      ...lightResources.map(([, target]) => target),
+    ]);
+    for (const [source, target] of lightResources) {
+      const expected = await readFile(path.join(repository, source));
+      assert.deepEqual(await readFile(path.join(project, target)), expected);
+      assert.equal(owner.resources.find((resource) => resource.path === target).sha256,
+        createHash("sha256").update(expected).digest("hex"));
+    }
   }
   await rm(bootstrap, { recursive: true });
   for (const [file, content] of preserved) assert.deepEqual(await readFile(path.join(root, file)), content);
@@ -102,9 +122,23 @@ test("private tools and installed runtime survive the bootstrap and remain indep
     assert.equal(report.tools.tools.mutate4py, "0.1.4");
     assert.notEqual(report.python.executable, report.tools.executable);
     assert.equal(report.verification, "NO_VERIFICADO");
-    const quality = await installedRun(project, "agentic-quality", ["prepare", "--task", "installation", "--mode", "normal", "--objective", "installation"]);
+    const lightPath = path.join(project, lightResources[0][1]);
+    const lightContent = await readFile(lightPath);
+    await writeFile(lightPath, "divergent Light profile\n");
+    assert.equal((await installedRun(project, "agentic-core", ["doctor"])).code, 2);
+    await writeFile(lightPath, lightContent);
+    assert.equal((await installedRun(project, "agentic-core", ["doctor"])).code, 0);
+    const quality = await installedRun(project, "agentic-quality", ["prepare", "--task", "installation", "--mode", "light", "--objective", "installation"]);
     assert.equal(quality.code, 2);
     assert.doesNotMatch(quality.stdout + quality.stderr, /QUALITY_OK/);
+    const verified = await installedRun(project, "agentic-quality", ["verify"]);
+    assert.equal(verified.code, 2);
+    assert.doesNotMatch(verified.stdout + verified.stderr, /QUALITY_OK/);
+    for (const args of [["prepare", "--mode", "normal", "--scope", "src"], ["verify", "--session", "q_legacy"]]) {
+      const legacy = await installedRun(project, "agentic-quality", args);
+      assert.equal(legacy.code, 4);
+      assert.match(legacy.stdout + legacy.stderr, /invalid_usage|--task|no aceptan argumentos/iu);
+    }
   }
   const secondHash = await hashDirectory(second);
   await rm(path.join(root, ".agentic-core/tools"), { recursive: true });
@@ -116,10 +150,10 @@ test("private tools and installed runtime survive the bootstrap and remain indep
 test("installation rollback and conflicts preserve foreign files", async (t) => {
   const root = await createTestProject(t, { files: { "AGENTS.md": "foreign", ".agentic-core/foreign.bin": "data" } });
   const before = await hashDirectory(root);
-  for (const failAfter of [6, 8, 9]) {
+  for (const failAfter of [6, 8, 9, 12, 13]) {
     const result = await run(["init", root, ...selection], root, { env: { NODE_ENV: "test", AGENTIC_CORE_TEST_FAIL_AFTER_WRITE: String(failAfter) } });
     assert.equal(result.code, 5, result.stderr);
-    assert.equal(await hashDirectory(root), before);
+    assert.equal(await hashDirectory(root), before, `failAfter=${failAfter}`);
   }
   await mkdir(path.join(root, ".agentic-core/tools"));
   await writeFile(path.join(root, ".agentic-core/tools/foreign.txt"), "keep");
