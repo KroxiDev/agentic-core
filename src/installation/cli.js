@@ -22,6 +22,7 @@ El entorno de herramientas es privado y requiere Python 3.11 o superior.
 Update migra configuraciones legacy al esquema 3 y conserva recursos divergentes, estado legacy y contenido ajeno.
 --force autoriza el reemplazo de recursos propios divergentes durante update; uninstall siempre conserva divergencias.
 Use AGENTIC_CORE_OUTPUT=json para salida estructurada.
+Para explicar configuración y vigencia sin ejecutar pruebas: node .agentic-core/runtime-launcher.mjs agentic-quality explain [--json].
 Codigos: 0 operacion satisfactoria; 2 entorno no soportado; 4 uso o configuracion invalidos; 5 fallo interno o de restauracion.`;
 
 function parse(args, command) {

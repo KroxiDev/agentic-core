@@ -75,6 +75,10 @@ Una continuación conserva el mismo `--task`; cambiar su modo, objetivo o `--rep
 
 ### Presupuesto acumulado de comprobaciones
 
+Para explicar una configuración dudosa o una verificación fallida, use `node .agentic-core/runtime-launcher.mjs agentic-quality explain`. Muestra la integración efectiva, versión Python, comando, alcance público, exclusiones, límites, causas y siguiente acción. Comprueba hashes e identidad del entorno sin ejecutar la suite ni los analizadores, sin reparar ni escribir evidencia. `agentic-core doctor` conserva el diagnóstico de integridad de la instalación.
+
+La salida de `explain` es breve en terminal y por pipes. `explain --json` (o `AGENTIC_CORE_OUTPUT=json`) entrega el informe estructurado completo, con inventario público, vigencia por control y referencia a `verification.json` cuando existe. Se conservan los estados y códigos de la verificación vigente; evidencia obsoleta o corrupta produce `NO_VERIFICADO`, nunca un nuevo `QUALITY_OK`. Las rutas privadas y valores de entorno se omiten; los argumentos no públicos se redactan. Citar el comando de diagnóstico o la referencia del veredicto basta para un handoff sin registros extensos.
+
 `limits.operation` configura `commandTimeoutMs` (120000 ms inicialmente), `totalBudgetMs` (600000 ms) y `workers` (4). Los tiempos son enteros entre 1 y 2147483647 ms; la concurrencia admite de 1 a 4 comandos. Ajuste estos valores para la suite real del proyecto: no se selecciona una suite sustituta ni se cambia de modo.
 
 El acumulado de `.agentic-core/quality/budget.json` suma el tiempo efectivo de los comandos de pruebas y analizadores, incluidos sus pasos previos dentro del wrapper, el baseline y los reintentos. Excluye razonamiento, implementación, esperas entre operaciones, preparación de copias e inspección de identidad para decidir reutilización. Cada comando queda reservado antes de iniciarse y se liquida cuando termina su árbol de procesos. Los comandos concurrentes suman sus tiempos individuales; las reservas impiden exceder el saldo disponible. `workers` es un máximo, no obliga a paralelizar controles dependientes.

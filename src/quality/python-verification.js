@@ -635,6 +635,13 @@ function controlReuse(previous, name, task, checkpoint, environment, resolutions
   return result("evidence_current");
 }
 
+// Read-only counterpart of the verifier: the same reuse rules, without controls.
+export async function inspectVerificationEvidence(root, task, checkpoint, environment, previous) {
+  const resolutions = await resolutionHash(root);
+  return Object.fromEntries(["tests", "dry", "crap"].map((name) =>
+    [name, controlReuse(previous, name, task, checkpoint, environment, resolutions)]));
+}
+
 export async function verifyPythonTask(root, task, { previous } = {}) {
   const config = await readConfiguration(path.join(root, ".agentic-core", "config.json"));
   const before = await captureProjectInputs(root, config.integration.python);
