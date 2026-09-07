@@ -131,7 +131,7 @@ export async function readActiveTask(root) {
       || task.initial.quality !== undefined && (task.initial.quality?.schemaVersion !== 1
         || !["captured", "NO_VERIFICADO"].includes(task.initial.quality.status)
         || !task.initial.quality.crap || !task.initial.quality.dry)) throw new Error("identity");
-    return { task, sha256 };
+    return { task, sha256, content: Buffer.from(content) };
   } catch {
     throw new IntegrationError("task_evidence_invalid", "La evidencia inicial está corrupta; no se reemplaza ni se usa para aprobar", 2);
   }
@@ -259,12 +259,15 @@ async function prepare(root, args) {
   try {
     await writeTransaction(root, [
       ...cleanup,
-      { path: activePath, content: Buffer.from(`${JSON.stringify(enriched)}\n`) },
+      { path: activePath, content: Buffer.from(`${JSON.stringify(enriched)}\n`), expectedContent: loaded?.content ?? null },
     ]);
   } catch (error) {
     if (error instanceof IntegrationError) throw error;
     if (error.code === "ERR_TRANSACTION_CONFLICT") {
       throw cleanupError("La evidencia cambió durante la captura o limpieza; se conservan la tarea y los archivos divergentes. Revise el cambio antes de reintentar", 2);
+    }
+    if (error.code === "ERR_RESTORATION_FAILED") {
+      throw cleanupError("La restauración quedó incompleta; se conservan los cambios concurrentes y el respaldo de recuperación. Revise la evidencia antes de reintentar", 5);
     }
     throw cleanupError("No se pudo retirar la evidencia interna anterior sin afectar la nueva tarea; se conserva el estado previo", 5);
   }

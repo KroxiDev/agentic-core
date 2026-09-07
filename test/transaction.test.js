@@ -46,6 +46,54 @@ test("guarded cleanup restores owned evidence when a later write fails", async (
   assert.equal(await readFile(active, "utf8"), "old task");
 });
 
+test("guarded rollback preserves foreign content recreated after a deletion", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic concurrent rollback "));
+  const temporaryRoot = path.join(root, "backups");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "evidence.json");
+  const original = Buffer.from("owned evidence");
+  await writeFile(target, original);
+  await assert.rejects(writeTransaction(root, [
+    { type: "delete", path: target, expectedContent: original },
+    { type: "create_directory", path: path.join(root, "next"), prepare: async () => {
+      await writeFile(target, "foreign concurrent content");
+      throw new Error("later operation failed");
+    } },
+  ], { temporaryRoot }), (error) => error.code === "ERR_RESTORATION_FAILED" && Boolean(error.backupPath));
+  assert.equal(await readFile(target, "utf8"), "foreign concurrent content");
+});
+
+test("guarded creation preserves a file published after its missing snapshot", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic concurrent creation "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "active.json");
+  await assert.rejects(writeTransaction(root, [
+    { type: "create_directory", path: path.join(root, "next"), prepare: async () => {
+      await writeFile(target, "foreign task");
+    } },
+    { path: target, content: Buffer.from("new task"), expectedContent: null },
+  ]), { code: "ERR_TRANSACTION_CONFLICT" });
+  assert.equal(await readFile(target, "utf8"), "foreign task");
+});
+
+for (const existed of [false, true]) {
+  test(`guarded publication rollback preserves concurrent task changes (${existed ? "replacement" : "creation"})`, async (t) => {
+    const root = await mkdtemp(path.join(tmpdir(), "agentic publication rollback "));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const target = path.join(root, "active.json");
+    const previous = existed ? Buffer.from("old task") : null;
+    if (existed) await writeFile(target, previous);
+    await assert.rejects(writeTransaction(root, [
+      { path: target, content: Buffer.from("new task"), expectedContent: previous },
+      { type: "create_directory", path: path.join(root, "next"), prepare: async () => {
+        await writeFile(target, "foreign task");
+        throw new Error("later operation failed");
+      } },
+    ], { temporaryRoot: path.join(root, "backups") }), { code: "ERR_RESTORATION_FAILED" });
+    assert.equal(await readFile(target, "utf8"), "foreign task");
+  });
+}
+
 test("rollback removes an in-project temporary root that did not exist before the transaction", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "agentic transaction "));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -1,13 +1,55 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { pythonProject, runPythonProject } from "./support/python-project.mjs";
+import { runTaskQualityCli } from "../src/quality/task-baseline.js";
 
 const prepare = (id = "first", mode = "normal") => [
   "prepare", "--task", id, "--mode", mode, "--objective", "issue:47",
 ];
 const parse = (result) => JSON.parse(result.stdout);
+
+test("task publication preserves a concurrent task after the transaction snapshot", async (t) => {
+  const { root } = await pythonProject(t);
+  assert.equal((await runPythonProject(root, prepare())).code, 0);
+  const activePath = path.join(root, ".agentic-core/quality/active-task.json");
+  const external = JSON.parse(await readFile(activePath, "utf8"));
+  external.task.id = "external";
+  external.sha256 = createHash("sha256").update(JSON.stringify(external.task)).digest("hex");
+  const foreign = JSON.stringify(external);
+  const originalRead = fs.readFile;
+  const cwd = process.cwd();
+  let injected = false;
+  try {
+    // Interleave an external writer after the transaction has read its snapshot.
+    fs.readFile = async (file, ...args) => {
+      const content = await originalRead(file, ...args);
+      if (!injected && path.resolve(String(file)) === activePath && args.length === 0) {
+        await writeFile(activePath, foreign);
+        injected = true;
+      }
+      return content;
+    };
+    syncBuiltinESMExports();
+    process.chdir(root);
+    let stdout = "";
+    const exitCode = await runTaskQualityCli(prepare("second"), {
+      env: { AGENTIC_CORE_OUTPUT: "json" }, stdout: { write: (value) => { stdout += value; } },
+    });
+    assert.equal(injected, true);
+    assert.equal(exitCode, 2, stdout);
+    assert.equal(JSON.parse(stdout).code, "task_evidence_cleanup_failed");
+    assert.equal(await originalRead(activePath, "utf8"), foreign);
+  } finally {
+    fs.readFile = originalRead;
+    syncBuiltinESMExports();
+    process.chdir(cwd);
+  }
+});
 
 async function countedProject(t) {
   const project = await pythonProject(t);
