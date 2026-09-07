@@ -11,7 +11,7 @@ Separar dos responsabilidades:
 1. Coordinación semántica: activación, roles, alcance, permisos, retrabajo y documentación mediante instrucciones breves para agentes cooperativos.
 2. `QualitySession`: baseline previo, tests reales, C.R.A.P. diferencial, Mutation Testing en `full`, inventarios, snapshots, hashes, restauración, vigencia y recibos verificables.
 
-No existe un port nuevo de host. Codex y Claude comparten la misma política y sus adapters solo traducen formato y discovery nativos.
+Esta entrega instala y valida únicamente la superficie nativa de Codex. La integración y validación de Claude quedan fuera del alcance de Light y se difieren para una entrega posterior.
 
 ## Superficie pública
 
@@ -29,8 +29,8 @@ No existe un port nuevo de host. Codex y Claude comparten la misma política y s
 - `crap --target <ruta>`
 - `mutate --target <ruta>`
 - `mutation --target <ruta>` como alias
-- `prepare --mode <light|normal|full> --scope <ruta> [--scope <ruta>...]`
-- `verify --session <id>`
+- `prepare --task <id> --mode <light|normal|full> --objective <referencia> [--repair-test <ruta>]`
+- `verify` sin argumentos sobre la tarea activa
 
 No existe entrada JSON de coordinación o calidad redactada por el modelo.
 
@@ -40,7 +40,7 @@ No existe entrada JSON de coordinación o calidad redactada por el modelo.
 
 Los activadores admitidos al comienzo de la solicitud son `Orquesta`, `/orquestar` y `$orquestar`. Sin modo explícito se usa `normal`. Sin activador, la solicitud se ejecuta directamente.
 
-Los bloques gestionados de `AGENTS.md` y `CLAUDE.md` ordenan positivamente cargar `.agents/skills/orquestar/SKILL.md` para los tres activadores y prohíben completar un cambio ejecutable orquestado sin un `QUALITY_OK` vigente.
+El bloque gestionado de `AGENTS.md` ordena positivamente cargar `.agents/skills/orquestar/SKILL.md` para los tres activadores y prohíbe completar un cambio ejecutable orquestado sin un `QUALITY_OK` vigente.
 
 ### Modos
 
@@ -67,22 +67,21 @@ Son restricciones semánticas, no enforcement de filesystem ni prueba de aislami
 
 ## QualitySession
 
-### `prepare`
+### `prepare` de tarea Python
 
-1. Valida un modo y uno o más scopes relativos y contenidos en el proyecto.
-2. Normaliza scopes repetidos y admite directorios o archivos inexistentes.
+1. Valida `task`, modo, objetivo y el alcance de la unidad Python configurada.
+2. Conserva el mismo `task`, modo y objetivo en las continuaciones; `--repair-test` solo amplía permisos declarados.
 3. Descubre el runner y su evidencia relevante.
 4. Captura el worktree actual como checkpoint, incluidos cambios preexistentes y archivos relevantes no trackeados.
 5. Excluye secretos, `.env`, datos personales, caches, binarios y datos operativos.
-6. Ejecuta los tests y obtiene C.R.A.P. atribuible cuando el entorno lo soporta.
-7. Deriva el ID de modo, scopes, inventario y entorno.
-8. Publica transaccionalmente una sesión inmutable en `.agentic-core/quality/<sessionId>/` o reutiliza una sesión idéntica e íntegra.
+6. Ejecuta los tests y obtiene DRY y C.R.A.P. atribuibles cuando el entorno lo soporta.
+7. Publica transaccionalmente la tarea activa en `.agentic-core/quality/active-task.json`.
 
 Un fallo de argumentos, entorno, baseline o persistencia no publica estado parcial ni modifica producción, tests o documentación.
 
-### `verify`
+### `verify` de tarea Python
 
-1. Carga y valida hashes de una sesión creada por `prepare`.
+1. Carga y valida hashes de la tarea activa creada por `prepare`, sin aceptar argumentos.
 2. Detecta cambios de código, tests, runner, configuración, manifests y lockfiles respecto del checkpoint, incluso evidencia relevante fuera del scope.
 3. Ejecuta los tests actuales.
 4. Calcula C.R.A.P. diferencial sin inventar cobertura atribuible.

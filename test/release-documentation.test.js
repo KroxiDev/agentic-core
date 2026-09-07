@@ -449,7 +449,7 @@ test("third-party notices exactly match the bundled runtime dependency inventory
   ], "third-party notice sections");
 });
 
-test("manual validation covers both hosts without claiming security enforcement", async () => {
+test("manual validation covers native Codex without claiming security enforcement", async () => {
   const checklist = await read("adapters/manual-validation.md");
   const headings = markdownSections(checklist).filter(({ level }) => level === 2).map(({ title }) => title);
   assertIncludesEach(headings, [
@@ -471,9 +471,6 @@ test("manual validation covers both hosts without claiming security enforcement"
     "Codex\0light",
     "Codex\0normal",
     "Codex\0full",
-    "Claude Code\0light",
-    "Claude Code\0normal",
-    "Claude Code\0full",
   ]);
 
   const evidenceLimits = markdownTable(

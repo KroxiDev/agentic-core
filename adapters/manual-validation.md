@@ -14,14 +14,14 @@ Esta lista complementa las suites automatizadas. No convierte instrucciones de a
 ## Preparación común
 
 1. Construir el runtime final con `npm.cmd run build:runtime` y comprobar `runtime-manifest.json`, hashes por archivo y `treeSha256` antes de instalarlo en fixtures limpias.
-2. Instalar los mismos bytes en una fixture Codex y otra Claude Code, al menos una con espacios en la ruta.
-3. Confirmar que `AGENTS.md` y `CLAUDE.md` contienen routing positivo para `Orquesta`, `/orquestar` y `$orquestar`, que `Orquesta` sin modo usa `normal` y que una solicitud sin activador continúa directa.
-4. Confirmar que los adapters conservan los nombres `agentic-read`, `agentic-production`, `agentic-tests` y `agentic-docs`, expresan las mismas responsabilidades semánticas en ambos hosts y dan a Tester capacidad de corregir tests dentro del alcance, nunca producción.
+2. Instalar los mismos bytes en una fixture Codex, al menos una con espacios en la ruta.
+3. Confirmar que `AGENTS.md` contiene routing positivo para `Orquesta`, `/orquestar` y `$orquestar`, que `Orquesta` sin modo usa `normal` y que una solicitud sin activador continúa directa.
+4. Confirmar que los recursos instalados conservan `agentic-production`, `agentic-tests`, `orquestar` y `agentic-tdd`, y que las responsabilidades de Tester no amplían la escritura a producción.
 5. No registrar secretos, `.env`, datos personales ni contenido irrelevante en la evidencia.
 
 ## Routing visible
 
-En cada host:
+En Codex:
 
 1. Iniciar una solicitud con `Orquesta normal` y observar que se carga explícitamente `.agents/skills/orquestar/SKILL.md` antes de elegir roles.
 2. Repetir con `/orquestar light` y `$orquestar full`.
@@ -36,9 +36,6 @@ En cada host:
 | Codex | `light` | Implementador → Tester; dos roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
 | Codex | `normal` | Planificador solo con HOW material → Implementador → Verificador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
 | Codex | `full` | Planificador → Implementador → Evaluador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P./Mutation en `verify`. |
-| Claude Code | `light` | Implementador → Tester; dos roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
-| Claude Code | `normal` | Planificador solo con HOW material → Implementador → Verificador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
-| Claude Code | `full` | Planificador → Implementador → Evaluador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P./Mutation en `verify`. |
 
 Las frases de permisos son contratos semánticos:
 
@@ -68,7 +65,7 @@ Usar un proyecto de prueba con código, tests, configuración del runner, manife
 1. Ejecutar antes de editar:
 
    ```powershell
-   node .agentic-core/runtime-launcher.mjs agentic-quality prepare --mode normal --scope src --scope test
+   node .agentic-core/runtime-launcher.mjs agentic-quality prepare --task manual-light --mode light --objective manual-validation
    ```
 
 2. Confirmar el recibo `QUALITY_SESSION`, la captura de cambios preexistentes y del archivo relevante no trackeado, y la ausencia de `.env`, caches, binarios y archivos irrelevantes en el checkpoint.
@@ -76,7 +73,7 @@ Usar un proyecto de prueba con código, tests, configuración del runner, manife
 4. Cambiar producción y tests dentro del scope y ejecutar:
 
    ```powershell
-   node .agentic-core/runtime-launcher.mjs agentic-quality verify --session q_<id>
+   node .agentic-core/runtime-launcher.mjs agentic-quality verify
    ```
 
 5. Confirmar tests reales, C.R.A.P. diferencial, reporte hasheado y `QUALITY_OK` solo cuando todos los gates estén aprobados.
@@ -91,8 +88,8 @@ node .agentic-core/runtime-launcher.mjs agentic-quality scan --target src
 node .agentic-core/runtime-launcher.mjs agentic-quality crap --target src
 node .agentic-core/runtime-launcher.mjs agentic-quality mutate --target src
 node .agentic-core/runtime-launcher.mjs agentic-quality mutation --target src
-node .agentic-core/runtime-launcher.mjs agentic-quality prepare --mode light --scope src
-node .agentic-core/runtime-launcher.mjs agentic-quality verify --session q_<id>
+node .agentic-core/runtime-launcher.mjs agentic-quality prepare --task manual-light --mode light --objective manual-validation
+node .agentic-core/runtime-launcher.mjs agentic-quality verify
 ```
 
 Confirmar que no se acepta input JSON redactado por el modelo y que los comandos de mantenimiento disponibles son únicamente `init`, `update`, `doctor`, `uninstall`, ayuda y versión.

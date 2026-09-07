@@ -93,36 +93,6 @@ test("Light defines the bounded Implementador to Tester loop and native waits", 
   }
 });
 
-test("Claude discovery keeps the shared orquestar skill as its sole canonical source", async () => {
-  const shim = await text("adapters/claude/skills/orquestar/SKILL.md");
-  assert.match(shim, /Read and follow `.agents\/skills\/orquestar\/SKILL\.md` as the sole canonical skill/);
-  assert.doesNotMatch(shim, /Planificador|Implementador|Verificador|Evaluador|Documentador/);
-  assert.doesNotMatch(shim, /agentic-(?:read|production|tests|docs)/);
-});
-
-test("Codex and Claude profiles share the same semantic responsibilities", async () => {
-  const responsibilities = {
-    read: ["solo lee producción; no la modifiques", "resultado, bloqueantes y evidencia"],
-    production: ["modifica únicamente producción y tests dentro del alcance", "orden rojo-verde"],
-    tests: ["solo lee producción; no la modifiques", "Tester", "corregir únicamente tests dentro del alcance"],
-    docs: ["solo documentación", "Producción y tests son de solo lectura"],
-  };
-  for (const [profile, clauses] of Object.entries(responsibilities)) {
-    const codex = await text(`adapters/codex/agents/agentic-${profile}.toml`);
-    const claude = (await text(`adapters/claude/agents/agentic-${profile}.md`)).replaceAll("`", "");
-    for (const clause of clauses) {
-      assert.match(codex, new RegExp(clause));
-      assert.match(claude, new RegExp(clause));
-    }
-    for (const content of [codex, claude]) {
-      assert.doesNotMatch(content, /sandbox_mode|HOST_SANDBOX|request_permissions|brief\.permissions|handoff|raw final|\.agentic-core\/runs/i);
-      assert.match(content, /prosa breve/);
-    }
-  }
-  const claudeTester = await text("adapters/claude/agents/agentic-tests.md");
-  assert.match(claudeTester, /tools: Read, Grep, Glob, Edit, Write/);
-});
-
 test("agentic-tdd keeps red-green semantic without retrospective duplication", async () => {
   const skill = await text("skills/agentic-tdd/SKILL.md");
   assert.match(skill, /prueba válida que falle/);
