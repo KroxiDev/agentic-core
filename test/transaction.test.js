@@ -161,6 +161,74 @@ test("a direct runtime inventory rejects traversal before writing", async (t) =>
   await assert.rejects(access(path.join(root, "outside.txt")), { code: "ENOENT" });
 });
 
+test("guarded directory replacement restores the original tree after a later failure", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic directory rollback "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "runtime");
+  await mkdir(target);
+  await writeFile(path.join(target, "old.txt"), "old runtime\n");
+  const originalTreeSha256 = await hashDirectory(target);
+  const files = [{ path: "new.txt", content: Buffer.from("new runtime\n") }];
+
+  await assert.rejects(writeTransaction(root, [{
+    path: target,
+    type: "replace_directory",
+    files,
+    sourceSha256: hashFileTree(files),
+    expectedTreeSha256: originalTreeSha256,
+  }], { failAfterWrite: 1 }), /Simulated transaction failure/u);
+
+  assert.equal(await hashDirectory(target), originalTreeSha256);
+  assert.equal(await readFile(path.join(target, "old.txt"), "utf8"), "old runtime\n");
+  await assert.rejects(access(path.join(target, "new.txt")), { code: "ENOENT" });
+});
+
+test("guarded directory replacement restores the original tree when publication fails", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic directory publication "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "runtime");
+  await mkdir(target);
+  await writeFile(path.join(target, "old.txt"), "old runtime\n");
+  const originalTreeSha256 = await hashDirectory(target);
+  const files = [{ path: "new.txt", content: Buffer.from("new runtime\n") }];
+  const publicationError = Object.assign(new Error("publication denied"), { code: "EACCES" });
+
+  await assert.rejects(writeTransaction(root, [{
+    path: target,
+    type: "replace_directory",
+    files,
+    sourceSha256: hashFileTree(files),
+    expectedTreeSha256: originalTreeSha256,
+  }], { renameDirectory: async () => { throw publicationError; } }), publicationError);
+
+  assert.equal(await hashDirectory(target), originalTreeSha256);
+  assert.equal(await readFile(path.join(target, "old.txt"), "utf8"), "old runtime\n");
+});
+
+test("guarded directory replacement preserves foreign content created during preparation", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic directory concurrent "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "runtime");
+  await mkdir(target);
+  await writeFile(path.join(target, "old.txt"), "old runtime\n");
+  const originalTreeSha256 = await hashDirectory(target);
+  const files = [{ path: "new.txt", content: Buffer.from("new runtime\n") }];
+
+  await assert.rejects(writeTransaction(root, [{
+    path: target,
+    type: "replace_directory",
+    files,
+    sourceSha256: hashFileTree(files),
+    expectedTreeSha256: originalTreeSha256,
+  }], { beforeDirectoryPublish: async () => {
+    await writeFile(path.join(target, "foreign.txt"), "foreign runtime\n");
+  } }), { code: "ERR_TRANSACTION_CONFLICT" });
+
+  assert.equal(await readFile(path.join(target, "old.txt"), "utf8"), "old runtime\n");
+  assert.equal(await readFile(path.join(target, "foreign.txt"), "utf8"), "foreign runtime\n");
+  await assert.rejects(access(path.join(target, "new.txt")), { code: "ENOENT" });
+});
+
 for (const source of ["files", "directory"]) {
   test(`directory replacement preserves a concurrent edit during ${source} preparation`, async (t) => {
     const root = await mkdtemp(path.join(tmpdir(), "agentic replacement conflict "));
