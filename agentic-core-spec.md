@@ -11,7 +11,7 @@ Separar dos responsabilidades:
 1. Coordinación semántica: activación, roles, alcance, permisos, retrabajo y documentación mediante instrucciones breves para agentes cooperativos.
 2. `QualitySession`: baseline previo, tests reales, C.R.A.P. diferencial, Mutation Testing en `full`, inventarios, snapshots, hashes, restauración, vigencia y recibos verificables.
 
-No existe un port nuevo de host. Codex y Claude comparten la misma política y sus adapters solo traducen formato y discovery nativos.
+Esta entrega instala y valida únicamente la superficie nativa de Codex. La integración y validación de Claude quedan fuera del alcance de Light y se difieren para una entrega posterior.
 
 ## Superficie pública
 
@@ -29,8 +29,8 @@ No existe un port nuevo de host. Codex y Claude comparten la misma política y s
 - `crap --target <ruta>`
 - `mutate --target <ruta>`
 - `mutation --target <ruta>` como alias
-- `prepare --mode <light|normal|full> --scope <ruta> [--scope <ruta>...]`
-- `verify --session <id>`
+- `prepare --task <id> --mode <light|normal|full> --objective <referencia> [--repair-test <ruta>]`
+- `verify` sin argumentos sobre la tarea activa
 
 No existe entrada JSON de coordinación o calidad redactada por el modelo.
 
@@ -40,20 +40,26 @@ No existe entrada JSON de coordinación o calidad redactada por el modelo.
 
 Los activadores admitidos al comienzo de la solicitud son `Orquesta`, `/orquestar` y `$orquestar`. Sin modo explícito se usa `normal`. Sin activador, la solicitud se ejecuta directamente.
 
-Los bloques gestionados de `AGENTS.md` y `CLAUDE.md` ordenan positivamente cargar `.agents/skills/orquestar/SKILL.md` para los tres activadores y prohíben completar un cambio ejecutable orquestado sin un `QUALITY_OK` vigente.
+El bloque gestionado de `AGENTS.md` ordena positivamente cargar `.agents/skills/orquestar/SKILL.md` para los tres activadores y prohíbe completar un cambio ejecutable orquestado sin un `QUALITY_OK` vigente.
 
 ### Modos
 
-- `light`: Implementador; `prepare` antes de editar si cambia comportamiento; TDD cuando corresponde; `verify` obligatorio.
+- `light`: `prepare` antes de editar; Implementador → Tester con los perfiles `agentic-production` y `agentic-tests`; TDD cuando corresponde; hasta dos rondas adicionales compartidas; `verify` obligatorio.
 - `normal`: plan breve del coordinador; Planificador solo ante una decisión HOW material; `prepare`; Implementador con TDD si cambia comportamiento; Verificador independiente; máximo dos ciclos de corrección; `verify`; Documentador solo si corresponde.
 - `full`: Planificador con la exploración necesaria; `prepare`; Implementador con TDD cuando corresponde; Evaluador independiente; máximo dos ciclos de corrección; `verify` con C.R.A.P. y Mutation Testing; Documentador solo si corresponde.
 
-Solo puede haber un agente activo. Los agentes responden en prosa breve con resultado, bloqueantes y evidencia. La ambigüedad se aclara semánticamente y no crea un retry de protocolo.
+Solo puede haber un agente activo. El coordinador no cuenta como rol base ni implementa producción. Cada instancia recibe propósito, responsabilidades, alcance, entradas, criterios de devolución, Golden Rules y contexto pertinente. Las entregas contienen objetivo, alcance, aceptación, decisiones condicionantes, resultado, defectos y referencias en prosa breve; no contienen la conversación completa, reportes completos ni JSON. La ambigüedad se aclara semánticamente y no crea un retry de protocolo.
+
+En Light, un rechazo del Tester agrupa los defectos y crea una nueva instancia de Implementador seguida de un nuevo Tester. El contador se comparte entre roles y permite como máximo dos rondas adicionales; agotarlo deja causas pendientes sin aprobación ni cambio de modo. El Tester puede corregir tests dentro del alcance, pero no producción, y la interpretación del agente no reemplaza el recibo vigente de calidad.
+
+La espera atiende resultados, intervenciones del usuario y vencimientos con eventos disponibles en Codex, renovables hasta 60 segundos. Tras 5 minutos sin novedades se comprueba activamente el estado; la lentitud o el silencio por sí solos no reinician trabajo. No hay daemon, hooks nuevos ni promesas después de terminar la sesión; el presupuesto acumulado corresponde a comprobaciones, no al tiempo de los agentes.
 
 ### Permisos
 
-- Planificador, Evaluador y Verificador: solo leen producción y no la modifican.
+- Planificador y Evaluador: solo leen producción y no la modifican.
 - Implementador: modifica únicamente producción y tests dentro del alcance.
+- Tester: solo lee producción; puede corregir únicamente tests dentro del alcance y nunca producción.
+- Verificador: solo lee producción y no modifica tests.
 - Documentador: solo documentación.
 - Operaciones destructivas, commit, push, publicación y cambios remotos requieren autorización explícita.
 
@@ -61,22 +67,21 @@ Son restricciones semánticas, no enforcement de filesystem ni prueba de aislami
 
 ## QualitySession
 
-### `prepare`
+### `prepare` de tarea Python
 
-1. Valida un modo y uno o más scopes relativos y contenidos en el proyecto.
-2. Normaliza scopes repetidos y admite directorios o archivos inexistentes.
+1. Valida `task`, modo, objetivo y el alcance de la unidad Python configurada.
+2. Conserva el mismo `task`, modo y objetivo en las continuaciones; `--repair-test` solo amplía permisos declarados.
 3. Descubre el runner y su evidencia relevante.
 4. Captura el worktree actual como checkpoint, incluidos cambios preexistentes y archivos relevantes no trackeados.
 5. Excluye secretos, `.env`, datos personales, caches, binarios y datos operativos.
-6. Ejecuta los tests y obtiene C.R.A.P. atribuible cuando el entorno lo soporta.
-7. Deriva el ID de modo, scopes, inventario y entorno.
-8. Publica transaccionalmente una sesión inmutable en `.agentic-core/quality/<sessionId>/` o reutiliza una sesión idéntica e íntegra.
+6. Ejecuta los tests y obtiene DRY y C.R.A.P. atribuibles cuando el entorno lo soporta.
+7. Publica transaccionalmente la tarea activa en `.agentic-core/quality/active-task.json`.
 
 Un fallo de argumentos, entorno, baseline o persistencia no publica estado parcial ni modifica producción, tests o documentación.
 
-### `verify`
+### `verify` de tarea Python
 
-1. Carga y valida hashes de una sesión creada por `prepare`.
+1. Carga y valida hashes de la tarea activa creada por `prepare`, sin aceptar argumentos.
 2. Detecta cambios de código, tests, runner, configuración, manifests y lockfiles respecto del checkpoint, incluso evidencia relevante fuera del scope.
 3. Ejecuta los tests actuales.
 4. Calcula C.R.A.P. diferencial sin inventar cobertura atribuible.

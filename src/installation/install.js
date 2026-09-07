@@ -17,37 +17,41 @@ const BLOCK = `${START}
 ## agentic-core
 
 Antes de atender la tarea, lee y aplica \`.agentic-core/golden-rules.md\`.
-Esta instalación integra Codex y una unidad Python 3.11+; consulta su configuración con
+Esta instalacion integra Codex y una unidad Python 3.11+; consulta su configuracion con
 \`node .agentic-core/runtime-launcher.mjs agentic-core doctor\`.
 
-### Selección de modo
+### Seleccion de modo
 
 - Sin \`Orquesta\`, \`/orquestar\` o \`$orquestar\` al comienzo de la solicitud, usa Directo.
-  Una mención posterior o un ejemplo citado no activa la orquestación.
-- Con cualquiera de esos tres activadores al comienzo, reconoce el modo explícito que le sigue:
-  Directo, Light, Normal o Full (sin distinguir mayúsculas); si se omite el modo, usa Normal.
+  Una mencion posterior o un ejemplo citado no activa la orquestacion.
+- Con cualquiera de esos tres activadores al comienzo, reconoce el modo explicito que le sigue:
+  Directo, Light, Normal o Full (sin distinguir mayusculas); si se omite el modo, usa Normal.
 - Respeta el modo elegido por el usuario durante toda la tarea: no lo cuestiones,
   no recomiendes sustituirlo ni lo cambies ante dificultades.
 
 ### Directo
 
-Resuelve el encargo con un único agente, las Golden Rules y las comprobaciones pertinentes
-de la tarea. Directo no despacha subagentes ni impone baseline, preparación de calidad,
-flujo orquestado o recibo \`QUALITY_OK\`. Informa el resultado y las verificaciones realmente
-ejecutadas; identifica cualquier comprobación pendiente sin inventar un aprobado.
+Resuelve el encargo con un unico agente, las Golden Rules y las comprobaciones pertinentes.
+Directo no despacha subagentes ni impone baseline, preparacion de calidad, flujo orquestado
+o recibo \`QUALITY_OK\`.
 
-Una petición ordinaria de documentación también se resuelve en Directo. La ausencia de
-Documentador no agrega trabajo documental a otro encargo; puedes recomendarlo en el cierre
-si corresponde y el usuario decide. Documentador requiere petición expresa y, en un flujo
-orquestado, es siempre el último subagente, después del trabajo técnico y sus correcciones.
+Nunca declares un cambio ejecutable orquestado completo sin un \`QUALITY_OK\` vigente de
+\`agentic-quality verify\`.
 
-### Light, Normal y Full
+### Light
 
-Conserva el modo seleccionado e informa que su secuencia y verificación están pendientes
-de integración en #51 (Light), #52 (Normal) y #53 (Full). Esta entrega no las ejecuta ni
-las presenta como validadas: no despaches roles genéricos, no uses el flujo legacy del
-esquema 2 ni prepares calidad para suplirlas. La integración continuará en esta superficie
-nativa de Codex, sin otro proveedor ni un protocolo externo de coordinación.
+Light esta habilitado para Codex y ejecuta exactamente Implementador -> Tester.
+El coordinador no cuenta como rol base ni modifica produccion. El Tester puede corregir
+unicamente tests dentro del alcance; nunca modifica produccion. Un rechazo agrupa las causas,
+abre una nueva pareja Implementador -> Tester y consume una ronda adicional compartida.
+Se permiten como maximo dos rondas adicionales; al agotarlas la tarea queda pendiente,
+sin aprobacion ni cambio automatico de modo.
+
+### Normal y Full
+
+Normal y Full continuan pendientes de integracion en #52 y #53. No se despachan roles
+genericos ni se usa el flujo legacy del esquema 2 como sustituto.
+
 ${END}`;
 const json = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -60,10 +64,20 @@ const CORE_RESOURCE_PATHS = [
   ".agentic-core/runtime-launcher.mjs",
   ".agentic-core/.gitignore",
 ];
-const OWNED_DIRECTORIES = [QUALITY_DIRECTORY];
+const LIGHT_RESOURCE_SPECS = [
+  { source: "adapters/codex/agents/agentic-production.toml", target: ".codex/agents/agentic-production.toml" },
+  { source: "adapters/codex/agents/agentic-tests.toml", target: ".codex/agents/agentic-tests.toml" },
+  { source: "skills/orquestar/SKILL.md", target: ".agents/skills/orquestar/SKILL.md" },
+  { source: "skills/agentic-tdd/SKILL.md", target: ".agents/skills/agentic-tdd/SKILL.md" },
+];
+const SCHEMA3_RESOURCE_PATHS = [
+  ...CORE_RESOURCE_PATHS,
+  ...LIGHT_RESOURCE_SPECS.map(({ target }) => target),
+];
+const OWNED_DIRECTORIES = [QUALITY_DIRECTORY, ".codex/agents", ".agents/skills/orquestar", ".agents/skills/agentic-tdd"];
 const LEGACY_CONFIG_VERSIONS = new Set([1, 2]);
 const LEGACY_RESOURCE_PATHS = new Set([
-  ...CORE_RESOURCE_PATHS,
+  ...SCHEMA3_RESOURCE_PATHS,
   ".agentic-core/claude-read-command-guard.mjs",
   ...HOST_RESOURCE_SPECS.map(({ target }) => target),
 ]);
@@ -189,6 +203,10 @@ export async function installPythonProject(projectDirectory, options = {}) {
     { path: ".agentic-core/golden-rules.md", content: resource("resources/golden-rules.md") },
     { path: ".agentic-core/runtime-launcher.mjs", content: resource("resources/src/runtime-launcher.mjs") },
     { path: ".agentic-core/.gitignore", content: Buffer.from("/quality/\n/tools/\n") },
+    ...LIGHT_RESOURCE_SPECS.map(({ source, target }) => ({
+      path: target,
+      content: resource(`resources/${source}`),
+    })),
   ];
   const exclusive = [...resources.map((file) => file.path), ".agentic-core/runtime", ".agentic-core/tools", ".agentic-core/ownership.json", QUALITY_DIRECTORY];
   const conflicts = [];
@@ -198,7 +216,8 @@ export async function installPythonProject(projectDirectory, options = {}) {
     if (relative === "AGENTS.md" ? !["file", "missing"].includes(type) : type !== "missing") conflicts.push(relative);
   }
   const agentsPath = path.join(project, "AGENTS.md");
-  const previous = await kind(agentsPath) === "file" ? await readFile(agentsPath) : Buffer.alloc(0);
+  const agentsKind = await kind(agentsPath);
+  const previous = agentsKind === "file" ? await readFile(agentsPath) : Buffer.alloc(0);
   if (previous.includes(START) || previous.includes(END)) conflicts.push("AGENTS.md#agentic-core");
   const hostContent = Buffer.concat([previous, Buffer.from(`${previous.length ? "\n\n" : ""}${BLOCK}\n`)]);
   const plan = { command: "init", status: conflicts.length ? "blocked" : "ready", projectRoot: project,
@@ -208,30 +227,38 @@ export async function installPythonProject(projectDirectory, options = {}) {
   if (options.dryRun) return { ...plan, dryRun: true, exitCode: conflicts.length ? 4 : 0 };
   if (conflicts.length) throw new InstallationError("installation_conflict", `Hay conflictos; conserve los recursos y revise init --dry-run: ${conflicts.join(", ")}`);
   const version = await getVersion();
+  const prepared = await prepareTools(project, python, runtime);
   const owner = { schemaVersion: 1, product: PRODUCT, version, configVersion: CONFIG_VERSION, installationId: randomUUID(),
     resources: resources.map((file) => ({ path: file.path, sha256: hash(file.content) })),
     managedBlocks: [{ path: "AGENTS.md", startMarker: START, endMarker: END, sha256: hash(BLOCK) }],
-    runtime: runtime.manifest, tools: { path: ".agentic-core/tools", versions: PYTHON_TOOLS },
+    runtime: runtime.manifest, tools: { path: ".agentic-core/tools", versions: PYTHON_TOOLS, treeSha256: prepared.treeSha256, effective: prepared.effective },
     ownedDirectories: OWNED_DIRECTORIES };
+  const toolsOperation = {
+    path: path.join(project, owner.tools.path),
+    type: "replace_directory",
+    sourcePath: prepared.sourcePath,
+    sourceSha256: prepared.treeSha256,
+    expectedTreeSha256: null,
+  };
   const operations = [
-    ...resources.map((file) => ({ ...file, path: path.join(project, file.path) })),
-    { path: agentsPath, content: hostContent },
-    { path: path.join(project, runtime.manifest.path), type: "replace_directory", files: runtime.files, sourceSha256: runtime.manifest.treeSha256 },
-    { path: path.join(project, owner.tools.path), type: "create_directory", prepare: async (target) => {
-      owner.tools.effective = await installTools(target, python.executable, path.join(project, runtime.manifest.path, "third_party/python"));
-      owner.tools.treeSha256 = await hashDirectory(target);
-    } },
+    ...resources.map((file) => ({ ...file, path: path.join(project, file.path), expectedContent: null })),
+    { path: agentsPath, content: hostContent, expectedContent: agentsKind === "file" ? previous : null },
+    { path: path.join(project, runtime.manifest.path), type: "replace_directory", files: runtime.files,
+      sourceSha256: runtime.manifest.treeSha256, expectedTreeSha256: null },
+    toolsOperation,
     // Serialize after tool preparation so the receipt describes the effective private environment.
-    { path: path.join(project, ".agentic-core/ownership.json"), get content() { return json(owner); } },
+    { path: path.join(project, ".agentic-core/ownership.json"), get content() { return json(owner); }, expectedContent: null },
   ];
   try {
     await writeTransaction(project, operations, { failAfterWrite: process.env.NODE_ENV === "test" ? Number(process.env.AGENTIC_CORE_TEST_FAIL_AFTER_WRITE) : undefined });
   } catch (error) {
     if (error instanceof InstallationError) throw error;
     if (error.code === "ERR_RESTORATION_FAILED") {
-      throw new InstallationError("restoration_failed", `La restauración quedó incompleta; conserve los recursos y revise el respaldo: ${error.backupPath ?? "no disponible"}`, 5, { cause: error });
+      throw new InstallationError("restoration_failed", `La restauración quedó incompleta (${error.message}); conserve los recursos y revise el respaldo: ${error.backupPath ?? "no disponible"}`, 5, { cause: error });
     }
     throw new InstallationError("installation_transaction_failed", "La instalación falló; revise la restauración antes de reintentar", 5, { cause: error });
+  } finally {
+    await rm(prepared.temporaryRoot, { recursive: true, force: true });
   }
   return { ...plan, status: "installed", tools: owner.tools.effective, dryRun: false, exitCode: 0 };
 }
@@ -259,9 +286,13 @@ function validateOwnershipDocument(owner, action = "actualizar") {
     }
     resourcePaths.add(resource.path);
   }
-  if (owner.configVersion === CONFIG_VERSION
-    && (owner.resources.length !== CORE_RESOURCE_PATHS.length
-      || owner.resources.some((resource, index) => resource.path !== CORE_RESOURCE_PATHS[index]))) {
+  const originalSchema3 = owner.configVersion === CONFIG_VERSION
+    && owner.ownedDirectories === undefined
+    && owner.resources.length === CORE_RESOURCE_PATHS.length
+    && owner.resources.every((resource, index) => resource.path === CORE_RESOURCE_PATHS[index]);
+  if (owner.configVersion === CONFIG_VERSION && !originalSchema3
+    && (owner.resources.length !== SCHEMA3_RESOURCE_PATHS.length
+      || owner.resources.some((resource, index) => resource.path !== SCHEMA3_RESOURCE_PATHS[index]))) {
     ownershipFailure(`No se puede ${action}: el esquema 3 reclama recursos fuera de sus limites`);
   }
   if (!Array.isArray(owner.managedBlocks) || owner.managedBlocks.length === 0) {
@@ -286,6 +317,7 @@ function validateOwnershipDocument(owner, action = "actualizar") {
       ownershipFailure(`No se puede ${action}: el esquema 3 solo gestiona el bloque AGENTS.md`);
     }
   }
+  if (originalSchema3) owner.ownedDirectories = [];
   if (!Array.isArray(owner.ownedDirectories)) {
     ownershipFailure(`No se puede ${action}: los directorios propios no son validos`);
   }
@@ -297,7 +329,7 @@ function validateOwnershipDocument(owner, action = "actualizar") {
     }
     ownedDirectories.add(directory);
   }
-  if (owner.configVersion === CONFIG_VERSION
+  if (owner.configVersion === CONFIG_VERSION && !originalSchema3
     && (owner.ownedDirectories.length !== OWNED_DIRECTORIES.length
       || owner.ownedDirectories.some((directory, index) => directory !== OWNED_DIRECTORIES[index]))) {
     ownershipFailure(`No se puede ${action}: el esquema 3 reclama directorios fuera de sus limites`);
@@ -460,6 +492,10 @@ function currentResources(runtime, configContent) {
     { path: CORE_RESOURCE_PATHS[2], content: resourceFromRuntime(runtime, "resources/golden-rules.md") },
     { path: CORE_RESOURCE_PATHS[3], content: resourceFromRuntime(runtime, "resources/src/runtime-launcher.mjs") },
     { path: CORE_RESOURCE_PATHS[4], content: Buffer.from("/quality/\n/tools/\n") },
+    ...LIGHT_RESOURCE_SPECS.map(({ source, target }) => ({
+      path: target,
+      content: resourceFromRuntime(runtime, `resources/${source}`),
+    })),
   ];
 }
 
@@ -665,6 +701,7 @@ async function updateCurrentInstallation(projectDirectory, options = {}) {
         code: "unowned_resource",
         message: `Existe un recurso sin ownership demostrado en ${resource.path}; se conserva`,
       });
+      else addFileOperation(operations, actions, project, resource.path, state, resource.content, "write_resource");
       continue;
     }
     if (state.kind === "missing") {
@@ -703,7 +740,7 @@ async function updateCurrentInstallation(projectDirectory, options = {}) {
       agentsContent = agentsState.content;
     } else {
       divergences.push(`${block.path}#agentic-core`);
-      if (options.force) agentsContent = replaceManaged(agentsState.content, block.startMarker, block.endMarker);
+      if (hash(found.content) === block.sha256 || options.force) agentsContent = replaceManaged(agentsState.content, block.startMarker, block.endMarker);
       else blockers.push(forceRequired(`${block.path}#agentic-core`));
     }
   }
@@ -1162,7 +1199,7 @@ export async function diagnosePythonProject(projectDirectory, options = {}) {
   }
 
   const recordedResources = new Map(owner.resources.map((resource) => [resource.path, resource]));
-  for (const relative of CORE_RESOURCE_PATHS.filter((resourcePath) => resourcePath !== ".agentic-core/config.json")) {
+  for (const relative of SCHEMA3_RESOURCE_PATHS.filter((resourcePath) => resourcePath !== ".agentic-core/config.json")) {
     const target = projectTarget(project, relative, "diagnosticar");
     const state = await inspectState(target);
     const recorded = recordedResources.get(relative);

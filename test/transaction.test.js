@@ -3,6 +3,8 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { hashDirectory, hashFileTree, writeTransaction } from "../src/transaction.js";
 
 for (const change of ["content", "directory", "missing"]) {
@@ -225,4 +227,65 @@ test("guarded directory replacement preserves foreign content created during pre
   assert.equal(await readFile(path.join(target, "old.txt"), "utf8"), "old runtime\n");
   assert.equal(await readFile(path.join(target, "foreign.txt"), "utf8"), "foreign runtime\n");
   await assert.rejects(access(path.join(target, "new.txt")), { code: "ENOENT" });
+});
+
+for (const source of ["files", "directory"]) {
+  test(`directory replacement preserves a concurrent edit during ${source} preparation`, async (t) => {
+    const root = await mkdtemp(path.join(tmpdir(), "agentic replacement conflict "));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const target = path.join(root, "runtime");
+    await mkdir(target);
+    await writeFile(path.join(target, "owned.txt"), "old");
+    const expectedTreeSha256 = await hashDirectory(target);
+    const files = [{ path: "next.txt", content: Buffer.from("new") }];
+    const sourcePath = path.join(root, "source");
+    await mkdir(sourcePath);
+    await writeFile(path.join(sourcePath, "next.txt"), "new");
+    const method = source === "files" ? "writeFile" : "cp";
+    const original = fsPromises[method];
+    t.mock.method(fsPromises, method, async (...args) => {
+      const result = await original(...args);
+      const destination = String(args[source === "files" ? 0 : 1]);
+      if (destination.includes(".agentic-core-") && destination.includes(".tmp")) {
+        await originalWrite(path.join(target, "foreign.txt"), "concurrent");
+      }
+      return result;
+    });
+    const originalWrite = method === "writeFile" ? original : fsPromises.writeFile;
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(writeTransaction(root, [{
+        path: target, type: "replace_directory", expectedTreeSha256,
+        sourceSha256: hashFileTree(files),
+        ...(source === "files" ? { files } : { sourcePath }),
+      }]), { code: "ERR_TRANSACTION_CONFLICT" });
+    } finally {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(await readFile(path.join(target, "owned.txt"), "utf8"), "old");
+    assert.equal(await readFile(path.join(target, "foreign.txt"), "utf8"), "concurrent");
+  });
+}
+
+test("directory replacement restores its backup when publication fails after removal", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic publication failure "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "runtime");
+  await mkdir(target);
+  await writeFile(path.join(target, "owned.txt"), "old");
+  const expectedTreeSha256 = await hashDirectory(target);
+  const files = [{ path: "next.txt", content: Buffer.from("new") }];
+  t.mock.method(fsPromises, "rename", async () => { throw new Error("publication denied"); });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(writeTransaction(root, [{
+      path: target, type: "replace_directory", files,
+      expectedTreeSha256, sourceSha256: hashFileTree(files),
+    }]), /publication denied/);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.equal(await hashDirectory(target), expectedTreeSha256);
 });

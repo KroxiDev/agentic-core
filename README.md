@@ -1,6 +1,6 @@
 # agentic-core 0.2.0
 
-`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. Directo aplica las Golden Rules y las comprobaciones pertinentes del encargo. La verificación agregada de tareas Light y Normal exige suite, DRY y C.R.A.P. y puede emitir `QUALITY_OK`; Full permanece `NO_VERIFICADO` hasta integrar Mutation Testing. Las secciones de coordinación y `QualitySession` del esquema 2 se conservan para instalaciones anteriores.
+`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. Directo aplica las Golden Rules y las comprobaciones pertinentes del encargo. La verificación agregada de tareas Light y Normal exige suite, DRY y C.R.A.P. y puede emitir `QUALITY_OK`; Full integra Mutation Testing incremental. Las secciones de coordinación y `QualitySession` del esquema 2 se conservan para instalaciones anteriores.
 
 ## Requisitos y soporte
 
@@ -51,7 +51,11 @@ Sin selección explícita, una terminal interactiva pregunta proveedor y lenguaj
 
 El payload se valida por origen declarado, inventario y hashes, independientemente del bootstrap. El runtime queda en `.agentic-core/runtime` y las herramientas en `.agentic-core/tools`, sin modificar dependencias, manifests, lockfiles ni el entorno del consumidor. Los wheels y licencias viajan con el paquete; instalar no requiere red. La operación rechaza conflictos y revierte sus escrituras ante fallos.
 
-La integración añade únicamente un bloque de Codex a `AGENTS.md`, conserva su contenido previo y la política canónica en `.agentic-core/golden-rules.md`. El ignore local excluye `/quality/` y `/tools/`.
+La integración añade únicamente un bloque de Codex a `AGENTS.md` y los recursos de Light
+(`.codex/agents/agentic-production.toml`, `.codex/agents/agentic-tests.toml`,
+`.agents/skills/orquestar/SKILL.md` y `.agents/skills/agentic-tdd/SKILL.md`). Conserva el
+contenido previo y la política canónica en `.agentic-core/golden-rules.md`. El ignore local
+excluye `/quality/` y `/tools/`.
 
 ## Baseline de tarea Python (esquema 3)
 
@@ -65,9 +69,9 @@ node .agentic-core/runtime-launcher.mjs agentic-quality verify
 
 `--repair-test` es opcional y repetible: identifica archivos de pruebas cuyos fallos iniciales pertenecen al encargo. Los demás fallos se informan como ajenos y no amplían el alcance. El baseline conserva código, inputs no versionados, cobertura y evidencia de fallos sin usar el diff contra HEAD para atribuir autoría. Los fallos de comprobación y los defectos atribuibles al código medido pueden conservarse como baseline fallido válido aunque se detecten en fixtures. Los grupos anidados requieren atribución de cada excepción interna. Los errores de importación o dependencias producen `NO_VERIFICADO` incluso desde código medido; también lo producen los errores de integridad, de preparación sin atribución o los grupos con errores no atribuibles. Declarar `--repair-test` no valida esa evidencia.
 
-La referencia breve `.agentic-core/quality/active-task.json` contiene el objetivo, alcance e inicio inmutable de la tarea. Repetir `prepare` conserva ese inicio, incluso después de cambios; `baseline` compara inputs y condiciones actuales sin ejecutar pytest. Un cambio de pruebas, comando, configuración, runtime, dependencias o recursos vuelve obsoleta la evidencia afectada. `verify` exige la suite final aprobada y compara DRY y C.R.A.P. contra ese baseline; Light y Normal emiten `QUALITY_OK` solo con evidencia vigente y completa. Full permanece `NO_VERIFICADO` porque Mutation Testing se integra en las tareas posteriores de mutación. Directo puede usar `test` sin preparar una tarea.
+La referencia breve `.agentic-core/quality/active-task.json` contiene el objetivo, alcance e inicio inmutable de la tarea. Repetir `prepare` conserva ese inicio, incluso después de cambios; `baseline` compara inputs y condiciones actuales sin ejecutar pytest. Un cambio de pruebas, comando, configuración, runtime, dependencias o recursos vuelve obsoleta la evidencia afectada. `verify` exige la suite final aprobada y compara DRY y C.R.A.P. contra ese baseline; Light y Normal emiten `QUALITY_OK` solo con evidencia vigente y completa. Full integra Mutation Testing incremental sobre el baseline real y solo emite `QUALITY_OK` cuando todos los mutantes exigibles tienen un resultado concluyente. Directo puede usar `test` sin preparar una tarea.
 
-Una continuación conserva el mismo `--task`; cambiar su modo, objetivo o `--repair-test` se rechaza con `task_metadata_conflict` sin reemplazar el baseline. `verify` comprueba la vigencia por control y registra en el informe cuáles reutiliza y la causa de cada nueva ejecución. Cambiar solo las resoluciones DRY conserva las pruebas y C.R.A.P. vigentes; Full también aprovecha los controles válidos mientras la mutación permanece pendiente. Al preparar una tarea distinta se retiran únicamente los artefactos internos reconocibles de la tarea anterior y se conserva cualquier archivo desconocido o externo, sin historial ni caché entre tareas. Si un archivo previsto para limpieza cambia durante la captura, la operación se aborta conservando la tarea anterior y el contenido divergente.
+Una continuación conserva el mismo `--task`; cambiar su modo, objetivo o `--repair-test` se rechaza con `task_metadata_conflict` sin reemplazar el baseline. `verify` comprueba la vigencia por control y registra en el informe cuáles reutiliza y la causa de cada nueva ejecución. Cambiar solo las resoluciones DRY conserva las pruebas y C.R.A.P. vigentes; Full también aprovecha los controles válidos y vuelve a medir la mutación solo cuando cambia su identidad de evidencia. Al preparar una tarea distinta se retiran únicamente los artefactos internos reconocibles de la tarea anterior y se conserva cualquier archivo desconocido o externo, sin historial ni caché entre tareas. Si un archivo previsto para limpieza cambia durante la captura, la operación se aborta conservando la tarea anterior y el contenido divergente.
 
 ### Presupuesto acumulado de comprobaciones
 
@@ -81,7 +85,7 @@ El acumulado de `.agentic-core/quality/budget.json` suma el tiempo efectivo de l
 
 Una sola operación puede poseer `budget.lock`; otra devuelve `budget_busy`. Tras una interrupción del controlador, confirme que sus procesos terminaron antes de retirar ese bloqueo. Una reserva pendiente, un presupuesto corrupto o ausente en una tarea anterior a esta versión no se convierten en consumo cero: requieren iniciar una tarea distinta. No se recupera automáticamente un proceso cuya terminación no se puede demostrar.
 
-La integración futura de mutación (#49–#50) debe usar `withCurrentTaskBudget` y `executeCommand` dentro del mismo contexto de ejecución. Este contrato reserva, contabiliza y aplica concurrencia y límites a cada comando sin crear otro presupuesto por worker o por mutante.
+La mutación integrada de Full (#49–#50) usa `withCurrentTaskBudget` y `executeCommand` dentro del mismo contexto de ejecución. Este contrato reserva, contabiliza y aplica concurrencia y límites a cada comando sin crear otro presupuesto por worker o por mutante.
 
 ### C.R.A.P. de Python
 
@@ -122,7 +126,7 @@ Los pragmas `dry4python: ignore` e `ignore-file` se neutralizan únicamente en l
 
 El diferencial de C.R.A.P. aplica `limits.crap` al código nuevo y exige que los símbolos existentes dentro del alcance no empeoren respecto de su valor inicial. La deuda heredada por encima del límite se conserva como contexto y solo debe no empeorar. Un traslado se atribuye únicamente con una identidad de símbolo y fingerprint únicos; si no puede establecerse la correspondencia, el resultado queda sin verificar. DRY conserva candidatos nuevos o modificados como rechazados hasta que exista una resolución concreta ligada al ID, inputs y configuración actuales.
 
-Light y Normal pueden cerrar con `approved` y `QUALITY_OK`; sus controles de mutación son `NO_APLICA`. Full ejecuta suite, DRY y C.R.A.P., pero declara Mutation Testing `NO_VERIFICADO` hasta que esté disponible la integración aislada correspondiente. `approved`, `rejected`, `NO_VERIFICADO` y `NO_APLICA` incluyen códigos de causa, y el estado agregado nunca convierte una medición ausente en un aprobado.
+Light y Normal pueden cerrar con `approved` y `QUALITY_OK`; sus controles de mutación son `NO_APLICA`. Full selecciona, sin muestreo, los mutantes de líneas añadidas o modificadas respecto de las fuentes reales del baseline. Los mutantes fuera del delta se informan como preexistentes y los equivalentes solo se excluyen con una prueba estática de identidad de bytes o de identidad estructural del AST de Python, ligada a los hashes de ambas fuentes. El denominador incluye los mutantes sin cobertura y el mínimo configurable es `limits.mutationScore` (90 inicialmente); cualquier timeout, error, interrupción o pendiente deja el control en `NO_VERIFICADO`. Un denominador vacío produce `NO_APLICA` con explicación y no un score automático de 100. `approved`, `rejected`, `NO_VERIFICADO` y `NO_APLICA` incluyen códigos de causa, y el estado agregado nunca convierte una medición ausente en un aprobado.
 
 ### Ejecución individual de mutantes Python
 
@@ -132,7 +136,7 @@ node .agentic-core/runtime-launcher.mjs agentic-quality mutate
 
 `mutation` es alias de `mutate`. En esquema 3 se usa el alcance de `config.json`, sin `--target`. mutate4py 0.1.4 genera las modificaciones y el adaptador ejecuta el comando autoritativo completo, incluidos wrapper, argumentos, entorno, configuración y preparación. No instala herramientas en el entorno del proyecto.
 
-El informe `.agentic-core/quality/mutation.json` distingue `killed`, `survived`, `uncovered` conocido, `timeout`, `error` e `interrupted`. Solo los fallos atribuidos a las pruebas cuentan como detección. Los tres últimos estados son inconclusos; no se calcula un score ni se emite `QUALITY_OK` desde esta ejecución individual. La selección incremental y agregación Full corresponden a #50.
+El informe `.agentic-core/quality/mutation.json` distingue `killed`, `survived`, `uncovered` conocido, `timeout`, `error` e `interrupted`. Solo los fallos atribuidos a las pruebas cuentan como detección. Los tres últimos estados son inconclusos; no se calcula un score ni se emite `QUALITY_OK` desde esta ejecución individual. `verify` Full reutiliza este motor con selección incremental contra las fuentes del baseline, agrega el score configurado y conserva el inventario completo en `verification.json`.
 
 Una referencia aprobada determina el timeout solicitado por mutante: tres veces su duración, con un mínimo de 1000 ms, limitado por `limits.operation.commandTimeoutMs` y el presupuesto restante de la tarea. El informe muestra el límite efectivo y conserva resultados parciales cuando se agota el presupuesto. La ejecución usa un worker, dentro del máximo configurado, y reutiliza una copia para todos los archivos; verifica inputs, permisos y dependencias, restaura cada mutación y retira los outputs entre pruebas. Nunca restaura archivos del proyecto original sobre cambios ajenos.
 
@@ -154,7 +158,7 @@ npx.cmd --yes github:KroxiDev/agentic-core update .
 | `--dry-run` | — | No | No |
 | `--force` | — | No | No |
 
-En el esquema 3, `update` actualiza recursos con ownership verificable y migra esquemas 1 y 2. `--dry-run` muestra el plan sin escribir; `--force` autoriza reemplazar recursos propios divergentes durante la actualización. La configuración válida conserva sus valores y se normaliza al esquema cerrado 3.
+En el esquema 3, `update` actualiza transaccionalmente los recursos Codex de Light, el bloque gestionado, el runtime y las herramientas privadas cuando su ownership es demostrable, y migra esquemas 1 y 2. `--dry-run` muestra el plan sin escribir; `--force` autoriza reemplazar recursos propios divergentes. La configuraci?n v?lida conserva sus valores y se normaliza al esquema cerrado 3.
 
 `update` comprueba ownership e integridad antes de reemplazar recursos de forma transaccional. `--force` solo autoriza reemplazar recursos propios divergentes; no autoriza cambios ajenos. Al migrar una instalación anterior, elimina el runtime de protocolo que todavía sea reconociblemente propio, instala la política semántica y conserva `.agentic-core/runs` como estado legacy sin interpretarlo ni reclamarlo como estado vigente.
 
@@ -173,7 +177,7 @@ npx.cmd --yes github:KroxiDev/agentic-core doctor . --dry-run
 | --- | --- | --- | --- |
 | `--dry-run` | — | No | No |
 
-En el esquema 3, `doctor` explica configuración, límites, intérpretes y versiones, y comprueba la integridad del runtime, los recursos y las herramientas sin ejecutar la suite del consumidor. Los problemas se reportan con causa y recuperación sugerida; la operación no repara automáticamente ni presenta una instalación incompleta como satisfactoria.
+En el esquema 3, `doctor` explica configuración, límites, intérpretes y versiones, y comprueba la integridad del runtime, los recursos Codex de Light y las herramientas sin ejecutar la suite del consumidor. Los problemas se reportan con causa y recuperación sugerida; la operación no repara automáticamente ni presenta una instalación incompleta como satisfactoria.
 
 En el esquema 2, `doctor` valida recursos, bloques gestionados, configuración, runtime autocontenido, ownership, hashes e integridad de `QualitySession`. Las sesiones o recibos corruptos se reportan y preservan; no se reescribe evidencia histórica. Los directorios operativos del runtime anterior se informan como estado legacy preservado.
 
@@ -216,20 +220,23 @@ El usuario elige el modo; la capa lo conserva sin cuestionarlo ni recomendar otr
 Directo resuelve el encargo con un único agente, conserva las Golden Rules y permite las
 comprobaciones pertinentes sin imponer baseline, preparación de calidad o `QUALITY_OK`.
 Por ejemplo, `Corrige esta función` y `Orquesta Directo corrige esta función` usan Directo;
-`/orquestar` selecciona Normal y comunica que su secuencia sigue pendiente.
+`/orquestar` selecciona Normal y comunica que su secuencia sigue pendiente en #52.
 
 Una solicitud ordinaria de documentación también es un encargo directo. La ausencia de
 Documentador no añade documentación a otras tareas; puede recomendarse al cerrar el encargo.
 En un flujo orquestado, Documentador requiere petición expresa y actúa siempre al final.
 
-Light, Normal y Full se reconocen; la secuencia de roles queda pendiente de #51, #52 y #53,
-pero el gate local de calidad de #46 ya exige sus controles instalados. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección vive
-en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
-La verificación de archivos instalados no acredita por sí sola el comportamiento en Codex real.
+Light ejecuta Implementador → Tester con los perfiles instalados, un contador compartido y hasta
+dos rondas adicionales; Normal y Full conservan sus secuencias pendientes de #52 y #53. El gate
+local de calidad exige `prepare` antes de editar y `verify` antes de completar; en Light Mutation
+Testing es `not_applicable`. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección
+vive en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
+La verificación de archivos instalados no acredita por sí sola el comportamiento en Codex real;
+la validación nativa debe distinguir evidencia del host, simulación y restricciones semánticas.
 
 ### Instalaciones anteriores (esquema 2)
 
-Una solicitud que comienza con `Orquesta`, `/orquestar` o `$orquestar` debe cargar y seguir la skill instalada `.agents/skills/orquestar/SKILL.md`. `Orquesta` sin modo significa `normal`. Esta garantía positiva vive en los bloques gestionados de `AGENTS.md` y `CLAUDE.md`, de modo que `Orquesta normal` no se resuelve con agentes genéricos sin cargar la skill.
+Una solicitud que comienza con `Orquesta`, `/orquestar` o `$orquestar` debe cargar y seguir la skill instalada `.agents/skills/orquestar/SKILL.md`. `Orquesta` sin modo significa `normal`. En esta entrega, la garantía positiva vive en el bloque gestionado de `AGENTS.md`, de modo que `Orquesta normal` no se resuelve con agentes genéricos sin cargar la skill.
 
 Una solicitud sin esos activadores se ejecuta directamente: no activa coordinación, no crea una sesión de calidad por sí sola y no crea agentes.
 
@@ -239,15 +246,21 @@ La coordinación mantiene como máximo un agente activo. Los roles reciben alcan
 
 | Modo | Coordinación semántica | Gate determinista |
 | --- | --- | --- |
-| `light` | Implementador; TDD cuando corresponda. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
+| `light` | Implementador → Tester; TDD cuando corresponda; hasta dos rondas adicionales compartidas. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
 | `normal` | Plan breve; Planificador solo ante una decisión HOW material; Implementador; Verificador independiente; máximo dos ciclos de corrección; Documentador solo si corresponde. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
 | `full` | Planificador con exploración; Implementador; Evaluador independiente; máximo dos ciclos de corrección; Documentador solo si corresponde. | `prepare` antes de editar y `verify` antes de completar; C.R.A.P. y Mutation Testing obligatorios. |
 
-El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Planificador, Verificador y Evaluador solo leen producción y no la modifican. El Documentador modifica únicamente documentación.
+El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Verificador y Evaluador solo leen producción y no la modifican. El Documentador modifica únicamente documentación.
 
-Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Los adapters Codex y Claude traducen discovery y formato nativos, pero comparten la misma política.
+Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Esta entrega instala y valida únicamente el recorrido nativo de Codex; Claude queda fuera del alcance de Light.
 
-El mapping rol → perfil vive en la skill canónica `.agents/skills/orquestar/SKILL.md`; el shim de discovery de Claude solo remite a ella. Si el paquete en ejecución contiene una revisión distinta de ese recurso instalado, `doctor` informa la divergencia hasta que `agentic-core update` instala transaccionalmente la revisión del paquete. El perfil `agentic-docs` mantiene “solo documentación” como instrucción semántica, pero todavía no impone una restricción técnica de escritura por ruta; reforzar ese límite queda pendiente.
+Cada instancia recibe propósito, responsabilidades, alcance, entradas, criterios de devolución, Golden Rules y contexto pertinente. En Light, las entregas entre Implementador y Tester son prosa breve con objetivo, alcance, aceptación, decisiones condicionantes, resultado, defectos y referencias; no incluyen la conversación completa, reportes completos ni JSON. Un rechazo agrupa los defectos y crea una nueva instancia de Implementador seguida de un nuevo Tester, con dos rondas adicionales como límite compartido. El Tester puede corregir tests dentro del alcance, pero nunca producción.
+
+La máquina semántica de Light tiene una ronda inicial `Implementador → Tester`; cada rechazo abre una única ronda adicional y conserva el contador al cambiar de rol. Al alcanzar dos rondas adicionales, la tarea queda pendiente con sus causas, sin aprobación ni cambio automático de modo.
+
+Las esperas atienden resultados, intervenciones del usuario y vencimientos mediante eventos disponibles en Codex, renovables hasta 60 segundos. Tras 5 minutos sin novedades se comprueba activamente el estado; la lentitud o el silencio por sí solos no reinician trabajo. No se dejan daemon, hooks nuevos ni promesas posteriores a la sesión, y el presupuesto acumulado cuenta comprobaciones, no tiempo de agentes.
+
+El mapping rol → perfil vive en la skill canónica instalada `.agents/skills/orquestar/SKILL.md`; Light instala únicamente `agentic-production`, `agentic-tests` y la dependencia directa `agentic-tdd`. Si alguno diverge, `doctor` informa la divergencia y `agentic-core update` puede restaurarlo transaccionalmente con ownership demostrado. Normal y Full siguen pendientes de #52 y #53.
 
 ### Límites de permisos
 
@@ -265,7 +278,9 @@ Las operaciones marcadas requieren autorización explícita del usuario; la coor
 
 ## QualitySession
 
-### `agentic-quality prepare` — Preparar el baseline
+Estas opciones pertenecen únicamente a instalaciones anteriores. Las instalaciones nuevas de esquema 3 usan el baseline de tarea documentado arriba.
+
+### `agentic-quality prepare` — Preparar la QualitySession legacy
 
 Después de identificar el alcance y antes de modificar producción o tests:
 

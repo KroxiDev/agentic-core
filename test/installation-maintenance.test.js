@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +13,12 @@ const execute = promisify(execFile);
 const repository = path.resolve(import.meta.dirname, "..");
 const binary = path.join(repository, "bin", "agentic-core.js");
 const selection = ["--provider", "codex", "--language", "python"];
+const lightResources = [
+  ["adapters/codex/agents/agentic-production.toml", ".codex/agents/agentic-production.toml"],
+  ["adapters/codex/agents/agentic-tests.toml", ".codex/agents/agentic-tests.toml"],
+  ["skills/orquestar/SKILL.md", ".agents/skills/orquestar/SKILL.md"],
+  ["skills/agentic-tdd/SKILL.md", ".agents/skills/agentic-tdd/SKILL.md"],
+];
 
 async function run(root, args) {
   try {
@@ -40,12 +47,20 @@ test("schema 3 update previews, preserves configuration and replaces only with f
   } });
   const installed = await run(root, ["init", root, ...selection]);
   assert.equal(installed.code, 0, installed.stderr);
+  const installedOwner = JSON.parse(await readFile(path.join(root, ".agentic-core/ownership.json"), "utf8"));
+  for (const [source, target] of lightResources) {
+    const expected = await readFile(path.join(repository, source));
+    assert.deepEqual(await readFile(path.join(root, target)), expected);
+    assert.equal(installedOwner.resources.find((resource) => resource.path === target).sha256,
+      createHash("sha256").update(expected).digest("hex"));
+  }
   const configPath = path.join(root, ".agentic-core", "config.json");
   const config = JSON.parse(await readFile(configPath, "utf8"));
   config.limits.crap = 5;
   const customizedConfig = `${JSON.stringify(config, null, 2)}\n`;
   await writeFile(configPath, customizedConfig);
   await writeFile(path.join(root, ".agentic-core", "golden-rules.md"), "user revision\n");
+  await writeFile(path.join(root, ".codex", "agents", "agentic-production.toml"), "user revision\n");
   const before = await hashDirectory(root);
 
   const preview = await run(root, ["update", root, "--dry-run"]);
@@ -61,6 +76,9 @@ test("schema 3 update previews, preserves configuration and replaces only with f
   assert.equal(await readFile(configPath, "utf8"), customizedConfig);
   assert.equal(await readFile(path.join(root, ".agentic-core", "golden-rules.md"), "utf8"),
     await readFile(path.join(repository, "golden-rules.md"), "utf8"));
+  for (const [source, target] of lightResources) {
+    assert.deepEqual(await readFile(path.join(root, target)), await readFile(path.join(repository, source)));
+  }
   assert.equal(await readFile(path.join(root, "pyproject.toml"), "utf8"), "[project]\nname = 'consumer'\n");
   assert.equal(await readFile(path.join(root, "uv.lock"), "utf8"), "consumer lock\n");
   assert.equal(await readFile(path.join(root, ".venv", "sentinel"), "utf8"), "consumer environment\n");
@@ -112,7 +130,8 @@ test("schema 3 uninstall removes verified resources and preserves foreign state 
     ".agentic-core/runtime",
     ".agentic-core/tools",
     ".agentic-core/ownership.json",
-  ]) await assert.rejects(lstat(path.join(root, relative)), { code: "ENOENT" });
+    ...lightResources.map(([, target]) => target),
+  ]) await assert.rejects(lstat(path.join(root, relative)), { code: "ENOENT" }, relative);
   assert.equal(await readFile(path.join(root, ".agentic-core", "foreign.txt"), "utf8"), "keep foreign\n");
   assert.equal(await readFile(path.join(root, ".agentic-core", "quality", "foreign.txt"), "utf8"), "keep quality\n");
   const agents = await readFile(path.join(root, "AGENTS.md"), "utf8");
@@ -212,3 +231,41 @@ test("schema 2 migration blocks ambiguous AGENTS markers before publishing schem
   assert.equal(await readFile(agentsPath, "utf8"), ambiguous);
   assert.deepEqual(await readFile(path.join(productRoot, "ownership.json")), previousManifest);
 });
+
+for (const collision of [false, true]) {
+  test(`pre-Light schema 3 update ${collision ? "preserves unowned profiles" : "installs Light without force"}`, async (t) => {
+    const root = await createTestProject(t, { files: { "AGENTS.md": "# User instructions\n" } });
+    const installed = await run(root, ["init", root, ...selection]);
+    assert.equal(installed.code, 0, installed.stderr);
+    const ownerPath = path.join(root, ".agentic-core/ownership.json");
+    const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+    const lightPaths = new Set(lightResources.map(([, target]) => target));
+    owner.resources = owner.resources.filter(({ path: target }) => !lightPaths.has(target));
+    delete owner.ownedDirectories;
+    for (const target of lightPaths) await rm(path.join(root, target));
+    const oldBlock = "<!-- AGENTIC_CORE_START -->\n## agentic-core\nLight pendiente de integracion.\n<!-- AGENTIC_CORE_END -->";
+    owner.managedBlocks[0].sha256 = createHash("sha256").update(oldBlock).digest("hex");
+    await writeFile(path.join(root, "AGENTS.md"), `# User instructions\n${oldBlock}\n`);
+    await writeFile(ownerPath, `${JSON.stringify(owner, null, 2)}\n`);
+    if (collision) await writeFile(path.join(root, lightResources[0][1]), "user profile\n");
+    const before = await hashDirectory(root);
+    const preview = await run(root, ["update", root, "--dry-run"]);
+    assert.equal(preview.code, collision ? 4 : 0, preview.stderr);
+    assert.equal(await hashDirectory(root), before);
+    const updated = await run(root, ["update", root, ...(collision ? ["--force"] : [])]);
+    assert.equal(updated.code, collision ? 4 : 0, updated.stderr);
+    if (collision) {
+      assert.equal(JSON.parse(preview.stdout).plan.error.code, "unowned_resource");
+      assert.equal(await hashDirectory(root), before);
+    } else {
+      for (const [source, target] of lightResources) {
+        assert.deepEqual(await readFile(path.join(root, target)), await readFile(path.join(repository, source)));
+      }
+      const nextOwner = JSON.parse(await readFile(ownerPath, "utf8"));
+      assert.equal(nextOwner.resources.length, 9);
+      assert.equal(nextOwner.tools.treeSha256, owner.tools.treeSha256);
+      assert.match(await readFile(path.join(root, "AGENTS.md"), "utf8"), /^# User instructions/);
+      assert.equal((await run(root, ["update", root, "--dry-run"])).code, 0);
+    }
+  });
+}

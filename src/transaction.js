@@ -397,7 +397,8 @@ export async function writeTransaction(projectDirectory, operations, {
 
     if (restorationErrors.length > 0) {
       const backup = backupPreserved ? ` Backup preserved at ${backupRoot}` : "";
-      const failure = new Error(`Installation failed and restoration was incomplete.${backup}`, { cause: error });
+      const details = restorationErrors.map((restorationError) => restorationError.message).join("; ");
+      const failure = new Error(`Installation failed and restoration was incomplete: ${details}.${backup}`, { cause: error });
       failure.code = "ERR_RESTORATION_FAILED";
       failure.backupPath = backupPreserved ? backupRoot : undefined;
       throw failure;
