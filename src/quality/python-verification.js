@@ -352,6 +352,19 @@ function aggregateMessage(status, code, mode, mutation) {
   return `La verificación no tiene evidencia completa por ${code}`;
 }
 
+function meetsMutationThreshold(detected, denominator, threshold) {
+  // Compare integer counts with the configured decimal value, without an
+  // intermediate floating-point percentage or a tolerance below the minimum.
+  const [mantissa, exponent = "0"] = String(threshold).split("e");
+  const [whole, fraction = ""] = mantissa.split(".");
+  const scale = fraction.length - Number(exponent);
+  const minimum = BigInt(whole + fraction);
+  const numerator = BigInt(detected) * 100n;
+  return scale >= 0
+    ? numerator * 10n ** BigInt(scale) >= minimum * BigInt(denominator)
+    : numerator >= minimum * 10n ** BigInt(-scale) * BigInt(denominator);
+}
+
 export function aggregateMutation(report, threshold) {
   const selection = report?.selection;
   const required = Array.isArray(selection?.required) ? selection.required : [];
@@ -407,7 +420,8 @@ export function aggregateMutation(report, threshold) {
     equivalent: equivalent.length,
   };
   const executable = Boolean(selection);
-  const complete = report?.complete === true && report?.integrity?.status === "preserved"
+  const complete = report?.complete === true && report?.code === "mutation_execution_complete"
+    && report?.integrity?.status === "preserved"
     && missing.length === 0 && inconclusive === 0;
   const base = {
     ...report,
@@ -434,7 +448,8 @@ export function aggregateMutation(report, threshold) {
       ...base,
       status: noVerification,
       code: report?.code === "mutation_execution_complete" ? "mutation_inconclusive" : report?.code ?? "mutation_inconclusive",
-      message: "La evidencia de mutación contiene mutantes requeridos inconclusos o incompletos",
+      message: report?.code !== "mutation_execution_complete" && report?.message
+        ? report.message : "La evidencia de mutación contiene mutantes requeridos inconclusos o incompletos",
       exitCode: report?.exitCode ?? 2,
     };
   }
@@ -447,7 +462,7 @@ export function aggregateMutation(report, threshold) {
       exitCode: 0,
     };
   }
-  if (exactPercentage >= threshold) {
+  if (meetsMutationThreshold(killed, denominator, threshold)) {
     return {
       ...base,
       status: "approved",
@@ -702,6 +717,31 @@ export async function verifyPythonTask(root, task, { previous } = {}) {
       code: "mutation_prerequisites_failed",
       message: "Full no puede ejecutar Mutation Testing porque falta evidencia previa aprobada",
     };
+  }
+  if (task.mode === "full" && mutation.executed) {
+    // Mutation captures its own checkpoint, including on reuse. Join it with
+    // the preceding controls and observe the final state before issuing a receipt.
+    try {
+      const finalConfig = await readConfiguration(path.join(root, ".agentic-core/config.json"));
+      const finalInputs = await captureProjectInputs(root, finalConfig.integration.python);
+      const finalEnvironment = await currentEnvironment(root, tests);
+      const consistency = verificationConsistency({
+        inputs: [after.digest, mutation.inputs?.digest, finalInputs.digest],
+        configurations: [configHash, mutation.execution?.configurationHash, hash(finalConfig), finalEnvironment.configurationHash],
+        identities: [currentEnvironmentValue.executionIdentity, mutation.execution?.executionIdentity, finalEnvironment.executionIdentity],
+      });
+      if (evidence.status === "approved" && consistency.status !== "approved") evidence = consistency;
+      if (finalInputs.issues.length) evidence = { status: noVerification, code: "quality_inputs_changed" };
+      if (mutation.execution?.qualityTools !== currentEnvironmentValue.qualityTools
+        || ["node", "platform", "arch", "qualityTools"].some((key) => finalEnvironment[key] !== currentEnvironmentValue[key])) {
+        evidence = { status: noVerification, code: "quality_conditions_changed" };
+      }
+      if (dry.status !== noVerification && dry.hashes?.resolutions !== await resolutionHash(root)) {
+        evidence = { status: noVerification, code: "dry_resolutions_changed" };
+      }
+    } catch (error) {
+      evidence = controlFailure("evidence", error);
+    }
   }
   reuse.mutation = { reused: mutation.reused === true,
     reason: mutation.reused ? "evidence_current" : mutation.required ? "control_pending" : "not_required" };

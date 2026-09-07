@@ -374,7 +374,17 @@ async function executeMutants(root, config, checkpoint, identity, report, select
   } finally {
     report.resources.terminationConfirmed = terminationConfirmed;
     report.resources.retained = !terminationConfirmed;
-    if (terminationConfirmed) await copy.dispose();
+    if (terminationConfirmed) {
+      try {
+        await copy.dispose();
+        report.resources.cleanup = "completed";
+      } catch {
+        report.complete = false;
+        report.resources.cleanup = "failed";
+        report.resources.retained = true;
+        throw new IntegrationError("mutation_cleanup_failed", "No se pudo completar la limpieza de la copia de mutación", 5);
+      }
+    }
   }
 }
 
@@ -391,10 +401,16 @@ export async function runPythonMutation(root, { incremental = false } = {}) {
       identity.protectedPaths.push(path.join(root, ".agentic-core/tools"));
       identity.dependencies = await dependencyFingerprint(identity.protectedPaths);
       const selectionTask = incremental && task ? task : null;
+      const execution = { configurationHash: hash(config), executionIdentity: identity.identity,
+        qualityTools: await dependencyFingerprint([path.join(root, ".agentic-core/tools")]) };
       const evidenceIdentity = hash({ task, inputs: publicCheckpoint(checkpoint), execution: identity.identity,
         dependencies: identity.dependencies, mutation: { selection: selectionTask ? selectionVersion : "complete",
           threshold: config.limits.mutationScore, configuration: hash(config) } });
       if (task && stored.result?.evidenceIdentity === evidenceIdentity && stored.result.complete
+        && stored.result.code === "mutation_execution_complete" && stored.result.resources?.cleanup === "completed"
+        && stored.result.execution?.configurationHash === execution.configurationHash
+        && stored.result.execution?.executionIdentity === execution.executionIdentity
+        && stored.result.execution?.qualityTools === execution.qualityTools
         && stored.result.integrity?.status === "preserved"
         && (!selectionTask || stored.result.selection?.version === selectionVersion)
         && stored.result.details.every((item) => ["killed", "survived", "uncovered"].includes(item.status))) {
@@ -405,7 +421,7 @@ export async function runPythonMutation(root, { incremental = false } = {}) {
           ? "Ejecución incremental de mutantes para el veredicto Full"
           : "Ejecución individual de mutantes; el comando no emite un score de aprobación",
         engine: { name: "mutate4py", version: PYTHON_TOOLS.mutate4py }, taskId: task?.id ?? null, evidenceIdentity,
-        inputs: publicCheckpoint(checkpoint), complete: false, details: [], reused: false };
+        inputs: publicCheckpoint(checkpoint), execution, complete: false, details: [], reused: false };
       try { await executeMutants(root, config, checkpoint, identity, report, selectionTask); }
       catch (error) {
         report.code = error.code ?? "mutation_internal_error";

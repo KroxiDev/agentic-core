@@ -511,3 +511,25 @@ test("mutation score never approves an inconclusive required mutant", () => {
   assert.equal(report.summary.error, 1);
   assert.equal(report.summary.interrupted, 1);
 });
+
+test("mutation score accepts literal decimal equality without accepting a higher minimum", () => {
+  for (const [detected, denominator, threshold] of [[29, 100, 29], [57, 100, 57], [58, 100, 58], [29, 200, 14.5]]) {
+    const required = Array.from({ length: denominator }, (_, id) => ({ id: String(id) }));
+    const report = { code: "mutation_execution_complete", complete: true, integrity: { status: "preserved" },
+      selection: { required, preexisting: [], equivalent: [] },
+      details: required.map((item, index) => ({ ...item, status: index < detected ? "killed" : "survived" })) };
+    assert.equal(aggregateMutation(report, threshold).status, "approved", `${detected}/${denominator} = ${threshold}%`);
+    assert.equal(aggregateMutation(report, threshold + 1e-12).status, "rejected");
+    assert.equal(aggregateMutation(report, threshold - 1e-12).status, "approved");
+  }
+});
+
+test("mutation aggregation preserves an operational failure after all mutants finish", () => {
+  const result = aggregateMutation({ code: "mutation_cleanup_failed", message: "No se pudo limpiar la copia", exitCode: 5, complete: true,
+    integrity: { status: "preserved" }, selection: { required: [{ id: "one" }], preexisting: [], equivalent: [] },
+    details: [{ id: "one", status: "killed" }], pending: 0 }, 90);
+  assert.equal(result.status, "NO_VERIFICADO");
+  assert.equal(result.code, "mutation_cleanup_failed");
+  assert.equal(result.message, "No se pudo limpiar la copia");
+  assert.equal(result.exitCode, 5);
+});
