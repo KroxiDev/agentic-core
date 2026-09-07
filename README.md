@@ -69,6 +69,20 @@ La referencia breve `.agentic-core/quality/active-task.json` contiene el objetiv
 
 Una continuación conserva el mismo `--task`; cambiar su modo, objetivo o `--repair-test` se rechaza con `task_metadata_conflict` sin reemplazar el baseline. `verify` comprueba la vigencia por control y registra en el informe cuáles reutiliza y la causa de cada nueva ejecución. Cambiar solo las resoluciones DRY conserva las pruebas y C.R.A.P. vigentes; Full también aprovecha los controles válidos mientras la mutación permanece pendiente. Al preparar una tarea distinta se retiran únicamente los artefactos internos reconocibles de la tarea anterior y se conserva cualquier archivo desconocido o externo, sin historial ni caché entre tareas. Si un archivo previsto para limpieza cambia durante la captura, la operación se aborta conservando la tarea anterior y el contenido divergente.
 
+### Presupuesto acumulado de comprobaciones
+
+`limits.operation` configura `commandTimeoutMs` (120000 ms inicialmente), `totalBudgetMs` (600000 ms) y `workers` (4). Los tiempos son enteros entre 1 y 2147483647 ms; la concurrencia admite de 1 a 4 comandos. Ajuste estos valores para la suite real del proyecto: no se selecciona una suite sustituta ni se cambia de modo.
+
+El acumulado de `.agentic-core/quality/budget.json` suma el tiempo efectivo de los comandos de pruebas y analizadores, incluidos sus pasos previos dentro del wrapper, el baseline y los reintentos. Excluye razonamiento, implementación, esperas entre operaciones, preparación de copias e inspección de identidad para decidir reutilización. Cada comando queda reservado antes de iniciarse y se liquida cuando termina su árbol de procesos. Los comandos concurrentes suman sus tiempos individuales; las reservas impiden exceder el saldo disponible. `workers` es un máximo, no obliga a paralelizar controles dependientes.
+
+`prepare`, `test`, `dry`, `crap` y `verify` comparten el consumo de la tarea activa. Repetir preparación, cambiar de rol o modificar límites no lo reinicia; solo una tarea distinta comienza otro acumulado. Sin tarea preparada, Directo aplica el mismo contabilizador a todos los comandos de cada operación, en memoria y sin crear estado de tarea. La evidencia reutilizada no vuelve a cobrar su ejecución histórica. Consola y JSON muestran consumo y límites; `baseline` permite consultarlos sin ejecutar pruebas.
+
+`command_timeout` identifica el límite individual y `budget_exhausted` el total; ambos producen `NO_VERIFICADO` cuando falta evidencia requerida, con salida 6 en la ejecución afectada. Un rechazo comprobado conserva su salida 1. El veredicto conserva los controles parciales en `verification.json` y no emite `QUALITY_OK` con comprobaciones requeridas inconclusas. Aumentar un límite conserva el consumo previo e invalida la evidencia cuya configuración cambió.
+
+Una sola operación puede poseer `budget.lock`; otra devuelve `budget_busy`. Tras una interrupción del controlador, confirme que sus procesos terminaron antes de retirar ese bloqueo. Una reserva pendiente, un presupuesto corrupto o ausente en una tarea anterior a esta versión no se convierten en consumo cero: requieren iniciar una tarea distinta. No se recupera automáticamente un proceso cuya terminación no se puede demostrar.
+
+La integración futura de mutación (#49–#50) debe usar `withCurrentTaskBudget` y `executeCommand` dentro del mismo contexto de ejecución. Este contrato reserva, contabiliza y aplica concurrencia y límites a cada comando sin crear otro presupuesto por worker o por mutante.
+
 ### C.R.A.P. de Python
 
 `node .agentic-core/runtime-launcher.mjs agentic-quality crap` ejecuta el pytest autoritativo en su copia controlada y mide mediante `crap4py==0.1.1` del entorno privado. Usa `limits.crap` (7 inicialmente, inclusive), muestra valor, límite y ubicación, y conserva el informe íntegro en `.agentic-core/quality/crap.json`. `AGENTIC_CORE_OUTPUT=json` expone los datos normalizados, identidades y causas para automatización. Esta medición no emite `QUALITY_OK`.

@@ -6,6 +6,7 @@ import { readConfiguration } from "../installation/install.js";
 import { PYTHON_TOOLS, privatePython } from "../installation/python.js";
 import { writeTransaction } from "../transaction.js";
 import { commandBudget, executeCommand, IntegrationError } from "./command.js";
+import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { compareCodeUnits } from "./order.js";
 import { captureProjectInputs, inputHash, privateInputContent, publicCheckpoint } from "./project-inputs.js";
 import { readActiveTask } from "./task-baseline.js";
@@ -410,7 +411,11 @@ async function finishReport(root, { ignoreStoredResolutions = false, ...paramete
   return reportBase({ ...parameters, ...(code ? { status: "NO_VERIFICADO", code, exitCode: 2 } : {}) });
 }
 
-export async function runPythonDry(root, { activeTask, ignoreStoredResolutions = false } = {}) {
+export async function runPythonDry(root, options = {}) {
+  return withCurrentTaskBudget(root, () => measurePythonDry(root, options));
+}
+
+async function measurePythonDry(root, { activeTask, ignoreStoredResolutions = false } = {}) {
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const configurationHash = hash(config);
   const budget = commandBudget(config.limits.operation);
@@ -502,7 +507,7 @@ export async function runPythonDryCli(args, io = process) {
   } catch (error) {
     const typed = typeof error?.code === "string" && Number.isInteger(error.exitCode);
     const { reference: _unsaved, ...partial } = result ?? {};
-    result = { ...partial, command: "dry", status: "NO_VERIFICADO", code: typed ? error.code : "dry_internal_error",
+    result = { ...partial, budget: error.budget, command: "dry", status: "NO_VERIFICADO", code: typed ? error.code : "dry_internal_error",
       message: typed ? error.message : "No se pudo completar o conservar la detección DRY", exitCode: typed ? error.exitCode : 5 };
     // Replace a previous owned success with the current failure; preserve foreign reports.
     if (!_unsaved) {
@@ -513,6 +518,7 @@ export async function runPythonDryCli(args, io = process) {
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
   else {
     io.stdout.write(`${result.status} [${result.code}] ${result.message}\n`);
+    io.stdout.write(formatBudget(result.budget));
     for (const candidate of (result.candidates ?? []).slice(0, 8)) io.stdout.write(`${candidateLine(candidate)}\n`);
     for (const issue of (result.issues ?? []).slice(0, 8)) io.stdout.write(`${issue.file}:${issue.startLine} [${issue.code}]\n`);
     if (result.reference) io.stdout.write(`Informe íntegro: ${result.reference}\n`);

@@ -3,6 +3,7 @@ import path from "node:path";
 import { readConfiguration } from "../installation/install.js";
 import { writeTransaction } from "../transaction.js";
 import { IntegrationError } from "./command.js";
+import { budgetSummary, formatBudget, readTaskBudget, withTaskBudget } from "./task-budget.js";
 import { captureProjectInputs, inputHash, privateInputContent, publicCheckpoint } from "./project-inputs.js";
 import { dependencyFingerprint } from "./project-copy.js";
 import { projectTestIdentity, runProjectTests } from "./python-project.js";
@@ -209,9 +210,13 @@ async function prepare(root, args) {
       && (!requested.objective || requested.objective === loaded.task.objective)
       && (!requested.repairTests.length || hash(requested.repairTests) === hash(loaded.task.repairTests));
     if (continues) {
-      return { command: "prepare", status: loaded.task.initial.valid ? "prepared" : "NO_VERIFICADO",
+      const initialLimit = [loaded.task.initial.result, loaded.task.initial.quality?.crap, loaded.task.initial.quality?.dry]
+        .find((control) => ["budget_exhausted", "command_timeout", "termination_failed", "concurrency_limit"].includes(control?.code));
+      const prepared = loaded.task.initial.valid && !initialLimit;
+      return { command: "prepare", status: prepared ? "prepared" : "NO_VERIFICADO",
         code: "baseline_preserved", message: "Se conserva el inicio de la tarea; consulte baseline para comparar los inputs actuales",
-        exitCode: loaded.task.initial.valid ? 0 : 2, reused: true, task: taskSummary(loaded) };
+        exitCode: prepared ? 0 : initialLimit?.exitCode ?? 2, reused: true, task: taskSummary(loaded),
+        budget: await readTaskBudget(root, loaded.task.id) };
     }
     throw new IntegrationError("task_metadata_conflict",
       "La metadata no coincide con la tarea activa; conserve sus valores para continuar o use un --task distinto para iniciar otra tarea", 4);
@@ -227,6 +232,11 @@ async function prepare(root, args) {
       throw new IntegrationError("invalid_repair_test", "Cada --repair-test debe identificar un input público capturado", 4);
     }
   }
+  return withTaskBudget(root, requested.id,
+    () => captureTask(root, { requested, loaded, config, before, cleanup }), { newTask: true });
+}
+
+async function captureTask(root, { requested, loaded, config, before, cleanup }) {
   let result = await runProjectTests(root);
   const after = await captureProjectInputs(root, config.integration.python);
   if (before.digest !== after.digest || result.inputs && result.inputs.digest !== before.digest
@@ -273,13 +283,15 @@ async function prepare(root, args) {
   }
   // A partial quality baseline is useful evidence even when it cannot support
   // approval yet; the final verifier will keep that control unverified.
-  const prepared = valid;
+  const limitFailure = [result, quality.crap, quality.dry].find((control) =>
+    ["budget_exhausted", "command_timeout", "termination_failed", "concurrency_limit"].includes(control?.code));
+  const prepared = valid && !limitFailure;
   return { command: "prepare", status: prepared ? "prepared" : "NO_VERIFICADO",
-    code: !valid ? result.code : prepared ? result.code === "tests_failed" ? "baseline_tests_failed" : "baseline_ready" : quality.code,
+    code: limitFailure?.code ?? (!valid ? result.code : prepared ? result.code === "tests_failed" ? "baseline_tests_failed" : "baseline_ready" : quality.code),
     message: prepared ? "Inicio y mediciones de calidad capturados; los fallos iniciales se conservan y la suite final debe aprobar. Los fallos ajenos no amplían el alcance"
       : !valid ? "No se obtuvo un baseline válido; se conserva el punto inicial y la causa sin fabricar una aprobación"
         : "El inicio se conserva, pero una medición de calidad quedó incompleta; no se fabrica evidencia de aprobación",
-    exitCode: prepared ? 0 : 2, reused: false, replaced: Boolean(loaded), task: taskSummary(enriched) };
+    exitCode: limitFailure?.exitCode ?? (prepared ? 0 : 2), reused: false, replaced: Boolean(loaded), task: taskSummary(enriched), budget: budgetSummary() };
 }
 
 async function inspect(root, args, verify) {
@@ -289,11 +301,14 @@ async function inspect(root, args, verify) {
   if (!verify) {
     const freshness = await taskFreshness(root, loaded.task);
     return { command: "baseline", status: "reported", code: "baseline_preserved", exitCode: 0,
-      message: "Comparación contra el inicio real de la tarea; no se ejecutaron pruebas", task: taskSummary(loaded), freshness };
+      message: "Comparación contra el inicio real de la tarea; no se ejecutaron pruebas", task: taskSummary(loaded), freshness,
+      budget: await readTaskBudget(root, loaded.task.id) };
   }
   const stored = await readVerificationReport(root, loaded.task);
-  const result = await verifyPythonTask(root, loaded.task, { previous: stored?.report });
-  return { ...result, task: taskSummary(loaded) };
+  return withTaskBudget(root, loaded.task.id, async () => {
+    const result = await verifyPythonTask(root, loaded.task, { previous: stored?.report });
+    return { ...result, task: taskSummary(loaded), budget: budgetSummary() };
+  });
 }
 
 export async function runTaskQualityCli(args, io = process) {
@@ -303,11 +318,12 @@ export async function runTaskQualityCli(args, io = process) {
       : await inspect(process.cwd(), args.slice(1), args[0] === "verify");
   } catch (error) {
     const typed = typeof error.code === "string" && Number.isInteger(error.exitCode);
-    result = { command: args[0], status: "NO_VERIFICADO", code: typed ? error.code : "task_internal_error",
+    result = { command: args[0], budget: error.budget, status: "NO_VERIFICADO", code: typed ? error.code : "task_internal_error",
       message: typed ? error.message : "No se pudo conservar o consultar la evidencia de tarea", exitCode: typed ? error.exitCode : 5 };
   }
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
   else if (result.receipt) io.stdout.write(`${result.receipt}\n`);
   else io.stdout.write(`${result.status} [${result.code}] ${result.message}\n${result.task ? `Tarea ${result.task.id}; objetivo: ${result.task.objective}; baseline: ${reference}\n` : ""}`);
+  if (io.env?.AGENTIC_CORE_OUTPUT !== "json") io.stdout.write(formatBudget(result.budget));
   return result.exitCode;
 }
