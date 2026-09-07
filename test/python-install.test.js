@@ -14,6 +14,7 @@ const repository = path.resolve(import.meta.dirname, "..");
 const binary = path.join(repository, "bin/agentic-core.js");
 const selection = ["--provider", "codex", "--language", "python"];
 const lightResources = [
+  ["adapters/codex/agents/agentic-read.toml", ".codex/agents/agentic-read.toml"],
   ["adapters/codex/agents/agentic-production.toml", ".codex/agents/agentic-production.toml"],
   ["adapters/codex/agents/agentic-tests.toml", ".codex/agents/agentic-tests.toml"],
   ["skills/orquestar/SKILL.md", ".agents/skills/orquestar/SKILL.md"],
@@ -88,7 +89,7 @@ test("private tools and installed runtime survive the bootstrap and remain indep
     const block = agents.match(/<!-- AGENTIC_CORE_START -->[\s\S]*?<!-- AGENTIC_CORE_END -->/gu);
     assert.equal(block?.length, 1);
     assert.match(block[0], /Light esta habilitado/u);
-    assert.match(block[0], /Normal y Full continuan pendientes/u);
+    assert.match(block[0], /Normal esta habilitado/u);
     const owner = JSON.parse(await readFile(path.join(project, ".agentic-core/ownership.json"), "utf8"));
     assert.equal(owner.managedBlocks[0].sha256, createHash("sha256").update(block[0]).digest("hex"));
     assert.deepEqual(await readFile(path.join(project, ".agentic-core/golden-rules.md")),

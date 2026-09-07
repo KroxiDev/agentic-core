@@ -47,10 +47,19 @@ abre una nueva pareja Implementador -> Tester y consume una ronda adicional comp
 Se permiten como maximo dos rondas adicionales; al agotarlas la tarea queda pendiente,
 sin aprobacion ni cambio automatico de modo.
 
-### Normal y Full
+### Normal
 
-Normal y Full continuan pendientes de integracion en #52 y #53. No se despachan roles
-genericos ni se usa el flujo legacy del esquema 2 como sustituto.
+Normal esta habilitado para Codex con cuatro roles base:
+Planificador -> Implementador -> Tester -> Evaluador.
+Con Light o Normal, lee y sigue \`.agents/skills/orquestar/SKILL.md\` antes de despachar.
+El Evaluador contrasta la solicitud completa. Su rechazo devuelve a un nuevo Planificador
+solo los requisitos pendientes y comparte las dos rondas adicionales con el Tester.
+El cierre requiere evaluacion satisfactoria y calidad vigente de la misma tarea.
+
+### Full
+
+Full continua pendiente de integracion en #53. No se despachan roles genericos
+ni se usa el flujo legacy del esquema 2 como sustituto.
 
 ${END}`;
 const json = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
@@ -64,7 +73,8 @@ const CORE_RESOURCE_PATHS = [
   ".agentic-core/runtime-launcher.mjs",
   ".agentic-core/.gitignore",
 ];
-const LIGHT_RESOURCE_SPECS = [
+const COORDINATION_RESOURCE_SPECS = [
+  { source: "adapters/codex/agents/agentic-read.toml", target: ".codex/agents/agentic-read.toml" },
   { source: "adapters/codex/agents/agentic-production.toml", target: ".codex/agents/agentic-production.toml" },
   { source: "adapters/codex/agents/agentic-tests.toml", target: ".codex/agents/agentic-tests.toml" },
   { source: "skills/orquestar/SKILL.md", target: ".agents/skills/orquestar/SKILL.md" },
@@ -72,8 +82,9 @@ const LIGHT_RESOURCE_SPECS = [
 ];
 const SCHEMA3_RESOURCE_PATHS = [
   ...CORE_RESOURCE_PATHS,
-  ...LIGHT_RESOURCE_SPECS.map(({ target }) => target),
+  ...COORDINATION_RESOURCE_SPECS.map(({ target }) => target),
 ];
+const LIGHT_RESOURCE_PATHS = SCHEMA3_RESOURCE_PATHS.filter((resource) => resource !== ".codex/agents/agentic-read.toml");
 const OWNED_DIRECTORIES = [QUALITY_DIRECTORY, ".codex/agents", ".agents/skills/orquestar", ".agents/skills/agentic-tdd"];
 const LEGACY_CONFIG_VERSIONS = new Set([1, 2]);
 const LEGACY_RESOURCE_PATHS = new Set([
@@ -203,7 +214,7 @@ export async function installPythonProject(projectDirectory, options = {}) {
     { path: ".agentic-core/golden-rules.md", content: resource("resources/golden-rules.md") },
     { path: ".agentic-core/runtime-launcher.mjs", content: resource("resources/src/runtime-launcher.mjs") },
     { path: ".agentic-core/.gitignore", content: Buffer.from("/quality/\n/tools/\n") },
-    ...LIGHT_RESOURCE_SPECS.map(({ source, target }) => ({
+    ...COORDINATION_RESOURCE_SPECS.map(({ source, target }) => ({
       path: target,
       content: resource(`resources/${source}`),
     })),
@@ -290,7 +301,10 @@ function validateOwnershipDocument(owner, action = "actualizar") {
     && owner.ownedDirectories === undefined
     && owner.resources.length === CORE_RESOURCE_PATHS.length
     && owner.resources.every((resource, index) => resource.path === CORE_RESOURCE_PATHS[index]);
-  if (owner.configVersion === CONFIG_VERSION && !originalSchema3
+  const lightSchema3 = owner.configVersion === CONFIG_VERSION
+    && owner.resources.length === LIGHT_RESOURCE_PATHS.length
+    && owner.resources.every((resource, index) => resource.path === LIGHT_RESOURCE_PATHS[index]);
+  if (owner.configVersion === CONFIG_VERSION && !originalSchema3 && !lightSchema3
     && (owner.resources.length !== SCHEMA3_RESOURCE_PATHS.length
       || owner.resources.some((resource, index) => resource.path !== SCHEMA3_RESOURCE_PATHS[index]))) {
     ownershipFailure(`No se puede ${action}: el esquema 3 reclama recursos fuera de sus limites`);
@@ -492,7 +506,7 @@ function currentResources(runtime, configContent) {
     { path: CORE_RESOURCE_PATHS[2], content: resourceFromRuntime(runtime, "resources/golden-rules.md") },
     { path: CORE_RESOURCE_PATHS[3], content: resourceFromRuntime(runtime, "resources/src/runtime-launcher.mjs") },
     { path: CORE_RESOURCE_PATHS[4], content: Buffer.from("/quality/\n/tools/\n") },
-    ...LIGHT_RESOURCE_SPECS.map(({ source, target }) => ({
+    ...COORDINATION_RESOURCE_SPECS.map(({ source, target }) => ({
       path: target,
       content: resourceFromRuntime(runtime, `resources/${source}`),
     })),
