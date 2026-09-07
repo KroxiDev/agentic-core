@@ -194,3 +194,41 @@ test("ambiguous legacy configuration is diagnosed before migration writes", asyn
   assert.equal(await readFile(configPath, "utf8"), ambiguous);
   assert.deepEqual(await readFile(path.join(productRoot, "ownership.json")), beforeManifest);
 });
+
+for (const collision of [false, true]) {
+  test(`pre-Light schema 3 update ${collision ? "preserves unowned profiles" : "installs Light without force"}`, async (t) => {
+    const root = await createTestProject(t, { files: { "AGENTS.md": "# User instructions\n" } });
+    const installed = await run(root, ["init", root, ...selection]);
+    assert.equal(installed.code, 0, installed.stderr);
+    const ownerPath = path.join(root, ".agentic-core/ownership.json");
+    const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+    const lightPaths = new Set(lightResources.map(([, target]) => target));
+    owner.resources = owner.resources.filter(({ path: target }) => !lightPaths.has(target));
+    delete owner.ownedDirectories;
+    for (const target of lightPaths) await rm(path.join(root, target));
+    const oldBlock = "<!-- AGENTIC_CORE_START -->\n## agentic-core\nLight pendiente de integracion.\n<!-- AGENTIC_CORE_END -->";
+    owner.managedBlocks[0].sha256 = createHash("sha256").update(oldBlock).digest("hex");
+    await writeFile(path.join(root, "AGENTS.md"), `# User instructions\n${oldBlock}\n`);
+    await writeFile(ownerPath, `${JSON.stringify(owner, null, 2)}\n`);
+    if (collision) await writeFile(path.join(root, lightResources[0][1]), "user profile\n");
+    const before = await hashDirectory(root);
+    const preview = await run(root, ["update", root, "--dry-run"]);
+    assert.equal(preview.code, collision ? 4 : 0, preview.stderr);
+    assert.equal(await hashDirectory(root), before);
+    const updated = await run(root, ["update", root, ...(collision ? ["--force"] : [])]);
+    assert.equal(updated.code, collision ? 4 : 0, updated.stderr);
+    if (collision) {
+      assert.equal(JSON.parse(preview.stdout).plan.error.code, "unowned_resource");
+      assert.equal(await hashDirectory(root), before);
+    } else {
+      for (const [source, target] of lightResources) {
+        assert.deepEqual(await readFile(path.join(root, target)), await readFile(path.join(repository, source)));
+      }
+      const nextOwner = JSON.parse(await readFile(ownerPath, "utf8"));
+      assert.equal(nextOwner.resources.length, 9);
+      assert.equal(nextOwner.tools.treeSha256, owner.tools.treeSha256);
+      assert.match(await readFile(path.join(root, "AGENTS.md"), "utf8"), /^# User instructions/);
+      assert.equal((await run(root, ["update", root, "--dry-run"])).code, 0);
+    }
+  });
+}

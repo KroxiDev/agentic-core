@@ -286,7 +286,11 @@ function validateOwnershipDocument(owner, action = "actualizar") {
     }
     resourcePaths.add(resource.path);
   }
-  if (owner.configVersion === CONFIG_VERSION
+  const originalSchema3 = owner.configVersion === CONFIG_VERSION
+    && owner.ownedDirectories === undefined
+    && owner.resources.length === CORE_RESOURCE_PATHS.length
+    && owner.resources.every((resource, index) => resource.path === CORE_RESOURCE_PATHS[index]);
+  if (owner.configVersion === CONFIG_VERSION && !originalSchema3
     && (owner.resources.length !== SCHEMA3_RESOURCE_PATHS.length
       || owner.resources.some((resource, index) => resource.path !== SCHEMA3_RESOURCE_PATHS[index]))) {
     ownershipFailure(`No se puede ${action}: el esquema 3 reclama recursos fuera de sus limites`);
@@ -313,6 +317,7 @@ function validateOwnershipDocument(owner, action = "actualizar") {
       ownershipFailure(`No se puede ${action}: el esquema 3 solo gestiona el bloque AGENTS.md`);
     }
   }
+  if (originalSchema3) owner.ownedDirectories = [];
   if (!Array.isArray(owner.ownedDirectories)) {
     ownershipFailure(`No se puede ${action}: los directorios propios no son validos`);
   }
@@ -324,7 +329,7 @@ function validateOwnershipDocument(owner, action = "actualizar") {
     }
     ownedDirectories.add(directory);
   }
-  if (owner.configVersion === CONFIG_VERSION
+  if (owner.configVersion === CONFIG_VERSION && !originalSchema3
     && (owner.ownedDirectories.length !== OWNED_DIRECTORIES.length
       || owner.ownedDirectories.some((directory, index) => directory !== OWNED_DIRECTORIES[index]))) {
     ownershipFailure(`No se puede ${action}: el esquema 3 reclama directorios fuera de sus limites`);
@@ -696,6 +701,7 @@ async function updateCurrentInstallation(projectDirectory, options = {}) {
         code: "unowned_resource",
         message: `Existe un recurso sin ownership demostrado en ${resource.path}; se conserva`,
       });
+      else addFileOperation(operations, actions, project, resource.path, state, resource.content, "write_resource");
       continue;
     }
     if (state.kind === "missing") {
@@ -734,7 +740,7 @@ async function updateCurrentInstallation(projectDirectory, options = {}) {
       agentsContent = agentsState.content;
     } else {
       divergences.push(`${block.path}#agentic-core`);
-      if (options.force) agentsContent = replaceManaged(agentsState.content, block.startMarker, block.endMarker);
+      if (hash(found.content) === block.sha256 || options.force) agentsContent = replaceManaged(agentsState.content, block.startMarker, block.endMarker);
       else blockers.push(forceRequired(`${block.path}#agentic-core`));
     }
   }

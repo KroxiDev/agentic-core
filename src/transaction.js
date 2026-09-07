@@ -299,8 +299,10 @@ export async function writeTransaction(projectDirectory, operations, {
         if (await hashDirectory(temporaryPath) !== operation.sourceSha256) {
           throw new Error(`Runtime source changed while it was copied: ${operation.sourcePath ?? operation.path}`);
         }
+        if (guarded) await assertExpectedState(operation, await inspect(operation.path));
         if (["directory", "file"].includes(snapshots.get(operation.path).kind)) {
           await rm(operation.path, { recursive: true, force: true });
+          if (guarded) applied.set(operation.path, { operation, expectedTreeSha256: null });
         }
         await rename(temporaryPath, operation.path);
         temporaryPaths.delete(temporaryPath);
