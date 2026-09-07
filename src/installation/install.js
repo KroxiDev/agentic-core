@@ -52,6 +52,21 @@ sin aprobacion ni cambio automatico de modo.
 Normal y Full continuan pendientes de integracion en #52 y #53. No se despachan roles
 genericos ni se usa el flujo legacy del esquema 2 como sustituto.
 
+### Guardar o publicar el resultado de calidad
+
+Solo ante una petición expresa de guardar o publicar el resultado, usa
+\`node .agentic-core/runtime-launcher.mjs agentic-quality export --output <archivo.md>\`
+para un archivo nuevo fuera de los directorios internos. Para GitHub u otro destino,
+usa \`export --stdout\` y entrega el Markdown mediante una capacidad disponible del host
+autorizada para ese destino. No instales conectores ni cambies cuentas para exportar.
+Revisa el contenido y su privacidad antes de publicarlo; conserva español neutro.
+Solo confirma el guardado con el resultado exitoso de escritura, y la publicación con
+la respuesta y referencia comprobables del host. Si falta una capacidad o falla la
+entrega, informa la causa y qué quedó preparado, sin anunciar una publicación.
+Exportar conserva el último veredicto con sus límites; no renueva su vigencia.
+Sin petición no exportes ni crees historial. Esta petición no activa al Documentador
+para toda la tarea ni establece sincronización entre instalaciones.
+
 ${END}`;
 const json = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
 const hash = (value) => createHash("sha256").update(value).digest("hex");

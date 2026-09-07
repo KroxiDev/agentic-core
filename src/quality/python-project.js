@@ -185,6 +185,7 @@ function integrationFailure(error) {
 
 export async function runPythonQualityCli(args, io = process) {
   if (args.length === 0 || (args.length === 1 && ["--help", "-h"].includes(args[0]))) {
+    io.stdout.write("Exportación por petición: agentic-quality export --output <archivo.md> guarda el último veredicto con evidencia resumida; export --stdout prepara Markdown para una entrega autorizada del host, sin confirmar publicación remota. No vuelve a ejecutar pruebas ni activa al Documentador.\n");
     io.stdout.write("Mutación: agentic-quality mutate ejecuta mutantes de mutate4py con el comando autoritativo en una copia controlada. Informe: .agentic-core/quality/mutation.json. La aprobación Full requiere además selección y agregación.\n");
     io.stdout.write("DRY: agentic-quality dry detecta duplicación Python con dry4python fijado, límites de config.json y baseline de tarea; no interpreta el código de salida del motor como aprobación. Informe: .agentic-core/quality/dry.json.\n");
     io.stdout.write("C.R.A.P.: agentic-quality crap mide el alcance Python con el límite de config.json y conserva resultados parciales. Informe: .agentic-core/quality/crap.json.\n");

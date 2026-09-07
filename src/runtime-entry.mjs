@@ -8,6 +8,7 @@ import { runTaskQualityCli } from "./quality/task-baseline.js";
 import { runPythonCrapCli } from "./quality/python-crap.js";
 import { runPythonDryCli } from "./quality/python-dry.js";
 import { runPythonMutationCli } from "./quality/python-mutation.js";
+import { runResultExportCli } from "./quality/result-export.js";
 
 const [seam, ...args] = process.argv.slice(2);
 
@@ -16,7 +17,8 @@ try {
     process.exitCode = await runMaintenanceCli(args);
   } else if (seam === "agentic-quality") {
     if (await isPythonInstallation(process.cwd())) {
-      process.exitCode = await (args[0] === "crap" ? runPythonCrapCli(args)
+      process.exitCode = await (args[0] === "export" ? runResultExportCli(args)
+        : args[0] === "crap" ? runPythonCrapCli(args)
         : args[0] === "dry" ? runPythonDryCli(args)
         : ["mutate", "mutation"].includes(args[0]) ? runPythonMutationCli(args)
         : ["prepare", "baseline", "verify"].includes(args[0]) ? runTaskQualityCli(args) : runPythonQualityCli(args));
