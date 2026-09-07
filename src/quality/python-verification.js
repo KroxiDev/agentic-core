@@ -373,7 +373,8 @@ export function aggregateMutation(report, threshold) {
   const pending = Math.max(Number.isInteger(report?.pending) ? report.pending : 0, missing.length);
   const inconclusive = timeout + errors + interrupted + invalid + pending;
   const denominator = required.length;
-  const percentage = denominator === 0 ? null : Number(((killed / denominator) * 100).toFixed(2));
+  const exactPercentage = denominator === 0 ? null : (killed / denominator) * 100;
+  const percentage = exactPercentage === null ? null : Number(exactPercentage.toFixed(2));
   const score = {
     detected: killed,
     denominator,
@@ -446,7 +447,7 @@ export function aggregateMutation(report, threshold) {
       exitCode: 0,
     };
   }
-  if (percentage >= threshold) {
+  if (exactPercentage >= threshold) {
     return {
       ...base,
       status: "approved",

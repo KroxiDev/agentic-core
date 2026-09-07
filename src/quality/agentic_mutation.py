@@ -27,6 +27,7 @@ def main():
             identity = json.dumps([entry["path"], entry["sha256"], site.index, site.desc])
             results.append({"id": hashlib.sha256(identity.encode()).hexdigest(),
                             "file": entry["path"], "line": site.line, "column": site.col,
+                            "endLine": site.end_line, "endColumn": site.end_col,
                             "symbol": site.function_id, "mutation": site.desc,
                             "sourceHash": entry["sha256"],
                             "mutatedHash": hashlib.sha256(mutated).hexdigest(),

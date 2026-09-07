@@ -33,6 +33,63 @@ const duplicateSource = [
   "",
 ].join("\n");
 const resolutionReason = "first conserva el orden de entrada; second usa result.reverse() para entregar la secuencia invertida requerida por su consumidor.";
+const completeMutationSource = [
+  "",
+  "def detected(value):",
+  "    return value > 2",
+  "",
+  "def survivor(value):",
+  "    return value > 5",
+  "",
+].join("\n");
+const inconclusiveMutationSource = [
+  "",
+  "def detected(value):",
+  "    return value > 2",
+  "",
+  "def survivor(value):",
+  "    return value > 5",
+  "",
+  "def untouched(value):",
+  "    return value > 3",
+  "",
+  "def broken(value):",
+  "    if value > 2:",
+  "        raise ImportError('synthetic missing dependency')",
+  "",
+].join("\n");
+
+async function fullMutationProject(t, { threshold, corpus = "complete" }) {
+  const { root } = await pythonProject(t);
+  await configurePythonProject(root, (config) => {
+    config.limits.crap = 100;
+    config.limits.mutationScore = threshold;
+  });
+  const prepared = await runPythonProject(root, prepare("full"));
+  assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
+  const subject = path.join(root, "work dir/src/subject.py");
+  const source = await readFile(subject, "utf8");
+  await writeFile(subject, source + (corpus === "inconclusive" ? inconclusiveMutationSource : completeMutationSource));
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  const imports = corpus === "inconclusive"
+    ? "from src.subject import classify, detected, survivor, untouched, broken"
+    : "from src.subject import classify, detected, survivor";
+  const assertions = corpus === "inconclusive"
+    ? [
+      "    assert detected(2) is False",
+      "    assert survivor(9) is True",
+      "    assert broken(2) is None",
+    ].join("\n")
+    : [
+      "    assert detected(2) is False",
+      "    assert survivor(9) is True",
+    ].join("\n");
+  const checksSource = await readFile(checks, "utf8");
+  await writeFile(checks, checksSource
+    .replace("from src.subject import classify", imports)
+    .replace("    assert classify(0) == 'other'", `    assert classify(0) == 'other'\n${assertions}`));
+  return root;
+}
 
 test("installed Light and Normal verification emit a receipt backed by all required controls", async (t) => {
   for (const mode of ["light", "normal"]) {
@@ -275,32 +332,152 @@ test("Full reports an explicit empty incremental mutation denominator", async (t
   assert.match(report.receipt, /^QUALITY_OK/u);
 });
 
-test("Full executes every changed-line mutant and applies a configured score", async (t) => {
+test("installed Full selects a mutation whose changed operator is below its AST start line", async (t) => {
   const { root } = await pythonProject(t);
-  await configurePythonProject(root, (config) => { config.limits.mutationScore = 50; });
+  await configurePythonProject(root, (config) => {
+    config.limits.crap = 100;
+    config.limits.mutationScore = 90;
+  });
+  const subject = path.join(root, "work dir/src/subject.py");
+  const baselineSource = await readFile(subject, "utf8");
+  await writeFile(subject, baselineSource + "def multiline(value, limit):\n    return (value\n            > limit)\n");
+  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  await writeFile(checks, (await readFile(checks, "utf8"))
+    .replace("from src.subject import classify", "from src.subject import classify, multiline")
+    .replace("    assert classify(0) == 'other'", "    assert classify(0) == 'other'\n    assert multiline(0, 0) is False"));
   const prepared = await runPythonProject(root, prepare("full"));
   assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
-  const subject = path.join(root, "work dir/src/subject.py");
-  const source = await readFile(subject, "utf8");
-  await writeFile(subject, source.replace("value > 0", "value >= 0"));
-  const checks = path.join(root, "work dir/python checks/check_subject.py");
+  const currentSource = await readFile(subject, "utf8");
+  await writeFile(subject, currentSource.replace("            > limit", "            >= limit"));
   await writeFile(checks, (await readFile(checks, "utf8")).replace(
-    "classify(0) == 'other'",
-    "classify(0) == 'positive'\n    assert classify(-1) == 'other'",
+    "    assert multiline(0, 0) is False",
+    "    assert multiline(0, 0) is True",
   ));
 
   const verified = await runPythonProject(root, ["verify"]);
   const report = parse(verified);
+  const mutation = report.verification.mutation;
   assert.equal(verified.code, 0, verified.stdout + verified.stderr);
-  assert.equal(report.status, "approved");
-  assert.equal(report.verification.mutation.status, "approved");
-  assert.equal(report.verification.mutation.score.threshold, 50);
-  assert.ok(report.verification.mutation.score.denominator > 0);
-  assert.equal(report.verification.mutation.score.detected, report.verification.mutation.score.denominator);
-  assert.equal(report.verification.mutation.summary.pending, 0);
-  assert.equal(report.verification.mutation.selection.changedFiles.length, 1);
-  assert.equal(report.verification.mutation.selection.required.length,
-    report.verification.mutation.details.length);
+  assert.equal(mutation.status, "approved");
+  assert.equal(mutation.score.denominator, 1);
+  assert.equal(mutation.score.detected, 1);
+  assert.equal(mutation.selection.changedFiles.length, 1);
+  assert.equal(mutation.selection.required.length, 1);
+  assert.equal(mutation.details.length, 1);
+  assert.equal(mutation.details[0].line, 6);
+  assert.equal(mutation.details[0].endLine, 7);
+  assert.match(report.receipt, /^QUALITY_OK/u);
+});
+
+test("installed Full applies a configured threshold to the complete mutation inventory", async (t) => {
+  const approvedRoot = await fullMutationProject(t, { threshold: 40 });
+  const approved = parse(await runPythonProject(approvedRoot, ["verify"]));
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.verification.mutation.status, "approved");
+  assert.equal(approved.verification.mutation.score.threshold, 40);
+  assert.equal(approved.verification.mutation.score.denominator, 2);
+  assert.equal(approved.verification.mutation.score.detected, 1);
+  assert.equal(approved.verification.mutation.score.percentage, 50);
+  assert.equal(approved.verification.mutation.summary.pending, 0);
+  assert.equal(approved.verification.mutation.summary.inconclusive, 0);
+  assert.equal(approved.verification.mutation.inventory.generated, 4);
+  assert.equal(approved.verification.mutation.inventory.required, 2);
+  assert.equal(approved.verification.mutation.inventory.preexisting, 2);
+  assert.equal(approved.verification.mutation.selection.required.length, 2);
+  assert.equal(approved.verification.mutation.details.length, 2);
+  assert.match(approved.receipt, /^QUALITY_OK/u);
+
+  const rejectedRoot = await fullMutationProject(t, { threshold: 90 });
+  const rejected = parse(await runPythonProject(rejectedRoot, ["verify"]));
+  assert.equal(rejected.status, "rejected");
+  assert.equal(rejected.code, "mutation_score_below_limit");
+  assert.equal(rejected.verification.mutation.status, "rejected");
+  assert.equal(rejected.verification.mutation.score.threshold, 90);
+  assert.equal(rejected.verification.mutation.score.percentage, 50);
+  assert.equal(rejected.verification.mutation.summary.pending, 0);
+  assert.doesNotMatch(rejected.receipt, /^QUALITY_OK/u);
+});
+
+test("installed Full keeps an error inconclusive after the score passes", async (t) => {
+  const root = await fullMutationProject(t, { threshold: 10, corpus: "inconclusive" });
+  const verified = await runPythonProject(root, ["verify"]);
+  const report = parse(verified);
+  const mutation = report.verification.mutation;
+  assert.equal(verified.code, 2, verified.stdout + verified.stderr);
+  assert.equal(report.status, "NO_VERIFICADO");
+  assert.equal(report.code, "mutation_inconclusive");
+  assert.equal(mutation.status, "NO_VERIFICADO");
+  assert.equal(mutation.score.threshold, 10);
+  assert.equal(mutation.score.denominator, 4);
+  assert.equal(mutation.score.detected, 1);
+  assert.equal(mutation.score.percentage, 25);
+  assert.ok(mutation.score.percentage > mutation.score.threshold);
+  assert.equal(mutation.score.survived, 1);
+  assert.equal(mutation.score.uncovered, 1);
+  assert.equal(mutation.score.inconclusive, 1);
+  assert.equal(mutation.summary.pending, 0);
+  assert.equal(mutation.summary.timeout, 0);
+  assert.equal(mutation.summary.error, 1);
+  assert.equal(mutation.summary.interrupted, 0);
+  assert.equal(mutation.inventory.generated, 6);
+  assert.equal(mutation.inventory.required, 4);
+  assert.equal(mutation.inventory.preexisting, 2);
+  assert.equal(mutation.selection.required.length, 4);
+  assert.equal(mutation.details.length, 4);
+  assert.doesNotMatch(report.receipt, /^QUALITY_OK/u);
+});
+
+test("mutation aggregation preserves an exhausted budget as inconclusive", () => {
+  const report = aggregateMutation({
+    command: "mutation",
+    code: "budget_exhausted",
+    complete: false,
+    integrity: { status: "preserved" },
+    selection: {
+      counts: { generated: 1 },
+      required: [{ id: "budget" }],
+      preexisting: [],
+      equivalent: [],
+    },
+    details: [],
+    pending: 1,
+    exitCode: 6,
+  }, 10);
+  assert.equal(report.status, "NO_VERIFICADO");
+  assert.equal(report.code, "budget_exhausted");
+  assert.equal(report.exitCode, 6);
+  assert.equal(report.score.inconclusive, 1);
+  assert.equal(report.summary.pending, 1);
+});
+
+test("mutation score compares the exact ratio and rounds only its presentation", () => {
+  const buildReport = () => ({
+    command: "mutation",
+    code: "mutation_execution_complete",
+    complete: true,
+    integrity: { status: "preserved" },
+    selection: {
+      counts: { generated: 3 },
+      required: [{ id: "killed-1" }, { id: "killed-2" }, { id: "survived-1" }],
+      preexisting: [],
+      equivalent: [],
+    },
+    details: [
+      { id: "killed-1", status: "killed" },
+      { id: "killed-2", status: "killed" },
+      { id: "survived-1", status: "survived" },
+    ],
+  });
+
+  const below = aggregateMutation(buildReport(), 66.67);
+  assert.equal(below.score.percentage, 66.67);
+  assert.equal(below.status, "rejected");
+  assert.equal(below.code, "mutation_score_below_limit");
+
+  const exact = aggregateMutation(buildReport(), (2 / 3) * 100);
+  assert.equal(exact.score.percentage, 66.67);
+  assert.equal(exact.status, "approved");
+  assert.equal(exact.code, "mutation_score_approved");
 });
 
 test("mutation score never approves an inconclusive required mutant", () => {
@@ -310,8 +487,11 @@ test("mutation score never approves an inconclusive required mutant", () => {
     complete: true,
     integrity: { status: "preserved" },
     selection: {
-      counts: { generated: 3 },
-      required: [{ id: "killed-1" }, { id: "killed-2" }, { id: "timeout-1" }],
+      counts: { generated: 5 },
+      required: [
+        { id: "killed-1" }, { id: "killed-2" }, { id: "timeout-1" },
+        { id: "error-1" }, { id: "interrupted-1" },
+      ],
       preexisting: [],
       equivalent: [],
     },
@@ -319,11 +499,15 @@ test("mutation score never approves an inconclusive required mutant", () => {
       { id: "killed-1", status: "killed" },
       { id: "killed-2", status: "killed" },
       { id: "timeout-1", status: "timeout" },
+      { id: "error-1", status: "error" },
+      { id: "interrupted-1", status: "interrupted" },
     ],
-    summary: { killed: 2, timeout: 1 },
-  }, 50);
-  assert.equal(report.score.percentage, 66.67);
+  }, 40);
+  assert.equal(report.score.percentage, 40);
   assert.equal(report.status, "NO_VERIFICADO");
   assert.equal(report.code, "mutation_inconclusive");
-  assert.equal(report.score.inconclusive, 1);
+  assert.equal(report.score.inconclusive, 3);
+  assert.equal(report.summary.timeout, 1);
+  assert.equal(report.summary.error, 1);
+  assert.equal(report.summary.interrupted, 1);
 });

@@ -16,7 +16,7 @@ const reference = ".agentic-core/quality/mutation.json";
 const hash = (value) => inputHash(JSON.stringify(value));
 const fail = (code, message) => new IntegrationError(code, message);
 const terminal = new Set(["budget_exhausted", "budget_interrupted", "termination_failed", "command_interrupted", "pytest_interrupted"]);
-const selectionVersion = "baseline-delta-v1";
+const selectionVersion = "baseline-delta-v2";
 
 function lines(value) {
   return value.toString("utf8").split(/\r?\n/u);
@@ -75,6 +75,56 @@ function changedLines(before, after) {
   return changed;
 }
 
+function contentBuffer(value) {
+  return Buffer.isBuffer(value) ? value : Buffer.from(value ?? "");
+}
+
+function mutatedContent(mutant) {
+  if (typeof mutant.content !== "string") return null;
+  return Buffer.from(mutant.content, "base64");
+}
+
+function changedByteRange(before, after) {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start += 1;
+  if (start === before.length && start === after.length) return null;
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+  return { start, end: afterEnd };
+}
+
+function lineAtByte(content, offset) {
+  const limit = Math.min(Math.max(0, offset), content.length);
+  let line = 1;
+  for (let index = 0; index < limit; index += 1) if (content[index] === 0x0a) line += 1;
+  return line;
+}
+
+function effectiveMutationRange(mutant, current) {
+  const mutated = mutatedContent(mutant);
+  if (mutated && current?.content !== undefined) {
+    const range = changedByteRange(contentBuffer(current.content), mutated);
+    if (range) {
+      return {
+        start: lineAtByte(mutated, range.start),
+        end: lineAtByte(mutated, Math.max(range.start, range.end - 1)),
+      };
+    }
+  }
+  const start = Number.isInteger(mutant.line) ? mutant.line : 1;
+  return { start, end: Math.max(start, Number.isInteger(mutant.endLine) ? mutant.endLine : start) };
+}
+
+function intersectsChangedLines(changed, range) {
+  if (!changed) return false;
+  for (const line of changed) if (line >= range.start && line <= range.end) return true;
+  return false;
+}
+
 function publicMutant(mutant, status, reason) {
   const { content: _content, ...detail } = mutant;
   return { ...detail, status, ...(reason ? { reason } : {}) };
@@ -131,7 +181,8 @@ export function selectIncrementalMutants(task, checkpoint, mutants) {
       preexisting.push(publicMutant(mutant, "preexisting", "El archivo no cambió desde el baseline real de la tarea"));
       continue;
     }
-    const currentLineChanged = !previous || changed.get(mutant.file)?.has(mutant.line) === true;
+    const currentLineChanged = !previous
+      || intersectsChangedLines(changed.get(mutant.file), effectiveMutationRange(mutant, next));
     if (currentLineChanged) required.push(publicMutant(mutant, "required"));
     else preexisting.push(publicMutant(mutant, "preexisting", "The mutant is outside the changed line delta"));
   }
@@ -204,6 +255,10 @@ async function generate(root, checkpoint, copy, timeoutMs) {
     const entry = sources.find((source) => source.path === mutant.file);
     if (!entry || entry.sha256 !== mutant.sourceHash || ids.has(mutant.id)
       || !Number.isInteger(mutant.line) || mutant.line < 1
+      || !Number.isInteger(mutant.column) || mutant.column < 0
+      || !Number.isInteger(mutant.endLine) || mutant.endLine < mutant.line
+      || !Number.isInteger(mutant.endColumn) || mutant.endColumn < 0
+      || mutant.endLine === mutant.line && mutant.endColumn < mutant.column
       || inputHash(Buffer.from(mutant.content, "base64")) !== mutant.mutatedHash) {
       throw fail("invalid_mutation_evidence", "El generador devolvió un mutante sin identidad íntegra");
     }

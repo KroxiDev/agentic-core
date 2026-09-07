@@ -72,6 +72,29 @@ test("incremental mutation selection records required, preexisting and equivalen
   assert.match(selection.equivalent[0].evidence.staticProof, /sha256\(original\)/u);
 });
 
+test("incremental mutation selection uses the effective range in a multiline expression", () => {
+  const before = Buffer.from("def f(a, b):\n    return (a\n            + b)\n");
+  const after = Buffer.from("def f(a, b):\n    return (a\n            - b)\n");
+  const beforeHash = inputHash(before);
+  const afterHash = inputHash(after);
+  const mutant = before;
+  const task = { id: "multiline-selection-task", scope: ["src"], initial: {
+    inputs: { digest: "baseline-inputs" },
+    sources: [{ path: "src/subject.py", kind: "measured_code", sha256: beforeHash, content: before.toString("base64") }],
+  } };
+  const checkpoint = { digest: "current-inputs", entries: [
+    { path: "src/subject.py", kind: "measured_code", sha256: afterHash, content: after },
+  ] };
+  const selection = selectIncrementalMutants(task, checkpoint, [{
+    id: "multiline", file: "src/subject.py", line: 2, column: 12, endLine: 3, endColumn: 15,
+    sourceHash: afterHash, mutatedHash: inputHash(mutant), content: mutant.toString("base64"),
+  }]);
+  assert.deepEqual(selection.required.map(({ id }) => id), ["multiline"]);
+  assert.equal(selection.required[0].line, 2);
+  assert.equal(selection.required[0].endLine, 3);
+  assert.equal(selection.preexisting.length, 0);
+});
+
 test("installed mutate4py executes the authoritative corpus and distinguishes five states", async (t) => {
   const { root } = await corpus(t);
   const before = await hashDirectory(path.join(root, "work dir"));
@@ -81,6 +104,8 @@ test("installed mutate4py executes the authoritative corpus and distinguishes fi
   assert.deepEqual(result.summary, { killed: 1, survived: 1, uncovered: 1, timeout: 1, error: 1, interrupted: 0 });
   assert.equal(result.status, "NO_VERIFICADO");
   assert.equal(result.engine.version, "0.1.4");
+  assert.ok(result.details.every((item) => Number.isInteger(item.endLine)
+    && item.endLine >= item.line && Number.isInteger(item.endColumn)));
   assert.equal(result.resources.copies, 1);
   assert.equal(result.resources.workers, 1);
   assert.equal(result.integrity.status, "preserved");
