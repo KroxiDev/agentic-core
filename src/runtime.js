@@ -227,6 +227,41 @@ export async function distributedRuntime() {
   return runtime;
 }
 
+// A persisted self-contained runtime can maintain itself without package.json or payload-manifest.json.
+export async function embeddedRuntimeSource() {
+  if (!bundled) return undefined;
+  const root = path.dirname(fileURLToPath(import.meta.url));
+  let files;
+  let manifest;
+  try {
+    files = await readSafeTree(root, "The embedded runtime");
+    const manifestFile = files.find(({ path: filePath }) => filePath === RUNTIME_MANIFEST);
+    manifest = JSON.parse(manifestFile?.content.toString("utf8") ?? "");
+  } catch {
+    return undefined;
+  }
+  const runtime = {
+    root,
+    files,
+    manifest: {
+      path: ".agentic-core/runtime",
+      format: manifest.format,
+      manifest: RUNTIME_MANIFEST,
+      source: manifest.source,
+      commit: manifest.commit,
+      treeSha256: hashFileTree(files),
+      bins: [...BINS],
+    },
+  };
+  try {
+    validateRuntimeOwnership(runtime.manifest);
+    validatePersistedRuntimeManifest(manifest, runtime.manifest, manifest.version, files);
+  } catch {
+    return undefined;
+  }
+  return runtime;
+}
+
 export function validateRuntimeOwnership(runtime) {
   if (runtime === undefined) return;
   const baseValid = plainObject(runtime)

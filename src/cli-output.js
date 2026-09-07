@@ -57,7 +57,10 @@ function maintenanceActionLabel(command, action) {
   if (action === "write_resource") return command === "init" ? "copiar" : "actualizar";
   if (action === "append_managed_block" || action === "replace_managed_block") return "actualizar";
   if (action === "persist_runtime") return "persistir runtime";
+  if (action === "persist_tools") return "persistir entorno privado";
   if (action === "write_manifest") return command === "init" ? "crear" : "actualizar";
+  if (action === "remove_retired_resource") return "retirar";
+  if (action === "remove_managed_block") return "retirar";
   if (action === "delete_owned_directory") return "eliminar";
   return cleanText(action).replaceAll("_", " ");
 }

@@ -154,7 +154,7 @@ npx.cmd --yes github:KroxiDev/agentic-core update .
 | `--dry-run` | — | No | No |
 | `--force` | — | No | No |
 
-En el esquema 3, actualizar, migrar y desinstalar quedan pendientes de #57; los comandos informan esa limitación sin modificar archivos. El resto de esta sección describe el esquema 2.
+En el esquema 3, `update` actualiza recursos con ownership verificable y migra esquemas 1 y 2. `--dry-run` muestra el plan sin escribir; `--force` autoriza reemplazar recursos propios divergentes durante la actualización. La configuración válida conserva sus valores y se normaliza al esquema cerrado 3.
 
 `update` comprueba ownership e integridad antes de reemplazar recursos de forma transaccional. `--force` solo autoriza reemplazar recursos propios divergentes; no autoriza cambios ajenos. Al migrar una instalación anterior, elimina el runtime de protocolo que todavía sea reconociblemente propio, instala la política semántica y conserva `.agentic-core/runs` como estado legacy sin interpretarlo ni reclamarlo como estado vigente.
 
@@ -165,7 +165,6 @@ En el esquema 3, actualizar, migrar y desinstalar quedan pendientes de #57; los 
 ```powershell
 npx.cmd --yes github:KroxiDev/agentic-core doctor .
 npx.cmd --yes github:KroxiDev/agentic-core doctor . --dry-run
-npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair
 ```
 
 #### Esquema CLI
@@ -173,9 +172,8 @@ npx.cmd --yes github:KroxiDev/agentic-core doctor . --repair
 | Opción | Valor | Requerida | Repetible |
 | --- | --- | --- | --- |
 | `--dry-run` | — | No | No |
-| `--repair` | — | No | No |
 
-En el esquema 3, `doctor` explica configuración, límites, intérpretes y versiones, y comprueba la integridad del runtime y las herramientas sin ejecutar la suite del consumidor. `--repair` queda reservado al esquema 2.
+En el esquema 3, `doctor` explica configuración, límites, intérpretes y versiones, y comprueba la integridad del runtime, los recursos y las herramientas sin ejecutar la suite del consumidor. Los problemas se reportan con causa y recuperación sugerida; la operación no repara automáticamente ni presenta una instalación incompleta como satisfactoria.
 
 En el esquema 2, `doctor` valida recursos, bloques gestionados, configuración, runtime autocontenido, ownership, hashes e integridad de `QualitySession`. Las sesiones o recibos corruptos se reportan y preservan; no se reescribe evidencia histórica. Los directorios operativos del runtime anterior se informan como estado legacy preservado.
 
@@ -195,7 +193,9 @@ npx.cmd --yes github:KroxiDev/agentic-core uninstall .
 | `--dry-run` | — | No | No |
 | `--force` | — | No | No |
 
-En el esquema 2, la desinstalación retira transaccionalmente los recursos propios no divergentes y `.agentic-core/quality`. Conserva archivos ajenos, recursos divergentes no autorizados y `.agentic-core/runs` legacy para revisión manual.
+En el esquema 3, la desinstalación muestra el plan y retira transaccionalmente solo archivos y directorios cuya integridad coincide con el manifiesto. Conserva archivos ajenos, recursos divergentes, contenido dentro de `.agentic-core/quality` y `.agentic-core/runs` legacy; tampoco elimina un directorio padre que conserve algo.
+
+Las operaciones de mantenimiento guardan el estado esperado de cada recurso en la previsualización y vuelven a comprobarlo al aplicar. Si el proyecto cambia durante la operación, se informa el conflicto y no se presenta una restauración incompleta como exitosa.
 
 ## Formato de salida
 

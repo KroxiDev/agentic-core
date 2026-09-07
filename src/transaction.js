@@ -15,14 +15,24 @@ async function inspect(targetPath) {
   }
 }
 
-function assertExpectedContent(operation, snapshot) {
-  if (operation.expectedContent === undefined) return;
-  const matches = operation.expectedContent === null ? snapshot.kind === "missing"
-    : snapshot.kind === "file" && snapshot.content.equals(operation.expectedContent);
-  if (!matches) {
-    const error = new Error("Transaction target changed; existing content is preserved");
-    error.code = "ERR_TRANSACTION_CONFLICT";
-    throw error;
+function transactionConflict() {
+  const error = new Error("Transaction target changed; existing content is preserved");
+  error.code = "ERR_TRANSACTION_CONFLICT";
+  return error;
+}
+
+async function assertExpectedState(operation, snapshot) {
+  if (operation.expectedContent !== undefined) {
+    const matches = operation.expectedContent === null ? snapshot.kind === "missing"
+      : snapshot.kind === "file" && snapshot.content.equals(operation.expectedContent);
+    if (!matches) throw transactionConflict();
+  }
+  if (operation.expectedTreeSha256 !== undefined) {
+    const matches = operation.expectedTreeSha256 === null
+      ? snapshot.kind === "missing"
+      : snapshot.kind === "directory"
+        && await hashDirectory(operation.path) === operation.expectedTreeSha256;
+    if (!matches) throw transactionConflict();
   }
 }
 
@@ -190,7 +200,7 @@ export async function writeTransaction(projectDirectory, operations, {
   const snapshots = new Map();
   for (const operation of operations) {
     const snapshot = await inspect(operation.path);
-    assertExpectedContent(operation, snapshot);
+    await assertExpectedState(operation, snapshot);
     if (operation.type === "create_directory" && snapshot.kind !== "missing") {
       throw new Error(`El destino ya existe: ${operation.path}`);
     }
@@ -242,19 +252,32 @@ export async function writeTransaction(projectDirectory, operations, {
 
     let writeCount = 0;
     for (const operation of operations) {
-      if (operation.expectedContent !== undefined) {
-        assertExpectedContent(operation, await inspect(operation.path));
+      const guarded = operation.expectedContent !== undefined || operation.expectedTreeSha256 !== undefined;
+      if (guarded) {
+        await assertExpectedState(operation, await inspect(operation.path));
       } else applied.set(operation.path, { operation });
       if (operation.type === "create_directory") {
         await mkdir(operation.path, { recursive: true });
         await operation.prepare(operation.path);
+        if (operation.expectedTreeSha256After !== undefined) {
+          applied.set(operation.path, {
+            operation,
+            expectedTreeSha256: operation.expectedTreeSha256After,
+          });
+        }
         writeCount += 1;
         if (failAfterWrite === writeCount) throw new Error("Simulated transaction failure");
         continue;
       }
       if (operation.type === "delete") {
         await rm(operation.path, { recursive: operation.expectedContent === undefined, force: true });
-        if (operation.expectedContent !== undefined) applied.set(operation.path, { operation, expectedContent: null });
+        if (guarded) {
+          applied.set(operation.path, {
+            operation,
+            ...(operation.expectedContent !== undefined ? { expectedContent: null } : {}),
+            ...(operation.expectedTreeSha256 !== undefined ? { expectedTreeSha256: null } : {}),
+          });
+        }
         writeCount += 1;
         if (failAfterWrite === writeCount) throw new Error("Simulated transaction failure");
         continue;
@@ -281,6 +304,9 @@ export async function writeTransaction(projectDirectory, operations, {
         }
         await rename(temporaryPath, operation.path);
         temporaryPaths.delete(temporaryPath);
+        if (guarded) {
+          applied.set(operation.path, { operation, expectedTreeSha256: operation.sourceSha256 });
+        }
         writeCount += 1;
         if (failAfterWrite === writeCount) throw new Error("Simulated transaction failure");
         continue;
@@ -289,13 +315,21 @@ export async function writeTransaction(projectDirectory, operations, {
       const temporaryPath = `${operation.path}.agentic-core-${randomUUID()}.tmp`;
       temporaryPaths.add(temporaryPath);
       await writeFile(temporaryPath, operation.content, { flag: "wx" });
-      if (operation.expectedContent !== undefined) assertExpectedContent(operation, await inspect(operation.path));
+      if (guarded) await assertExpectedState(operation, await inspect(operation.path));
       if (snapshots.get(operation.path).kind === "file") {
         await rm(operation.path);
-        if (operation.expectedContent !== undefined) applied.set(operation.path, { operation, expectedContent: null });
+        if (guarded && operation.expectedContent !== undefined) {
+          applied.set(operation.path, { operation, expectedContent: null });
+        }
       }
       await rename(temporaryPath, operation.path);
-      if (operation.expectedContent !== undefined) applied.set(operation.path, { operation, expectedContent: operation.content });
+      if (guarded) {
+        applied.set(operation.path, {
+          operation,
+          ...(operation.expectedContent !== undefined ? { expectedContent: operation.content } : {}),
+          ...(operation.expectedTreeSha256 !== undefined ? { expectedTreeSha256: operation.resultTreeSha256 } : {}),
+        });
+      }
       temporaryPaths.delete(temporaryPath);
       writeCount += 1;
       if (failAfterWrite === writeCount) throw new Error("Simulated transaction failure");
@@ -311,10 +345,12 @@ export async function writeTransaction(projectDirectory, operations, {
         restorationErrors.push(restorationError);
       }
     }
-    for (const { operation, expectedContent } of [...applied.values()].reverse()) {
+    for (const { operation, expectedContent, expectedTreeSha256 } of [...applied.values()].reverse()) {
       const snapshot = snapshots.get(operation.path);
       try {
-        if (expectedContent !== undefined) assertExpectedContent({ expectedContent }, await inspect(operation.path));
+        if (expectedContent !== undefined || expectedTreeSha256 !== undefined) {
+          await assertExpectedState({ expectedContent, expectedTreeSha256 }, await inspect(operation.path));
+        }
         await rm(operation.path, { recursive: true, force: true });
         if (snapshot.kind === "file") {
           await mkdir(path.dirname(operation.path), { recursive: true });

@@ -46,6 +46,25 @@ test("guarded cleanup restores owned evidence when a later write fails", async (
   assert.equal(await readFile(active, "utf8"), "old task");
 });
 
+test("guarded directory cleanup preserves content published after preflight", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agentic guarded directory transaction "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = path.join(root, "evidence");
+  await mkdir(target);
+  await writeFile(path.join(target, "owned.txt"), "owned evidence");
+  const expectedTreeSha256 = await hashDirectory(target);
+  const preparation = path.join(root, "preparation");
+  await assert.rejects(writeTransaction(root, [
+    { type: "create_directory", path: preparation, prepare: async () => {
+      await writeFile(path.join(target, "foreign.txt"), "foreign evidence");
+    } },
+    { type: "delete", path: target, expectedTreeSha256 },
+  ]), { code: "ERR_TRANSACTION_CONFLICT" });
+  await assert.rejects(access(preparation), { code: "ENOENT" });
+  assert.equal(await readFile(path.join(target, "owned.txt"), "utf8"), "owned evidence");
+  assert.equal(await readFile(path.join(target, "foreign.txt"), "utf8"), "foreign evidence");
+});
+
 test("guarded rollback preserves foreign content recreated after a deletion", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "agentic concurrent rollback "));
   const temporaryRoot = path.join(root, "backups");
