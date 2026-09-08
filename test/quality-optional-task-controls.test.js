@@ -74,7 +74,7 @@ for (const mode of ["light", "normal"]) {
     const explicit = await invoke(["verify", "--control", "dry", "--control", "crap", "--control", "mutation"]);
     assert.equal(explicit.processCode, 2, JSON.stringify(explicit));
     assert.equal(explicit.verification.dry.status, "NO_VERIFICADO");
-    assert.equal(explicit.verification.crap.code, "task_comparison_pending");
+    assert.equal(explicit.verification.crap.status, "NO_VERIFICADO");
     assert.equal(explicit.verification.mutation.code, "task_comparison_pending");
     assert.doesNotMatch(explicit.receipt, /QUALITY_OK/);
     const reset = await invoke(["verify"]);

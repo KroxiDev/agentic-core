@@ -138,10 +138,10 @@ export async function observeProjectTests(root, config, python, context, tempora
   return { ...common, code: "tests_passed", exitCode: 0, message: "Tests funcionales aprobados; la cobertura se informa por separado y no acredita otros controles" };
 }
 
-export async function runProjectTests(projectRoot, selection, { requireCoverage = false } = {}) {
+export async function runProjectTests(projectRoot, selection, { requireCoverage = false, referenceCheckpoint } = {}) {
   try { return await withCurrentTaskBudget(projectRoot, async () => {
     const resolved = await resolveTaskSelection(projectRoot, normalizeSelection(selection));
-    const result = await executeProjectTests(projectRoot, resolved.selection, requireCoverage);
+    const result = await executeProjectTests(projectRoot, resolved.selection, requireCoverage, referenceCheckpoint);
     if (resolved.delta) {
       const config = await readConfiguration(path.join(projectRoot, ".agentic-core/config.json"));
       const current = await captureProjectInputs(projectRoot, config.integration.python);
@@ -153,15 +153,18 @@ export async function runProjectTests(projectRoot, selection, { requireCoverage 
   catch (error) { return { command: "test", status: "NO_VERIFICADO", ...integrationFailure(error) }; }
 }
 
-async function executeProjectTests(projectRoot, selection, requireCoverage) {
+async function executeProjectTests(projectRoot, selection, requireCoverage, referenceCheckpoint) {
   let effectiveCommand;
   let config;
   let effectiveSelection;
   try {
     config = await readConfiguration(path.join(projectRoot, ".agentic-core/config.json"));
     const unit = config.integration.python;
-    const checkpoint = await captureProjectInputs(projectRoot, unit, selection);
-    effectiveSelection = resolveSelection(checkpoint, unit, selection);
+    const currentCheckpoint = await captureProjectInputs(projectRoot, unit, selection);
+    const checkpoint = referenceCheckpoint ?? currentCheckpoint;
+    effectiveSelection = resolveSelection(currentCheckpoint, unit, selection);
+    if (referenceCheckpoint) effectiveSelection.measuredFiles = checkpoint.inventory
+      .filter((entry) => entry.kind === "measured_code").map((entry) => entry.path);
     const inputEvidence = publicCheckpoint(checkpoint);
     if (checkpoint.issues.length) return { command: "test", status: "NO_VERIFICADO", code: "input_checkpoint_incompatible",
       message: "Los inputs no admiten una copia fiel: revise enlaces, tipos, cambios o código excluido por privacidad", exitCode: 2, inputs: inputEvidence, selection: effectiveSelection };
@@ -170,13 +173,13 @@ async function executeProjectTests(projectRoot, selection, requireCoverage) {
     let result;
     try {
       const isolated = isolatedCommand(unit, python, checkpoint, copy.root, process.env);
-      let integrity = await verifyProjectIntegrity(checkpoint, unit, copy.root, "preparation");
+      let integrity = await verifyProjectIntegrity(currentCheckpoint, unit, copy.root, "preparation", checkpoint);
       if (integrity.status !== "preserved") {
         result = { code: "input_integrity_changed", exitCode: 2, message: "Los inputs cambiaron durante la preparación; no se ejecutaron pruebas", integrity };
       } else {
         try { result = await observeProjectTests(projectRoot, config, python, { ...context, ...isolated, checkpoint, copyRoot: copy.root, requireCoverage }, copy.temporary); }
         catch (error) { result = integrationFailure(error); }
-        integrity = await verifyProjectIntegrity(checkpoint, unit, copy.root, "tests");
+        integrity = await verifyProjectIntegrity(currentCheckpoint, unit, copy.root, "tests", checkpoint);
         integrity.dependencies = await dependencyFingerprint(protectedPaths) === dependencies ? "preserved" : "changed";
         if (integrity.dependencies !== "preserved") integrity.status = "NO_VERIFICADO";
         if (integrity.status !== "preserved") result = { ...result, code: "input_integrity_changed", exitCode: 2,

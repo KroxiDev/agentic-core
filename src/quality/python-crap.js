@@ -9,6 +9,7 @@ import { commandBudget, executeCommand, IntegrationError } from "./command.js";
 import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { captureProjectInputs, inputHash, matchesInput, publicCheckpoint } from "./project-inputs.js";
 import { projectTestIdentity, runProjectTests } from "./python-project.js";
+import { taskReferenceCheckpoint } from "./task-reference.js";
 import { normalizeSelection, parseTestSelection, resolveSelection } from "./selection.js";
 
 const adapter = fileURLToPath(new URL("agentic_crap.py", import.meta.url));
@@ -100,15 +101,19 @@ export async function runPythonCrap(root, options = {}) {
   return withCurrentTaskBudget(root, () => measurePythonCrap(root, options));
 }
 
-async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, execution: suppliedExecution, selection: requestedSelection } = {}) {
+async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, execution: suppliedExecution, selection: requestedSelection, referenceTask } = {}) {
   const selection = normalizeSelection(requestedSelection);
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const budget = commandBudget(config.limits.operation);
-  const before = suppliedCheckpoint ?? await captureProjectInputs(root, config.integration.python, selection);
+  const currentCheckpoint = await captureProjectInputs(root, config.integration.python, selection);
+  const before = referenceTask ? taskReferenceCheckpoint(root, referenceTask, config.integration.python, selection)
+    : suppliedCheckpoint ?? currentCheckpoint;
   if (JSON.stringify(before.selection) !== JSON.stringify(selection)) {
     throw new IntegrationError("crap_selection_conflict", "El checkpoint corresponde a otra selección; no se reutiliza");
   }
-  const effectiveSelection = resolveSelection(before, config.integration.python, selection);
+  const effectiveSelection = resolveSelection(currentCheckpoint, config.integration.python, selection);
+  if (referenceTask) effectiveSelection.measuredFiles = before.inventory
+    .filter((entry) => entry.kind === "measured_code").map((entry) => entry.path);
   if (suppliedExecution) {
     const expectedIdentity = (await projectTestIdentity(root, config, selection)).identity;
     if (suppliedExecution.inputs?.digest !== before.digest || suppliedExecution.executionIdentity !== expectedIdentity
@@ -116,13 +121,14 @@ async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, executi
       throw new IntegrationError("crap_execution_conflict", "La cobertura corresponde a otros inputs, selección o condiciones; no se reutiliza");
     }
   }
-  const execution = suppliedExecution ?? await runProjectTests(root, selection, { requireCoverage: true });
+  const execution = suppliedExecution ?? await runProjectTests(root, selection, { requireCoverage: true,
+    ...(referenceTask ? { referenceCheckpoint: before } : {}) });
   const measured = await measure(root, config, before, execution, budget);
   const after = await captureProjectInputs(root, config.integration.python, selection);
   let currentIdentity;
   try { currentIdentity = (await projectTestIdentity(root, config, selection)).identity; }
   catch { /* The execution's typed environment cause remains in the report. */ }
-  const changed = before.digest !== after.digest || execution.inputs && execution.inputs.digest !== before.digest
+  const changed = (referenceTask ? currentCheckpoint.digest : before.digest) !== after.digest || execution.inputs && execution.inputs.digest !== before.digest
     || execution.configurationHash && execution.configurationHash !== hash(config)
     || execution.executionIdentity && currentIdentity !== execution.executionIdentity;
   const details = measured.details.map((row) => ({ ...row, message: causes[row.code] ?? "Medición dentro del límite configurado" }));

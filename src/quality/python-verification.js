@@ -549,7 +549,9 @@ export async function inspectVerificationEvidence(root, task, checkpoint, enviro
       dry: compatible && request.requiredControls.includes("dry")
         ? controlReuse(previous, "dry", task, dryCheckpoint, selectedEnvironment, await resolutionHash(root))
         : { reused: false, reason: "control_pending" },
-      crap: { reused: false, reason: "control_pending" } };
+      crap: compatible && request.requiredControls.includes("crap")
+        ? controlReuse(previous, "crap", task, selected, selectedEnvironment)
+        : { reused: false, reason: "control_pending" } };
   }
   const resolutions = await resolutionHash(root);
   return Object.fromEntries(["tests", "dry", "crap"].map((name) =>
@@ -578,19 +580,31 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
   const tests = reuse.tests.reused ? previous.tests : await runProjectTests(root, selection, { requireCoverage: historical });
   reuse.dry = !historical && !compatibleRequest ? { reused: false, reason: "selection_changed" }
     : controlReuse(previous, "dry", task, dryCheckpoint, startEnvironment, await resolutionHash(root));
-  reuse.crap = controlReuse(previous, "crap", task, before, startEnvironment);
+  reuse.crap = !historical && !compatibleRequest ? { reused: false, reason: "selection_changed" }
+    : controlReuse(previous, "crap", task, testCheckpoint, startEnvironment);
   // C.R.A.P. depends on the suite's coverage, so a new execution requires a new measurement.
   if (reuse.crap.reused && !reuse.tests.reused) reuse.crap = { reused: false, reason: "tests_executed" };
   let dry;
   let currentCrap;
+  let initialCrap;
   try {
     dry = !requiredControls.includes("dry") ? taskControl("dry", false)
       : reuse.dry.reused ? previous.dry
         : { ...await runPythonDry(root, { activeTask: { task }, selection: drySelection }), required: true, executed: true };
   }
   catch (error) { dry = { ...controlFailure("dry", error), required: true, executed: true }; }
-  try { currentCrap = !historical ? taskControl("crap", requiredControls.includes("crap")) : reuse.crap.reused ? previous.crap : await runPythonCrap(root, { execution: tests }); }
-  catch (error) { currentCrap = controlFailure("crap", error); }
+  try {
+    currentCrap = !requiredControls.includes("crap") ? taskControl("crap", false)
+      : reuse.crap.reused ? previous.crap : await runPythonCrap(root, { execution: tests, selection });
+  }
+  catch (error) { currentCrap = { ...controlFailure("crap", error), required: true, executed: true }; }
+  if (!historical && requiredControls.includes("crap")) {
+    try {
+      initialCrap = reuse.crap.reused ? previous.crap.initialMeasurement
+        : await runPythonCrap(root, { referenceTask: task, selection });
+    }
+    catch (error) { initialCrap = controlFailure("crap", error); }
+  }
   const after = await captureProjectInputs(root, config.integration.python);
   const configHash = hash(config);
   const currentEnvironmentValue = await currentEnvironment(root, tests, selection);
@@ -615,7 +629,7 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     });
     if (before.digest !== after.digest) evidence = { status: noVerification, code: "quality_inputs_changed" };
   }
-  if ((historical || requiredControls.includes("dry") ? ["configurationHash", "executionIdentity", "qualityTools"] : ["configurationHash", "executionIdentity"])
+  if ((historical || requiredControls.some((name) => ["dry", "crap"].includes(name)) ? ["configurationHash", "executionIdentity", "qualityTools"] : ["configurationHash", "executionIdentity"])
     .some((key) => startEnvironment[key] !== currentEnvironmentValue[key])) {
     evidence = { status: noVerification, code: "quality_conditions_changed" };
   }
@@ -623,10 +637,18 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     evidence = { status: noVerification, code: "dry_resolutions_changed" };
   }
   const crapBaseline = qualityBaselineControl(task);
-  const crap = !historical ? currentCrap : crapBaseline.report
-    ? compareCrap(currentCrap, crapBaseline.report, config.limits.crap)
-    : { ...currentCrap, status: noVerification, code: crapBaseline.code,
-      baseline: { status: noVerification }, exitCode: 2 };
+  let crap = currentCrap;
+  if (historical) {
+    crap = crapBaseline.report ? compareCrap(currentCrap, crapBaseline.report, config.limits.crap)
+      : { ...currentCrap, status: noVerification, code: crapBaseline.code,
+        baseline: { status: noVerification }, exitCode: 2 };
+  } else if (requiredControls.includes("crap")) {
+    const comparison = initialCrap && initialCrap.status !== noVerification
+      ? compareCrap(currentCrap, initialCrap, config.limits.crap)
+      : { ...currentCrap, status: noVerification,
+        code: currentCrap.status === noVerification ? currentCrap.code : "baseline_quality_incomplete", exitCode: 2 };
+    crap = { ...comparison, required: true, executed: true, initialMeasurement: initialCrap, analysis: "task_comparison" };
+  }
   const baselineQualityValue = baselineQuality(task);
   const baselineReady = task.initial?.valid === true && (!historical || baselineQualityValue?.status !== noVerification
     && crapBaseline.status !== noVerification);
@@ -691,7 +713,7 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     }
   }
   if (!historical) {
-    for (const name of requiredControls.includes("dry") ? ["crap"] : ["dry", "crap"]) reuse[name] = { reused: false,
+    for (const name of ["dry", "crap"].filter((name) => !requiredControls.includes(name))) reuse[name] = { reused: false,
       reason: requiredControls.includes(name) ? "task_comparison_pending" : "not_requested" };
   }
   reuse.mutation = { reused: mutation.reused === true,
