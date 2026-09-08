@@ -15,7 +15,7 @@ async function run(executable, args, cwd, timeout = 30000) {
 
 export async function inspectPython(executable, cwd) {
   try {
-    const { stdout } = await run(executable, ["-I", "-c", "import json,sys; print(json.dumps({'executable':sys.executable,'version':list(sys.version_info[:3])}))"], cwd);
+    const { stdout } = await run(executable, ["-I", "-B", "-c", "import json,sys; print(json.dumps({'executable':sys.executable,'version':list(sys.version_info[:3])}))"], cwd);
     const result = JSON.parse(stdout);
     if (result.version[0] !== 3 || result.version[1] < 11) {
       throw new InstallationError("unsupported_python", `Python ${result.version.join(".")} no está soportado; se requiere Python 3.11 o superior`, 2);

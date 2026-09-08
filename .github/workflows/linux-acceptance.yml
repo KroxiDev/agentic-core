@@ -44,14 +44,19 @@ jobs:
           python -m pip install pytest==8.3.5 py==1.11.0 pygments==2.19.2
           npm ci
           mkdir -p .codex-temp/linux-artifacts
+      - name: Integridad de herramientas después de trasladarlas
+        run: node --test --test-reporter=tap test/python-tools.test.js | tee .codex-temp/linux-artifacts/tools.tap
       - name: Recorrido del paquete instalado
         run: node --test --test-reporter=tap scripts/linux-acceptance.mjs | tee .codex-temp/linux-artifacts/installed.tap
-      - name: Regresiones puntuales de mutación, exportación y diagnóstico
+      - name: Regresiones puntuales de calidad, exportación y diagnóstico
         run: |
           node --test --test-reporter=tap --test-concurrency=1 \
-            --test-name-pattern='installed mutate4py executes the authoritative corpus|installed export is explicit|installed diagnosis explains current' \
-            test/quality-python-mutation.test.js test/quality-result-export.test.js test/quality-diagnostics.test.js \
+            --test-name-pattern='installed mutate4py executes the authoritative corpus|installed export is explicit|installed diagnosis explains current|incremental C.R.A.P. rejects new code|incremental DRY requires a concrete resolution' \
+            test/quality-python-mutation.test.js test/quality-result-export.test.js test/quality-diagnostics.test.js test/quality-python-verification.test.js \
             | tee .codex-temp/linux-artifacts/regressions.tap
+          grep -qx '# tests 5' .codex-temp/linux-artifacts/regressions.tap
+          grep -qx '# pass 5' .codex-temp/linux-artifacts/regressions.tap
+          grep -qx '# skipped 0' .codex-temp/linux-artifacts/regressions.tap
       - name: Sintaxis y formato
         run: |
           npm run check
