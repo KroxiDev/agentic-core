@@ -38,6 +38,14 @@ o recibo \`QUALITY_OK\`.
 Nunca declares un cambio ejecutable orquestado completo sin un \`QUALITY_OK\` vigente de
 \`agentic-quality verify\`.
 
+### Controles de Light/Normal
+
+Prepare conserva el inicio real y ejecuta tests funcionales sin medir controles opcionales.
+DRY, C.R.A.P. y mutacion se seleccionan expresamente con \`--control\` en prepare o verify;
+sin peticion figuran como NO_SOLICITADO. La configuracion heredada y los informes anteriores
+no los activan. Verify exige tests funcionales comprobados; una comparacion solicitada
+sin implementar devuelve NO_VERIFICADO. Full conserva sus controles historicos.
+
 ### Light
 
 Light esta habilitado para Codex y ejecuta exactamente Implementador -> Tester.

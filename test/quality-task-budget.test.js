@@ -13,7 +13,7 @@ test("installed task shares baseline, retries and controls without charging reus
   const first = parse(await runPythonProject(root, prepare()));
   assert.equal(first.status, "prepared", JSON.stringify(first));
   assert.ok(first.budget.consumedMs > 0);
-  assert.ok(first.budget.commands >= 4);
+  assert.ok(first.budget.commands > 0);
   const initial = await ledger(root);
   assert.equal(parse(await runPythonProject(root, prepare())).reused, true);
   assert.deepEqual(await ledger(root), initial);

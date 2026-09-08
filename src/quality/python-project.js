@@ -8,7 +8,7 @@ import { IntegrationError, commandBudget, executeCommand } from "./command.js";
 import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { captureProjectInputs, publicCheckpoint } from "./project-inputs.js";
 import { createProjectCopy, dependencyFingerprint, isolatedCommand, publicArgument, publicArguments, verifyProjectIntegrity } from "./project-copy.js";
-import { normalizeSelection, parseTestSelection, resolveSelection } from "./selection.js";
+import { normalizeSelection, parseTestSelection, resolveSelection, resolveTaskSelection } from "./selection.js";
 
 const plugin = fileURLToPath(new URL("agentic_pytest.py", import.meta.url));
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -137,7 +137,17 @@ export async function observeProjectTests(root, config, python, context, tempora
 }
 
 export async function runProjectTests(projectRoot, selection) {
-  try { return await withCurrentTaskBudget(projectRoot, () => executeProjectTests(projectRoot, normalizeSelection(selection))); }
+  try { return await withCurrentTaskBudget(projectRoot, async () => {
+    const resolved = await resolveTaskSelection(projectRoot, normalizeSelection(selection));
+    const result = await executeProjectTests(projectRoot, resolved.selection);
+    if (resolved.delta) {
+      const config = await readConfiguration(path.join(projectRoot, ".agentic-core/config.json"));
+      const current = await captureProjectInputs(projectRoot, config.integration.python);
+      if (current.digest !== resolved.delta.checkpoint) return { ...result,
+        status: "NO_VERIFICADO", code: "input_integrity_changed", exitCode: 2, taskDelta: resolved.delta };
+    }
+    return { ...result, ...(resolved.delta ? { taskDelta: resolved.delta } : {}) };
+  }); }
   catch (error) { return { command: "test", status: "NO_VERIFICADO", ...integrationFailure(error) }; }
 }
 
@@ -205,11 +215,11 @@ export async function runPythonQualityCli(args, io = process) {
     io.stdout.write("Mutación: agentic-quality mutate [--scope <archivo|carpeta>]... [--test <archivo|carpeta>]... ejecuta mutantes de mutate4py con el comando autoritativo en una copia controlada. Informe: .agentic-core/quality/mutation.json. Agrega el score del estado actual sin exigir tarea ni ejecutar DRY o C.R.A.P.; no emite aprobación incremental.\n");
     io.stdout.write("DRY autónomo: agentic-quality dry [--scope <archivo|carpeta>]... analiza el código actual con dry4python fijado, sin baseline ni otros controles. Selección transitoria; sin opciones usa el alcance de config.json. Informa todos los candidatos, incluidos los preexistentes, sin reparar ni aprobar implementaciones; no interpreta el código de salida del motor como aprobación. Informe: .agentic-core/quality/dry.json.\n");
     io.stdout.write("C.R.A.P.: agentic-quality crap [--scope <archivo|carpeta>]... [--test <archivo|carpeta>]... mide el estado actual sin preparar una tarea ni ejecutar DRY o mutación. Selección transitoria y límite de config.json; conserva resultados parciales. Informe: .agentic-core/quality/crap.json.\n");
-    io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json en una copia controlada y devuelve cobertura con rutas públicas relativas.\nTareas Light, Normal y Full: prepare --task <id> --mode <modo> --objective <referencia> [--repair-test <ruta>]; baseline consulta el inicio y verify exige la suite final, DRY y C.R.A.P. aprobados. Full exige además Mutation Testing incremental concluyente. Directo no requiere preparación.\nCódigos: 0 suite aprobada o baseline válido (puede contener fallos); 1 fallo; 2 aislamiento, integridad, entorno, cobertura o calidad no verificados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
+    io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json en una copia controlada y devuelve cobertura con rutas públicas relativas.\nTareas Light, Normal y Full: prepare --task <id> --mode <modo> --objective <referencia> [--repair-test <ruta>]; baseline consulta el inicio. Light/Normal: prepare captura la referencia y tests sin motores opcionales; verify exige tests funcionales y solo controles solicitados. --control <dry|crap|mutation> repetible (o none) selecciona por tarea en prepare o por ejecución en verify; las comparaciones pendientes son NO_VERIFICADO, los omitidos NO_SOLICITADO. verify acepta --scope/--test o --changes [--test <ruta>]. test también acepta --changes contra el inicio guardado; sin código medible actual devuelve delta_without_code, sin ampliar el alcance. Full exige además Mutation Testing incremental concluyente. Directo no requiere preparación.\nCódigos: 0 suite aprobada o baseline válido (puede contener fallos); 1 fallo; 2 aislamiento, integridad, entorno, cobertura o calidad no verificados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
     return 0;
   }
   let result;
-  try { result = args[0] === "test" ? await runProjectTests(process.cwd(), parseTestSelection(args.slice(1)))
+  try { result = args[0] === "test" ? await runProjectTests(process.cwd(), parseTestSelection(args.slice(1), { allowChanges: true }))
     : { command: args[0], status: "NO_VERIFICADO", code: ["prepare", "verify", "scan", "crap", "mutate", "mutation"].includes(args[0]) ? "quality_pending" : "invalid_usage",
       message: "Use agentic-quality test, dry o los comandos de tarea prepare, baseline y verify",
       exitCode: ["prepare", "verify", "scan", "crap", "mutate", "mutation"].includes(args[0]) ? 2 : 4 };

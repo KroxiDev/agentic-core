@@ -16,6 +16,9 @@ import {
   verifyPythonTask,
 } from "./python-verification.js";
 
+import { parseControls, taskControl } from "./task-controls.js";
+import { parseTestSelection } from "./selection.js";
+
 const reference = ".agentic-core/quality/active-task.json";
 const qualityDirectory = ".agentic-core/quality";
 const verificationReports = [
@@ -132,8 +135,10 @@ export async function readActiveTask(root) {
     if (sha256 !== hash(task) || task.schemaVersion !== 1 || !modes.has(task.mode)
       || !task.initial?.inputs || !Array.isArray(task.initial.sources) || !task.initial.result
       || task.initial.quality !== undefined && (task.initial.quality?.schemaVersion !== 1
-        || !["captured", "NO_VERIFICADO"].includes(task.initial.quality.status)
+        || !["captured", "NO_VERIFICADO", "NO_SOLICITADO"].includes(task.initial.quality.status)
         || !task.initial.quality.crap || !task.initial.quality.dry)) throw new Error("identity");
+    if (task.requiredControls !== undefined && (!Array.isArray(task.requiredControls)
+      || hash(parseControls(task.requiredControls)) !== hash(task.requiredControls))) throw new Error("controls");
     return { task, sha256, content: Buffer.from(content) };
   } catch {
     throw new IntegrationError("task_evidence_invalid", "La evidencia inicial está corrupta; no se reemplaza ni se usa para aprobar", 2);
@@ -142,15 +147,17 @@ export async function readActiveTask(root) {
 
 function options(args) {
   const result = { repairTests: [] };
+  const controls = [];
   for (let index = 0; index < args.length; index += 2) {
     const option = args[index];
     const value = args[index + 1];
-    if (!["--task", "--mode", "--objective", "--repair-test"].includes(option) || !value || value.startsWith("--")) {
+    if (!["--task", "--mode", "--objective", "--repair-test", "--control"].includes(option) || !value || value.startsWith("--")) {
       throw new IntegrationError("invalid_usage", "Use prepare --task <id> --mode <light|normal|full> --objective <referencia breve> [--repair-test <ruta relativa>]", 4);
     }
     const key = { "--task": "id", "--mode": "mode", "--objective": "objective" }[option];
     if (key && result[key] !== undefined) throw new IntegrationError("invalid_usage", "No repita opciones únicas de preparación", 4);
     if (key) result[key] = value;
+    else if (option === "--control") controls.push(value);
     else result.repairTests.push(value.replaceAll("\\", "/"));
   }
   if (result.id && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/u.test(result.id)
@@ -158,6 +165,7 @@ function options(args) {
     || result.objective && (result.objective.length > 500 || privateInputContent(Buffer.from(result.objective)))) {
     throw new IntegrationError("invalid_usage", "Use un identificador y objetivo breves sin datos privados; Directo no requiere preparación", 4);
   }
+  if (controls.length) result.requiredControls = parseControls(controls);
   return result;
 }
 
@@ -165,6 +173,7 @@ function taskSummary(loaded) {
   const { task, sha256 } = loaded;
   const quality = task.initial.quality;
   return { id: task.id, mode: task.mode, objective: task.objective, scope: task.scope,
+    requiredControls: task.mode === "full" ? ["dry", "crap", "mutation"] : task.requiredControls ?? [],
     reference, baseline: { sha256, valid: task.initial.valid, status: task.initial.result.status,
       code: task.initial.result.code, inputs: task.initial.inputs.digest,
       failures: task.initial.failures, suite: task.initial.result.suite,
@@ -191,7 +200,7 @@ export async function taskFreshness(root, task) {
   const configurationHash = hash(config);
   const configurationChanged = configurationHash !== task.initial.result.configurationHash;
   const identityChanged = identity !== task.initial.result.executionIdentity;
-  const toolsKnown = task.initial.environment?.qualityTools !== undefined;
+  const toolsKnown = task.mode === "full" && task.initial.environment?.qualityTools !== undefined;
   const conditionsChanged = toolsKnown
     ? configurationChanged || identityChanged || qualityTools !== task.initial.environment.qualityTools
     : configurationChanged || identityChanged;
@@ -210,9 +219,11 @@ async function prepare(root, args) {
   if (loaded && (!requested.id || requested.id === loaded.task.id)) {
     const continues = (!requested.mode || requested.mode === loaded.task.mode)
       && (!requested.objective || requested.objective === loaded.task.objective)
+      && (requested.requiredControls === undefined || hash(requested.requiredControls) === hash(loaded.task.requiredControls ?? []))
       && (!requested.repairTests.length || hash(requested.repairTests) === hash(loaded.task.repairTests));
     if (continues) {
-      const initialLimit = [loaded.task.initial.result, loaded.task.initial.quality?.crap, loaded.task.initial.quality?.dry]
+      const initialLimit = [loaded.task.initial.result,
+        ...(loaded.task.mode === "full" ? [loaded.task.initial.quality?.crap, loaded.task.initial.quality?.dry] : [])]
         .find((control) => ["budget_exhausted", "command_timeout", "termination_failed", "concurrency_limit"].includes(control?.code));
       const prepared = loaded.task.initial.valid && !initialLimit;
       return { command: "prepare", status: prepared ? "prepared" : "NO_VERIFICADO",
@@ -226,6 +237,10 @@ async function prepare(root, args) {
   if (!requested.id || !requested.mode || !requested.objective) {
     throw new IntegrationError("invalid_usage", "La primera preparación requiere --task, --mode y --objective", 4);
   }
+  if (requested.mode === "full" && requested.requiredControls !== undefined) {
+    throw new IntegrationError("invalid_controls", "Full conserva sus controles históricos; use Light o Normal para selección explícita", 4);
+  }
+  if (requested.mode !== "full") requested.requiredControls ??= [];
   const cleanup = await cleanupInternalEvidence(root, loaded?.task);
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const before = await captureProjectInputs(root, config.integration.python);
@@ -260,7 +275,10 @@ async function captureTask(root, { requested, loaded, config, before, cleanup })
         python: result.python ?? null, runner: result.effectiveCommand ?? null,
         configurationHash: result.configurationHash ?? null, executionIdentity: result.executionIdentity ?? null,
         qualityTools: await qualityToolsIdentity(root) } } };
-  const quality = await capturePythonQualityBaseline(root, { checkpoint: before, execution: result });
+  const quality = requested.mode === "full"
+    ? await capturePythonQualityBaseline(root, { checkpoint: before, execution: result })
+    : { schemaVersion: 1, status: "NO_SOLICITADO", code: "baseline_reference_captured",
+      ...Object.fromEntries(["dry", "crap", "mutation"].map((name) => [name, taskControl(name, requested.requiredControls.includes(name))])) };
   const enrichedTask = { ...task, initial: { ...task.initial, quality } };
   const enriched = { task: enrichedTask, sha256: hash(enrichedTask) };
   const current = await readActiveTask(root);
@@ -290,14 +308,22 @@ async function captureTask(root, { requested, loaded, config, before, cleanup })
   const prepared = valid && !limitFailure;
   return { command: "prepare", status: prepared ? "prepared" : "NO_VERIFICADO",
     code: limitFailure?.code ?? (!valid ? result.code : prepared ? result.code === "tests_failed" ? "baseline_tests_failed" : "baseline_ready" : quality.code),
-    message: prepared ? "Inicio y mediciones de calidad capturados; los fallos iniciales se conservan y la suite final debe aprobar. Los fallos ajenos no amplían el alcance"
+    message: prepared ? "Inicio real y tests funcionales capturados; los fallos iniciales se conservan y la suite final debe aprobar. Los fallos ajenos no amplían el alcance"
       : !valid ? "No se obtuvo un baseline válido; se conserva el punto inicial y la causa sin fabricar una aprobación"
         : "El inicio se conserva, pero una medición de calidad quedó incompleta; no se fabrica evidencia de aprobación",
     exitCode: limitFailure?.exitCode ?? (prepared ? 0 : 2), reused: false, replaced: Boolean(loaded), task: taskSummary(enriched), budget: budgetSummary() };
 }
 
 async function inspect(root, args, verify) {
-  if (args.length) throw new IntegrationError("invalid_usage", "baseline y verify no aceptan argumentos adicionales", 4);
+  if (!verify && args.length) throw new IntegrationError("invalid_usage", "baseline no acepta argumentos adicionales", 4);
+  const controlValues = [];
+  const selectionArgs = [];
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === "--control") controlValues.push(args[++index]);
+    else selectionArgs.push(args[index]);
+  }
+  const requiredControls = controlValues.length ? parseControls(controlValues) : undefined;
+  const selection = parseTestSelection(selectionArgs, { allowChanges: true });
   const loaded = await readActiveTask(root);
   if (!loaded) throw new IntegrationError("task_missing", "Prepare la tarea antes de verificar; Directo puede ejecutar test sin preparar", 4);
   if (!verify) {
@@ -306,9 +332,12 @@ async function inspect(root, args, verify) {
       message: "Comparación contra el inicio real de la tarea; no se ejecutaron pruebas", task: taskSummary(loaded), freshness,
       budget: await readTaskBudget(root, loaded.task.id) };
   }
+  if (loaded.task.mode === "full" && (requiredControls !== undefined || selection)) {
+    throw new IntegrationError("invalid_usage", "Full conserva la selección y controles históricos", 4);
+  }
   const stored = await readVerificationReport(root, loaded.task);
   return withTaskBudget(root, loaded.task.id, async () => {
-    const result = await verifyPythonTask(root, loaded.task, { previous: stored?.report });
+    const result = await verifyPythonTask(root, loaded.task, { previous: stored?.report, requiredControls, selection });
     return { ...result, task: taskSummary(loaded), budget: budgetSummary() };
   });
 }

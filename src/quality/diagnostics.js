@@ -83,7 +83,7 @@ function publicFindings(report, checkpoint, limits) {
   const findings = [];
   for (const name of ["tests", "dry", "crap", "mutation"]) {
     const control = report[name];
-    if (!control || ["approved", "NO_APLICA"].includes(control.status)) continue;
+    if (!control || ["approved", "NO_APLICA", "NO_SOLICITADO"].includes(control.status)) continue;
     findings.push(cause(control.code, `El control ${name} tiene estado ${control.status}.`, { control: name }));
     const details = control.details ?? control.suite?.failures ?? [];
     for (const detail of details) {
@@ -138,10 +138,10 @@ export async function explainQuality(root) {
     }
     const { python, identity } = await projectTestIdentity(root, config);
     result.integration.pythonVersion = python.version;
+    const loaded = await readActiveTask(root);
     const environment = { node: process.version, platform: process.platform, arch: process.arch,
       configurationHash: inputHash(JSON.stringify(config)), executionIdentity: identity,
-      qualityTools: await dependencyFingerprint([path.join(root, ".agentic-core/tools")]) };
-    const loaded = await readActiveTask(root);
+      qualityTools: loaded?.task.mode === "full" ? await dependencyFingerprint([path.join(root, ".agentic-core/tools")]) : null };
     if (!loaded) throw new IntegrationError("task_missing", "No hay una tarea activa; la configuración fue inspeccionada sin ejecutar pruebas", 4);
     result.task = { id: loaded.task.id, mode: loaded.task.mode };
     result.baseline = { valid: loaded.task.initial.valid, status: loaded.task.initial.result.status,
@@ -149,7 +149,7 @@ export async function explainQuality(root) {
     result.baseline.inputsChanged = loaded.task.initial.inputs.digest !== checkpoint.digest;
     result.baseline.conditionsChanged = loaded.task.initial.result.configurationHash !== environment.configurationHash
       || loaded.task.initial.result.executionIdentity !== environment.executionIdentity
-      || loaded.task.initial.environment?.qualityTools !== environment.qualityTools;
+      || loaded.task.mode === "full" && loaded.task.initial.environment?.qualityTools !== environment.qualityTools;
     result.baseline.evidenceCurrent = result.baseline.valid && !result.baseline.inputsChanged && !result.baseline.conditionsChanged;
     const stored = await readVerificationReport(root, loaded.task);
     if (!stored) throw new IntegrationError("evidence_missing", "No existe un veredicto de la tarea activa", 2);
@@ -160,8 +160,8 @@ export async function explainQuality(root) {
     // Even an inconclusive control must never hide stale inputs or conditions.
     if (report.evidence?.inputs?.current !== checkpoint.digest) changes.add("quality_inputs_changed");
     if (["configurationHash", "executionIdentity", "node", "platform", "arch"]
-      .some((key) => report.environment?.current?.[key] !== environment[key])) changes.add("quality_conditions_changed");
-    if (report.environment?.current?.qualityTools !== environment.qualityTools) changes.add("quality_tools_changed");
+      .some((key) => (key === "executionIdentity" ? report.environment?.current?.referenceExecutionIdentity ?? report.environment?.current?.executionIdentity : report.environment?.current?.[key]) !== environment[key])) changes.add("quality_conditions_changed");
+    if (loaded.task.mode === "full" && report.environment?.current?.qualityTools !== environment.qualityTools) changes.add("quality_tools_changed");
     if (changes.size) {
       result.code = [...changes][0];
       result.causes = [...changes].map((code) => cause(code, "La evidencia guardada no corresponde a las condiciones actuales."));

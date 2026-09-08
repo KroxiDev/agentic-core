@@ -186,9 +186,9 @@ test("installed Light and Normal verification emit a receipt backed by all requi
     assert.equal(report.verification.controls.baseline.status, "approved");
     assert.equal(report.verification.controls.evidence.status, "approved");
     assert.equal(report.verification.controls.tests.status, "approved");
-    assert.equal(report.verification.controls.dry.status, "approved");
-    assert.equal(report.verification.controls.crap.status, "approved");
-    assert.equal(report.verification.controls.mutation.status, "NO_APLICA");
+    assert.equal(report.verification.controls.dry.status, "NO_SOLICITADO");
+    assert.equal(report.verification.controls.crap.status, "NO_SOLICITADO");
+    assert.equal(report.verification.controls.mutation.status, "NO_SOLICITADO");
     assert.match(report.receipt, /^QUALITY_OK task=issue-46 mode=/u);
     assert.equal(report.verification.mode, mode);
     assert.deepEqual(report.verification.scopes, ["work dir/src"]);
@@ -203,7 +203,7 @@ test("installed Light and Normal verification emit a receipt backed by all requi
       assert.match(human.stdout, /^QUALITY_OK task=issue-46 mode=normal /u);
       assert.ok(!human.stdout.includes(root));
       const validReport = JSON.parse(await readFile(reportPath, "utf8"));
-      validReport.crap.details[0].value = 999;
+      validReport.tests.suite.failed = 999;
       const corrupted = JSON.stringify(validReport);
       await writeFile(reportPath, corrupted);
       const refused = await runPythonProject(root, ["verify"]);
@@ -272,7 +272,7 @@ test("incremental C.R.A.P. rejects new code and degradation of existing code", a
   const { root } = await pythonProject(t);
   const subject = path.join(root, "work dir/src/subject.py");
   const original = await readFile(subject, "utf8");
-  const prepared = await runPythonProject(root, prepare());
+  const prepared = await runPythonProject(root, prepare("full"));
   assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
 
   await writeFile(subject, original.replace(
@@ -291,7 +291,7 @@ test("incremental C.R.A.P. rejects new code and degradation of existing code", a
 
   const { root: newCodeRoot } = await pythonProject(t);
   const newSubject = path.join(newCodeRoot, "work dir/src/subject.py");
-  const newPrepared = await runPythonProject(newCodeRoot, prepare());
+  const newPrepared = await runPythonProject(newCodeRoot, prepare("full"));
   assert.equal(newPrepared.code, 0, newPrepared.stdout + newPrepared.stderr);
   const newSource = await readFile(newSubject, "utf8");
   await writeFile(newSubject, [
@@ -327,7 +327,7 @@ test("incremental DRY requires a concrete resolution and then permits the aggreg
   const { root } = await pythonProject(t);
   const subject = path.join(root, "work dir/src/subject.py");
   const checks = path.join(root, "work dir/python checks/check_subject.py");
-  const prepared = await runPythonProject(root, prepare());
+  const prepared = await runPythonProject(root, prepare("full"));
   assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
   const subjectSource = await readFile(subject, "utf8");
   await writeFile(subject, subjectSource + duplicateSource);

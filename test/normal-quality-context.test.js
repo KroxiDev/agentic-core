@@ -40,7 +40,7 @@ test("Normal residual corrections retain the original task and accumulate verifi
     assert.notEqual(report.receipt, previousReceipt);
     assert.ok(report.result.suite.phases.call > 0, "pytest must really execute tests");
     assert.ok(report.budget.consumedMs > consumed);
-    assert.equal(report.verification.controls.mutation.status, "NO_APLICA");
+    assert.equal(report.verification.controls.mutation.status, "NO_SOLICITADO");
     assert.deepEqual(await readFile(activePath), active);
     consumed = report.budget.consumedMs;
     previousReceipt = report.receipt;
