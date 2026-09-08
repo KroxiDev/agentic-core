@@ -34,12 +34,14 @@ test("orquestar is semantic, mode-complete, and has no retired protocol", async 
   const skill = await text("skills/orquestar/SKILL.md");
   for (const activator of ["Orquesta", "/orquestar", "$orquestar"]) assert.match(skill, new RegExp(activator.replace("$", "\\$")));
   for (const mode of ["light", "normal", "full"]) assert.ok(skill.includes(`\`${mode}\``));
-  for (const role of ["Planificador", "Implementador", "Tester", "Verificador", "Evaluador", "Documentador"]) {
+  for (const role of ["Especificador", "Planificador", "Implementador", "Tester", "Verificador", "Evaluador", "Arquitecto", "Documentador"]) {
     assert.match(skill, new RegExp(role));
   }
   const roleProfiles = new Map([
+    ["Especificador", "agentic-read"],
     ["Planificador", "agentic-read"],
     ["Evaluador", "agentic-read"],
+    ["Arquitecto", "agentic-read"],
     ["Implementador", "agentic-production"],
     ["Tester", "agentic-tests"],
     ["Verificador", "agentic-tests"],
@@ -123,4 +125,31 @@ test("Normal preserves residual scope, shared retries and final acceptance", asy
     "Criterios de devolución:", "Golden Rules:", "Planificador:", "Evaluador:",
     "no modifica producción, tests ni documentación", "QUALITY_OK vigente", "NO_VERIFICADO"])
     assert.ok(profile.includes(phrase), `Read profile is missing: ${phrase}`);
+});
+
+test("Full defines six roles, evidence-based routing and stable read responsibilities", async () => {
+  const skill = await text("skills/orquestar/SKILL.md");
+  for (const phrase of [
+    "seis roles base",
+    "Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto",
+    "Especificador → `agentic-read`",
+    "Arquitecto → `agentic-read`",
+    "Evaluador rechaza en Full",
+    "nueva instancia de Especificador",
+    "tests o mutación → nuevo Implementador",
+    "diseño o plan → nuevo Planificador",
+    "alcance o especificación → nuevo Especificador",
+    "resultado completo y vigente de Mutation Testing integrado por #50",
+    "La revisión arquitectónica no sustituye la ejecución determinista",
+  ]) assert.ok(skill.includes(phrase), `Full contract is missing: ${phrase}`);
+  const profile = await text("adapters/codex/agents/agentic-read.toml");
+  for (const phrase of [
+    "name = \"agentic-read\"",
+    "Especificador:",
+    "delimita el alcance",
+    "Arquitecto:",
+    "Mutation Testing",
+    "No exige una solución subjetivamente ideal",
+    "no modifica producción, tests o documentación",
+  ]) assert.ok(profile.includes(phrase), `Read profile is missing Full responsibility: ${phrase}`);
 });

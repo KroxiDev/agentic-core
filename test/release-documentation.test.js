@@ -505,6 +505,22 @@ test("manual validation covers native Codex without claiming security enforcemen
     "evidencia nativa",
     "simulación controlada",
   ], "native Light evidence limits");
+  const fullValidation = headingSection(checklist, "Full real en Codex");
+  assertIncludesEach(inlineCode(fullValidation.body), [
+    "Orquesta Full",
+    "/orquestar full",
+    "agentic-read",
+    "QUALITY_OK",
+  ], "native Full identifiers");
+  assertContainsEach(fullValidation.body, [
+    "Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto",
+    "nueva instancia de Especificador",
+    "tests o mutación",
+    "diseño o plan",
+    "alcance o especificación",
+    "resultado completo de Mutation Testing de #50",
+    "evidencia nativa",
+  ], "native Full evidence limits");
   assert.doesNotMatch(checklist, /agentic-core (?:start|resume|approve-mode-change|submit-handoff)/);
 });
 
