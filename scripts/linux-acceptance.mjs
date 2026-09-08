@@ -89,6 +89,7 @@ test("Linux: paquete autónomo, helper ejecutable, calidad y mantenimiento entre
     await writeFile(path.join(work, "helper executable"), '#!/bin/sh\nprintf "%s" "$1"\n');
     await chmod(path.join(work, "helper executable"), 0o751);
     const check = path.join(work, "python checks/check_subject.py");
+    await writeFile(path.join(work, "python checks/check_unselected.py"), "def test_other_scope():\n    assert True\n");
     await writeFile(check, `${await readFile(check, "utf8")}
 def test_linux_resources():
     import stat, subprocess
@@ -129,7 +130,7 @@ def test_linux_resources():
       await prepare("linux-first");
       const verified = await quality(a.root, ["verify"]);
       assert.equal(verified.verification.controls.tests.status, "approved");
-      assert.equal(verified.result.suite.phases.call, 2);
+      assert.equal(verified.result.suite.phases.call, 3);
       for (const name of ["dry", "crap", "mutation"]) {
         assert.equal(verified.verification.controls[name].status, "NO_SOLICITADO");
         assert.equal(verified.verification[name].executed, false);
@@ -139,6 +140,18 @@ def test_linux_resources():
       for (const name of ["dry", "crap"]) {
         assert.equal((await quality(a.root, [name])).status, "approved");
       }
+      const initial = await readFile(path.join(a.root, ".agentic-core/quality/active-task.json"));
+      const selection = ["--scope", "work dir/src/subject.py", "--test", "work dir/python checks/check_subject.py"];
+      const selected = await quality(a.root, ["verify", "--control", "dry", ...selection]);
+      assert.equal(selected.verification.tests.suite.phases.call, 2);
+      assert.ok(selected.verification.tests.suite.executed.every((item) => item.path.endsWith("check_subject.py")));
+      const combined = await quality(a.root, ["verify", "--control", "dry", "--control", "crap", ...selection]);
+      assert.equal(combined.verification.reuse.tests.reused, true);
+      assert.equal(combined.verification.reuse.dry.reused, true);
+      assert.equal(combined.verification.crap.status, "approved");
+      assert.equal(combined.verification.mutation.status, "NO_SOLICITADO");
+      assert.deepEqual(await readFile(path.join(a.root, ".agentic-core/quality/active-task.json")), initial);
+      evidence.selection = combined.verification.request;
     });
     await step("mutación real conserva helper, mayúsculas y consumidor", async () => {
       // Standalone mutation assesses the current state, not task closure.
@@ -171,6 +184,18 @@ def test_linux_resources():
       assert.equal(await fingerprint(b.root), bInstalled);
     });
     await step("actualización y rollback preservan bytes y permisos", async () => {
+      // A historical schema fixture retains actual captured inputs and budget.
+      // No archived Full execution is required to verify preservation.
+      const activePath = path.join(a.root, ".agentic-core/quality/active-task.json");
+      const historical = JSON.parse(await readFile(activePath, "utf8"));
+      historical.task.mode = "full";
+      historical.sha256 = sha256(JSON.stringify(historical.task));
+      await writeFile(activePath, `${JSON.stringify(historical)}\n`);
+      const qualityBefore = await fingerprint(path.dirname(activePath));
+      const deprecated = await quality(a.root, ["verify"], 4);
+      assert.equal(deprecated.code, "full_deprecated");
+      assert.match(deprecated.message, /archive\/full/);
+      assert.equal(await fingerprint(path.dirname(activePath)), qualityBefore);
       const profile = path.join(a.root, ".codex/agents/agentic-production.toml");
       const original = await readFile(profile);
       await writeFile(profile, "synthetic older profile\n");
@@ -180,6 +205,11 @@ def test_linux_resources():
       await maintenance(["update", "--force"], { NODE_ENV: "test", AGENTIC_CORE_TEST_FAIL_AFTER_WRITE: "1" }, 5);
       assert.equal(await fingerprint(a.root), before);
       assert.equal((await maintenance(["update", "--force"])).status, "updated");
+      assert.equal(await fingerprint(path.dirname(activePath)), qualityBefore);
+      const diagnostic = await maintenance(["doctor"]);
+      assert.ok(diagnostic.diagnosis.checks.some((check) => check.id === "full.deprecated" || check.code === "full.deprecated"));
+      const installedFiles = await readdir(a.root, { recursive: true });
+      assert.equal(installedFiles.some((file) => /CONTEXT\.md|domain-modeling|technical-reference\.md|agentic-core-spec\.md/.test(file)), false);
       assert.deepEqual(await readFile(profile), original);
       assert.equal(await fingerprint(b.root), bInstalled);
     });

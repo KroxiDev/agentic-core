@@ -53,6 +53,7 @@ test("Windows distributed package completes the independent consumer lifecycle",
   const counter = path.join(packageHost, "suite-count.txt");
   const wrapper = path.join(root, "work dir/wrapper space.py");
   await writeFile(wrapper, `import os\nfrom pathlib import Path\ncounter = Path(os.environ['ACCEPTANCE_COUNTER'])\ncounter.write_text(str(int(counter.read_text()) + 1) if counter.exists() else '1')\n${await readFile(wrapper, "utf8")}`);
+  await writeFile(path.join(root, "work dir/python checks/check_unselected.py"), "def test_other_scope():\n    assert True\n");
   const consumerBefore = await hashDirectory(path.join(root, "work dir"));
   const run = (args, env) => runPythonProject(root, args, { ACCEPTANCE_COUNTER: counter, ...env });
   const count = () => readFile(counter, "utf8");
@@ -73,7 +74,7 @@ test("Windows distributed package completes the independent consumer lifecycle",
     assert.equal(version.stdout.trim(), pack.version);
     const direct = parse(await run(["test"]));
     assert.equal(direct.status, "approved");
-    assert.equal(direct.suite.phases.call, 1);
+    assert.equal(direct.suite.phases.call, 2);
     assert.ok(direct.python.version[1] >= 11);
     assert.ok(direct.python.pytestVersion);
     await assert.rejects(lstat(path.join(root, ".agentic-core/quality/active-task.json")), { code: "ENOENT" });
@@ -83,15 +84,17 @@ test("Windows distributed package completes the independent consumer lifecycle",
     const verified = parse(await run(["verify"]));
     assert.equal(verified.status, "approved");
     assert.match(verified.receipt, /^QUALITY_OK/u);
-    assert.equal(verified.verification.tests.suite.phases.call, 1);
-    for (const gate of ["tests", "dry", "crap"]) {
-      assert.equal(verified.verification.controls[gate].status, "approved");
+    assert.equal(verified.verification.tests.suite.phases.call, 2);
+    for (const gate of ["dry", "crap", "mutation"]) {
+      assert.equal(verified.verification.controls[gate].status, "NO_SOLICITADO");
+      assert.equal(verified.verification[gate].executed, false);
+      await assert.rejects(lstat(path.join(root, `.agentic-core/quality/${gate}.json`)), { code: "ENOENT" });
     }
     assert.deepEqual(await readdir(root), initialFiles, "sin petición no se exporta un resultado");
     const calls = await count();
     assert.equal(parse(await run(prepare("windows-first"))).reused, true);
     const reused = parse(await run(["verify"]));
-    for (const control of ["tests", "dry", "crap"])
+    for (const control of ["tests"])
       assert.equal(reused.verification.reuse[control].reused, true);
     assert.equal(reused.budget.consumedMs, verified.budget.consumedMs);
     const explained = parse(await run(["explain", "--json"]));
@@ -106,6 +109,17 @@ test("Windows distributed package completes the independent consumer lifecycle",
     assert.match(pipe.stdout, /diagnóstico sin ejecutar pruebas/u);
     assert.doesNotMatch(pipe.stdout, /synthetic-acceptance-secret|API_KEY/u);
     assert.equal(await count(), calls, "reutilización y diagnóstico no repiten pytest");
+
+    const selection = ["--scope", "work dir/src/subject.py", "--test", "work dir/python checks/check_subject.py"];
+    const selected = parse(await run(["verify", "--control", "dry", ...selection]));
+    assert.equal(selected.verification.tests.suite.phases.call, 1);
+    assert.ok(selected.verification.tests.suite.executed.every((item) => item.path.endsWith("check_subject.py")));
+    assert.equal(Number(await count()), Number(calls) + 1);
+    const combined = parse(await run(["verify", "--control", "dry", "--control", "crap", ...selection]));
+    assert.equal(combined.verification.reuse.tests.reused, true);
+    assert.equal(combined.verification.reuse.dry.reused, true);
+    assert.equal(combined.verification.crap.status, "approved");
+    assert.equal(Number(await count()), Number(calls) + 2, "C.R.A.P. mide el inicio guardado con tests reales");
 
     const mutationRun = await run(["mutate"]);
     const mutation = JSON.parse(mutationRun.stdout);
@@ -151,10 +165,23 @@ test("Windows distributed package completes the independent consumer lifecycle",
       await assert.rejects(lstat(path.join(root, ".agentic-core/quality", file)), { code: "ENOENT" });
     assert.equal(await readFile(output, "utf8"), saved);
     assert.equal(await hashDirectory(path.join(root, "work dir")), consumerBefore);
+    // Historical schema fixture: preserve real task inputs and budget without running Full.
+    const activePath = path.join(root, ".agentic-core/quality/active-task.json");
+    active.task.mode = "full";
+    active.sha256 = createHash("sha256").update(JSON.stringify(active.task)).digest("hex");
+    await writeFile(activePath, `${JSON.stringify(active)}\n`);
+    const historical = await hashDirectory(path.dirname(activePath));
+    const deprecated = await run(["verify"]);
+    assert.equal(deprecated.code, 4);
+    assert.equal(JSON.parse(deprecated.stdout).code, "full_deprecated");
+    assert.equal(await hashDirectory(path.dirname(activePath)), historical);
     const beforeUpdate = await hashDirectory(root);
     assert.equal((await maintenance(["update", "--dry-run"])).status, "ready");
     assert.equal(await hashDirectory(root), beforeUpdate);
     assert.equal((await maintenance(["update"])).status, "updated");
+    assert.equal(await hashDirectory(path.dirname(activePath)), historical);
+    const installedFiles = await readdir(root, { recursive: true });
+    assert.equal(installedFiles.some((file) => /CONTEXT\.md|domain-modeling|technical-reference\.md|agentic-core-spec\.md/.test(file)), false);
     assert.equal((await maintenance(["doctor"])).status, "healthy");
     assert.equal((await maintenance(["update", "--dry-run"])).plan.actions.length, 0);
     assert.equal(await readFile(path.join(root, ".agentic-core/config.json"), "utf8"), configBefore);
@@ -174,7 +201,7 @@ test("Windows distributed package completes the independent consumer lifecycle",
       env: { ...process.env, AGENTIC_CORE_PYTHON: python, PROJECT_SETTING: "required value",
         PYTHONDONTWRITEBYTECODE: "1", ACCEPTANCE_COUNTER: counter },
     });
-    assert.match(consumer.stdout, /1 passed/u);
+    assert.match(consumer.stdout, /2 passed/u);
   } finally {
     await rename(hidden, installed);
   }

@@ -1,4 +1,4 @@
-# Aceptación Linux — issue #59
+# Aceptación Linux — issues #59 y #96
 
 El recorrido automático se ejecuta en Linux real mediante GitHub Actions.
 La aceptación integral de [#59](https://github.com/KroxiDev/agentic-core/issues/59)
@@ -10,7 +10,9 @@ La primera ejecución automática completa fue
 el 2026-09-08 sobre `ea96797775b8f8d0498c7622d3b2b14f57e86d91`:
 un recorrido instalado, una regresión de herramientas y cinco regresiones
 complementarias aprobados, sin fallos ni omisiones. Las comprobaciones del
-commit actual se consultan en la [PR #81](https://github.com/KroxiDev/agentic-core/pull/81).
+estado histórico se consultan en la [PR #81](https://github.com/KroxiDev/agentic-core/pull/81).
+La ejecución del cambio #96 debe identificarse por su propio SHA y resultado de Actions;
+el éxito anterior no acredita cambios posteriores.
 
 Contrato: decisiones D08, D09, D15, D17, D19 y D20 de
 [#38](https://github.com/KroxiDev/agentic-core/issues/38).
@@ -50,7 +52,9 @@ regresiones complementarias figura en el workflow.
 2. **Inputs y calidad:** wrapper pytest autoritativo con argumentos literales
    y rutas con espacios; archivos `Case.txt` y `case.txt` distintos; helper
    invocado directamente como proceso con modo `0751`, también en las copias.
-   Pruebas, DRY y C.R.A.P. aprobados mediante los comandos instalados.
+   Tests funcionales predeterminados sin motores opcionales. DRY y C.R.A.P.
+   se solicitan por separado y combinados, con selección real de archivos de
+   tests y reutilización compatible; la referencia inicial conserva sus bytes.
 3. **Mutación:** dos mutantes generados, seleccionados y detectados en el
    consumidor integrado, con restauración e integridad. El corpus existente
    adicional exige un detectado, un superviviente, un no cubierto, un timeout
@@ -64,12 +68,16 @@ regresiones complementarias figura en el workflow.
    rollback inyectado y restauración del perfil original. Desinstalación mediante
    el launcher instalado, retiro de runtime/herramientas/ownership y preservación
    de archivos ajenos, lockfile, entorno Python y comportamiento del consumidor.
-   Se compara B antes y después y se ejecuta su suite al terminar.
+   Se compara B antes y después y se ejecuta la suite de A al terminar.
+   Una tarea con formato histórico Full conserva inputs y presupuesto durante
+   rechazo, diagnóstico y actualización; no se ejecuta el runtime archivado.
+   Los documentos de desarrollo, glosario y domain-modeling no se instalan.
 6. **Regresiones acotadas:** traslado e inspección de herramientas sin cambios de
    bytes; rechazo de degradación C.R.A.P. y de duplicación DRY sin resolver;
    corpus de mutación, exportación y diagnóstico ya existentes. El workflow
    propaga los fallos a través de `tee` y exige cinco regresiones aprobadas y
-   cero omisiones, para evitar aceptar una selección vacía.
+   cero omisiones, para evitar aceptar una selección vacía. Una selección adicional
+   ejecuta los tres casos instalados de combinación, distribución y deprecación.
 
 La desinstalación mantiene el comportamiento conservador de #57: conserva los
 directorios no vacíos cuyos archivos no tienen propiedad individual registrada,

@@ -12,6 +12,9 @@ on:
       - 'package*.json'
       - 'adapters/**'
       - 'skills/**'
+      - 'docs/**'
+      - 'CONTEXT.md'
+      - 'README.md'
   workflow_dispatch:
 
 permissions:
@@ -48,6 +51,14 @@ jobs:
         run: node --test --test-reporter=tap test/python-tools.test.js | tee .codex-temp/linux-artifacts/tools.tap
       - name: Recorrido del paquete instalado
         run: node --test --test-reporter=tap scripts/linux-acceptance.mjs | tee .codex-temp/linux-artifacts/installed.tap
+      - name: Controles combinados y límites de distribución
+        run: |
+          node --test --test-reporter=tap --test-concurrency=1 \
+            test/quality-control-combinations.test.js test/documentation-boundary.test.js test/quality-full-deprecation.test.js \
+            | tee .codex-temp/linux-artifacts/optional-controls.tap
+          grep -qx '# tests 3' .codex-temp/linux-artifacts/optional-controls.tap
+          grep -qx '# pass 3' .codex-temp/linux-artifacts/optional-controls.tap
+          grep -qx '# skipped 0' .codex-temp/linux-artifacts/optional-controls.tap
       - name: Regresiones puntuales de calidad, exportación y diagnóstico
         run: |
           node --test --test-reporter=tap --test-concurrency=1 \
