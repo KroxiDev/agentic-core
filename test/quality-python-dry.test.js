@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { copyFile, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { configurePythonProject, pythonProject, runPythonProject } from "./support/python-project.mjs";
+import { runPythonDry } from "../src/quality/python-dry.js";
 
 const duplicateSource = `def first(values):
     result = []
@@ -29,6 +30,12 @@ async function dry(root) {
   const result = await runPythonProject(root, ["dry"]);
   assert.equal(result.stderr, "");
   return { ...result, report: JSON.parse(result.stdout) };
+}
+
+// Differential acceptance remains an internal engine contract, separate from the current-analysis CLI.
+async function differentialDry(root) {
+  const report = await runPythonDry(root);
+  return { report, code: report.exitCode, stdout: JSON.stringify(report) };
 }
 
 async function addDuplicates(root) {
@@ -132,13 +139,13 @@ test("DRY attributes candidate bodies across unrelated edits and moves without h
   const prepared = await runPythonProject(root, ["prepare", "--task", "dry-moves", "--mode", "normal", "--objective", "dry-moves"]);
   assert.equal(prepared.code, 0, prepared.stdout);
   await writeFile(path.join(root, "work dir/src/duplicates.py"), `# unrelated comment\n${duplicateSource}\nOTHER_SETTING = 17\n`);
-  let result = await dry(root);
+  let result = await differentialDry(root);
   assert.equal(result.report.code, "preexisting_only", result.stdout);
   await rename(path.join(root, "work dir/src/duplicates.py"), path.join(root, "work dir/src/moved.py"));
-  result = await dry(root);
+  result = await differentialDry(root);
   assert.equal(result.report.code, "preexisting_only", result.stdout);
   await copyFile(path.join(root, "work dir/src/moved.py"), path.join(root, "work dir/src/new-copy.py"));
-  result = await dry(root);
+  result = await differentialDry(root);
   assert.equal(result.report.status, "rejected", result.stdout);
   assert.equal(result.report.summary.preexisting, 1);
   assert.ok(result.report.summary.unresolved > 0);
@@ -151,10 +158,10 @@ test("DRY remeasures the original baseline with changed valid limits", async (t)
   assert.equal(prepared.code, 0, prepared.stdout);
   const baselinePath = path.join(root, ".agentic-core/quality/active-task.json");
   const baseline = await readFile(baselinePath, "utf8");
-  const first = await dry(root);
+  const first = await differentialDry(root);
   assert.equal(first.report.code, "preexisting_only", first.stdout);
   await configurePythonProject(root, (config) => { config.limits.dry.similarity = 1; });
-  const strict = await dry(root);
+  const strict = await differentialDry(root);
   assert.equal(strict.report.code, "no_duplicates", strict.stdout);
   assert.equal(strict.report.baseline.scan, "measured");
   assert.equal(strict.report.baseline.candidates.length, 0);
@@ -207,7 +214,7 @@ test("dry resolutions are concrete and become stale when measured inputs change"
   assert.equal(stale.code, 1, stale.stdout);
   assert.equal(stale.report.status, "rejected");
   assert.equal(stale.report.resolutions.status, "stale");
-  assert.equal(stale.report.candidates[0].classification, "new_or_changed");
+  assert.equal(stale.report.candidates[0].classification, "current");
   assert.equal(stale.report.candidates[0].status, "unresolved");
 
   await writeFile(path.join(root, "work dir/src/duplicates.py"), "def first(value):\n    return value + 1\ndef second(item):\n    return item + 1\n");
@@ -229,13 +236,24 @@ test("DRY classifies unchanged baseline duplication as preexisting", async (t) =
   await addDuplicates(root);
   const prepared = await runPythonProject(root, ["prepare", "--task", "issue-45", "--mode", "normal", "--objective", "issue-45"]);
   assert.equal(prepared.code, 0, prepared.stdout);
-  const result = await dry(root);
+  const result = await differentialDry(root);
   assert.equal(result.code, 0, result.stdout);
   assert.equal(result.report.status, "approved");
   assert.equal(result.report.code, "preexisting_only");
   assert.equal(result.report.summary.preexisting, result.report.summary.candidates);
   assert.ok(result.report.candidates.length > 0);
   assert.ok(result.report.candidates.every((candidate) => candidate.classification === "preexisting"));
+  const taskPath = path.join(root, ".agentic-core/quality/active-task.json");
+  const taskBytes = await readFile(taskPath);
+  const current = await dry(root);
+  assert.equal(current.code, 1, current.stdout);
+  assert.equal(current.report.purpose, "current_analysis");
+  assert.equal(current.report.implementationApproval, false);
+  assert.equal(current.report.baseline.status, "not_requested");
+  assert.equal(current.report.baseline.scan, "not_run");
+  assert.equal(current.report.summary.preexisting, 0);
+  assert.equal(current.report.summary.unresolved, result.report.summary.candidates);
+  assert.deepEqual(await readFile(taskPath), taskBytes);
 });
 
 test("Python quality help exposes the installed DRY command", async (t) => {
@@ -246,4 +264,117 @@ test("Python quality help exposes the installed DRY command", async (t) => {
   assert.match(result.stdout, /dry4python/u);
   assert.match(result.stdout, /no interpreta el código de salida/u);
   assert.equal(await readFile(path.join(root, ".agentic-core/config.json"), "utf8").then((content) => content.includes('"dry"')), true);
+});
+
+test("installed standalone DRY selects files and folders without other controls or persistent changes", async (t) => {
+  const { root } = await pythonProject(t);
+  await addDuplicates(root);
+  const source = "work dir/src/subject.py";
+  const duplicates = "work dir/src/duplicates.py";
+  const configPath = path.join(root, ".agentic-core/config.json");
+  const configBytes = await readFile(configPath);
+  const sourceBytes = await readFile(path.join(root, duplicates));
+  const quality = path.join(root, ".agentic-core/quality");
+  // A static query cannot rely on the project's test interpreter or wrapper.
+  await rename(path.join(root, ".venv"), path.join(root, ".agentic-core/unavailable-project-venv"));
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { privatePython } = await import("../src/installation/python.js");
+  const { stdout } = await promisify(execFile)(privatePython(path.join(root, ".agentic-core/tools")),
+    ["-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], { windowsHide: true });
+  const trace = path.join(root, ".agentic-core/commands.jsonl");
+  await writeFile(path.join(stdout.trim(), "sitecustomize.py"), `import json, sys
+from pathlib import Path
+trace = Path(${JSON.stringify(trace)})
+with trace.open('a') as output:
+    output.write(json.dumps(sys.argv) + '\\n')
+def observe(event, args):
+    if event == 'import' and args[0].split('.')[0] in ('pytest', 'coverage', 'crap4py', 'mutate4py'):
+        with trace.open('a') as output:
+            output.write(json.dumps(['FORBIDDEN', args[0]]) + '\\n')
+        raise RuntimeError('DRY invoked another control')
+sys.addaudithook(observe)
+`);
+  const invoke = async (args) => {
+    const result = await runPythonProject(root, ["dry", ...args]);
+    assert.equal(result.stderr, "");
+    const report = JSON.parse(result.stdout);
+    assert.equal(result.code, report.exitCode);
+    return report;
+  };
+  const clean = await invoke(["--scope", source]);
+  assert.equal(clean.status, "approved", JSON.stringify(clean));
+  assert.equal(clean.code, "no_duplicates");
+  assert.equal(clean.implementationApproval, false);
+  assert.deepEqual(clean.selection.measuredFiles, [source]);
+  assert.deepEqual(clean.selection.tests, []);
+  assert.equal(clean.selection.testSelection, "not_run");
+  const human = await runPythonProject(root, ["dry", "--scope", source], { AGENTIC_CORE_OUTPUT: "human" });
+  assert.equal(human.code, 0, human.stdout);
+  assert.match(human.stdout, /Análisis actual; no aprueba una implementación/u);
+  assert.ok(human.stdout.includes(source));
+  assert.match(human.stdout, /Tests ejecutados: ninguno/u);
+  assert.match(human.stdout, /no se buscan duplicaciones fuera de ese alcance/u);
+
+  const found = await invoke(["--scope", "work dir/src/./duplicates.py", "--scope", duplicates]);
+  assert.equal(found.exitCode, 1, JSON.stringify(found));
+  assert.deepEqual(found.selection.code, [duplicates]);
+  assert.deepEqual(found.selection.measuredFiles, [duplicates]);
+  assert.ok(found.candidates.length > 0);
+  assert.ok(found.candidates.every((candidate) => candidate.classification === "current"));
+  assert.equal(found.baseline.scan, "not_run");
+  assert.notEqual(found.identity, clean.identity);
+  const resolutionPath = path.join(quality, "dry-resolutions.json");
+  const resolutionBytes = Buffer.from(JSON.stringify({ schemaVersion: 1, inputs: found.hashes.inputs,
+    configuration: found.hashes.configuration,
+    resolutions: [{ candidate: found.candidates[0].id, decision: "keep", reason: keepReason }] }));
+  await writeFile(resolutionPath, resolutionBytes);
+  const resolved = await invoke(["--scope", duplicates]);
+  assert.equal(resolved.status, "approved", JSON.stringify(resolved));
+  assert.equal(resolved.candidates.length, found.candidates.length, "resolutions do not hide current findings");
+  assert.equal(resolved.implementationApproval, false);
+  const protectedReports = ["verification.json", "crap.json", "mutation.json"];
+  for (const file of protectedReports) await writeFile(path.join(quality, file), `preserve ${file}\n`);
+  const folder = await invoke(["--scope", "work dir/src"]);
+  assert.equal(folder.exitCode, 1, JSON.stringify(folder));
+  assert.equal(folder.resolutions.status, "stale");
+  assert.deepEqual(folder.selection.measuredFiles, [duplicates, source]);
+  assert.notEqual(folder.hashes.inputs, found.hashes.inputs);
+  assert.equal(folder.hashes.configuration, found.hashes.configuration);
+  const repeated = await invoke(["--scope", duplicates, "--scope", source]);
+  assert.deepEqual(repeated.selection.measuredFiles, folder.selection.measuredFiles);
+  assert.equal(repeated.exitCode, 1);
+
+  await writeFile(path.join(root, "work dir/src/broken.py"), "def broken(:\n");
+  const partial = await invoke(["--scope", "work dir/src"]);
+  assert.equal(partial.exitCode, 2, JSON.stringify(partial));
+  assert.equal(partial.code, "dry_measurement_incomplete");
+  assert.ok(partial.candidates.length > 0);
+  assert.ok(partial.issues.some((issue) => issue.code === "dry_syntax_unsupported"));
+  assert.deepEqual(JSON.parse(await readFile(path.join(quality, "dry.json"), "utf8")).result, partial);
+  for (const args of [["--scope"], ["--scope", "../outside"], ["--scope", ".venv"],
+    ["--scope", "missing.py"], ["--scope", "work dir/src/*.py"], ["--test", source]]) {
+    const invalid = await invoke(args);
+    assert.equal(invalid.exitCode, 4, JSON.stringify(invalid));
+    assert.equal(invalid.code, "invalid_selection");
+  }
+  const foreignBytes = Buffer.from("foreign DRY evidence\n");
+  await writeFile(path.join(quality, "dry.json"), foreignBytes);
+  const conflict = await invoke(["--scope", source]);
+  assert.equal(conflict.code, "quality_report_conflict");
+  assert.equal(conflict.exitCode, 2);
+  assert.equal(conflict.reference, undefined);
+  assert.deepEqual(await readFile(path.join(quality, "dry.json")), foreignBytes);
+  assert.deepEqual(await readFile(configPath), configBytes);
+  assert.deepEqual(await readFile(resolutionPath), resolutionBytes);
+  assert.deepEqual(await readFile(path.join(root, duplicates)), sourceBytes);
+  for (const file of protectedReports) assert.equal(await readFile(path.join(quality, file), "utf8"), `preserve ${file}\n`);
+  for (const file of ["active-task.json", "budget.json", "tests.json"]) {
+    await assert.rejects(access(path.join(quality, file)), { code: "ENOENT" });
+  }
+  await assert.rejects(access(path.join(root, "work dir/prepared.txt")), { code: "ENOENT" });
+  const commands = (await readFile(trace, "utf8")).trim().split("\n").map(JSON.parse);
+  assert.ok(commands.length > 0);
+  assert.ok(commands.every((args) => args[0] === "-c" || args[0] === "-m" || args[0].endsWith("agentic_dry.py")), JSON.stringify(commands));
+  t.diagnostic(`Installed DRY: ${commands.length} private Python commands observed; project test interpreter unavailable; no imports of other controls`);
 });
