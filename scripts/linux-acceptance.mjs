@@ -177,10 +177,14 @@ def test_linux_resources():
       await maintenance(["uninstall", "--dry-run"]);
       assert.equal(await fingerprint(a.root), before);
       assert.equal((await maintenance(["uninstall"])).dryRun, false);
-      for (const item of ["runtime", "tools", "ownership.json", "quality/active-task.json", "quality/budget.json"]) {
-        await assert.rejects(lstat(path.join(a.root, ".agentic-core", item)), { code: "ENOENT" });
+      for (const item of ["runtime", "tools", "ownership.json"]) {
+        await assert.rejects(lstat(path.join(a.root, ".agentic-core", item)), { code: "ENOENT" }, item);
       }
       assert.equal(await readFile(foreign, "utf8"), "keep foreign\n");
+      // Maintenance preserves nonempty directories without per-file ownership.
+      // Retirement of owned task evidence was checked at the task switch above.
+      assert.equal(await readFile(path.join(a.root, ".agentic-core/quality/foreign.txt"), "utf8"), "keep foreign evidence\n");
+      assert.ok((await lstat(path.join(a.root, "resultado solicitado.md"))).isFile());
       assert.equal(await fingerprint(work), consumer.work);
       assert.equal(await fingerprint(path.join(a.root, ".venv")), consumer.environment);
       assert.equal(await readFile(path.join(a.root, "uv.lock"), "utf8"), consumer.lock);
