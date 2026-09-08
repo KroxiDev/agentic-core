@@ -5,11 +5,11 @@ import { mandatoryInputExclusion, matchesInput, privateInputContent } from "./pr
 const invalid = () => new IntegrationError("invalid_selection",
   "Use --scope y --test repetibles con archivos o carpetas relativos al proyecto, presentes en los inputs permitidos", 4);
 
-export function parseTestSelection(args) {
+export function parseTestSelection(args, { allowChanges = false } = {}) {
   const selection = {};
   for (let index = 0; index < args.length; index += 2) {
     if (args[index] === "--changes") {
-      if (selection.changes) throw invalid();
+      if (!allowChanges || selection.changes) throw invalid();
       selection.changes = true;
       index -= 1;
       continue;

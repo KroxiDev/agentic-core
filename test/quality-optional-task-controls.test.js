@@ -106,5 +106,10 @@ for (const mode of ["light", "normal"]) {
       assert.equal(without.verification.dry.status, "NO_SOLICITADO");
       assert.deepEqual(JSON.parse(await readFile(path.join(root, active))).task.requiredControls, ["dry"]);
     }
+    for (const command of ["dry", "crap", "mutate"]) {
+      const unsupported = await invoke([command, "--changes"]);
+      assert.equal(unsupported.processCode, 4, JSON.stringify(unsupported));
+      assert.equal(unsupported.code, "invalid_selection");
+    }
   });
 }

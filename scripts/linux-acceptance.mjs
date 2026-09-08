@@ -141,13 +141,16 @@ def test_linux_resources():
       }
     });
     await step("mutación real conserva helper, mayúsculas y consumidor", async () => {
-      // Standalone mutation reports execution, not an aggregate quality approval.
-      const mutation = await quality(a.root, ["mutate"], 2);
-      assert.equal(mutation.code, "mutation_execution_complete");
+      // Standalone mutation assesses the current state, not task closure.
+      const mutation = await quality(a.root, ["mutate"], 0);
+      assert.equal(mutation.code, "mutation_score_approved");
       assert.equal(mutation.complete, true);
       assert.equal(mutation.generated, 2);
       assert.equal(mutation.selected, 2);
-      assert.deepEqual(mutation.summary, { killed: 2, survived: 0, uncovered: 0, timeout: 0, error: 0, interrupted: 0 });
+      assert.deepEqual(Object.fromEntries(["killed", "survived", "uncovered", "timeout", "error", "interrupted"]
+        .map((status) => [status, mutation.summary[status]])), { killed: 2, survived: 0, uncovered: 0, timeout: 0, error: 0, interrupted: 0 });
+      assert.equal(mutation.analysis, "current_state");
+      assert.equal(mutation.score.percentage, 100);
       assert.equal(mutation.integrity.status, "preserved");
       evidence.mutation = mutation.summary;
       assert.equal(await fingerprint(work), consumer.work);

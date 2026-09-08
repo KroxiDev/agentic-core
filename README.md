@@ -129,15 +129,31 @@ La mutación integrada de Full (#49–#50) usa `withCurrentTaskBudget` y `execut
 
 ### C.R.A.P. de Python
 
+Análisis autónomo con código y tests seleccionados, sin preparar una tarea:
+
+```sh
+node .agentic-core/runtime-launcher.mjs agentic-quality crap --scope src/payments.py --test tests/test_payments.py
+```
+
+`--scope` y `--test` usan la misma selección transitoria de archivos o carpetas que `test` y pueden repetirse. Sin opciones conservan los valores del proyecto. Solo se ejecutan C.R.A.P. y los tests necesarios mediante el comando autoritativo; no se invocan DRY ni mutación ni se reparan archivos. El informe identifica selección, tests efectivamente ejecutados y estado actual (`analysis: current`), incluidos incumplimientos preexistentes aunque haya una tarea activa. No representa una comparación con el inicio. La identidad incorpora código y tests seleccionados; una cobertura incompatible no puede reutilizarse. Cada invocación autónoma mide de nuevo y conserva los límites y el presupuesto aplicables.
+
 `node .agentic-core/runtime-launcher.mjs agentic-quality crap` ejecuta el pytest autoritativo en su copia controlada y mide mediante `crap4py==0.1.1` del entorno privado. Usa `limits.crap` (7 inicialmente, inclusive), muestra valor, límite y ubicación, y conserva el informe íntegro en `.agentic-core/quality/crap.json`. `AGENTIC_CORE_OUTPUT=json` expone los datos normalizados, identidades y causas para automatización. Esta medición no emite `QUALITY_OK`.
 
 El adaptador conserva el cálculo de complejidad y C.R.A.P. del motor; delimita funciones y comportamiento de módulo sin contar dos veces sus cuerpos. Usa ramas atribuibles y, cuando no hay ramas, sentencias observadas para no convertir un cuerpo sin ejecutar en cobertura completa. La cobertura cero tiene un valor numérico; código no cargado, atribución ausente o ambigua, sintaxis no analizable y otros lenguajes incluidos en el alcance quedan `NO_VERIFICADO`, con resultados válidos de las demás partes. Las lambdas sin atribución separada también se informan como limitación. Un ámbito que contiene una expresión generadora queda `generator_coverage_unsupported`, con valor y cobertura desconocidos: las líneas no separan su creación de la ejecución diferida, incluso si los tests la consumen; las métricas de otros ámbitos soportados se conservan. Las anotaciones de parámetros, retorno y variables de módulo/clase, los valores de alias de tipo y los límites, restricciones y defaults de parámetros de tipo conservan filas `annotation_coverage_unsupported`, con valor y cobertura desconocidos: ejecutar la declaración no demuestra su evaluación independiente. Las asignaciones y cuerpos conservan sus métricas sin volver a contar esas expresiones. La limitación incluye anotaciones simples y stringizadas; su modalidad usa la versión observada de pytest y queda desconocida si no se pudo observar. Las anotaciones locales que Python nunca evalúa no añaden comportamiento ejecutable. `NO_APLICA` exige ausencia comprobada de comportamiento ejecutable en el alcance. Un informe ajeno o divergente se conserva y produce un conflicto explícito.
 
 ### DRY de Python
 
-`node .agentic-core/runtime-launcher.mjs agentic-quality dry` ejecuta `dry4python==0.1.0` en un directorio temporal con el código Python medido por la política de inputs vigente. Usa `limits.dry.similarity`, `limits.dry.minLines` y `limits.dry.minNodes`; el motor recibe los tres límites y sus candidatos se normalizan con ubicación, rango de líneas, símbolo, score y nodos. El código de salida del motor no decide por sí solo si hay duplicaciones ni si la comprobación está aprobada.
+`dry` analiza el estado actual sin preparar una tarea ni ejecutar tests, C.R.A.P., mutación o roles. Acepta `--scope` repetible para archivos o carpetas, con las mismas reglas de selección transitoria de `test`: rutas relativas a la raíz, sin globs ni escapes y sujetas a la política de inputs. No acepta `--test`. Sin opciones usa el alcance configurado.
 
-El resultado queda en `.agentic-core/quality/dry.json`. Un candidato nuevo o modificado produce `rejected` hasta que se corrija o se registre una justificación concreta en `.agentic-core/quality/dry-resolutions.json`, asociada al ID del candidato, al digest de inputs y a la configuración actual:
+```powershell
+node .agentic-core/runtime-launcher.mjs agentic-quality dry --scope src/orders --scope src/shared.py
+```
+
+Ejecuta `dry4python==0.1.0` en un directorio temporal con los archivos Python medidos. Usa `limits.dry.similarity`, `limits.dry.minLines` y `limits.dry.minNodes`; sus candidatos se normalizan con ubicación, rango de líneas, símbolo, score y nodos. Solo busca coincidencias entre esos archivos: no atribuye resultados al resto del proyecto. El código de salida del motor no decide por sí solo si hay duplicaciones ni si la comprobación está aprobada.
+
+El JSON (`AGENTIC_CORE_OUTPUT=json`) declara `purpose: current_analysis`, `implementationApproval: false`, `selection.measuredFiles`, tests no ejecutados y limitaciones. Aunque exista una tarea activa, muestra todos los candidatos actuales sin descontar deuda preexistente ni medir el baseline. No repara archivos ni cambia configuración; conserva los informes de los demás controles y el veredicto de tarea. Cambiar la selección cambia la identidad DRY e impide aplicar resoluciones de un alcance incompatible, sin borrar esas resoluciones.
+
+El resultado queda en `.agentic-core/quality/dry.json`. Un candidato actual sin resolución produce `rejected` (salida 1); sin candidatos pendientes, `approved` (salida 0) describe únicamente este análisis, nunca la aprobación de una implementación. Las resoluciones concretas se reconocen sin ocultar los candidatos resueltos. Se registran en `.agentic-core/quality/dry-resolutions.json`, asociadas al ID del candidato, al digest de inputs y a la configuración actual:
 
 ```json
 {
@@ -156,7 +172,7 @@ El resultado queda en `.agentic-core/quality/dry.json`. Un candidato nuevo o mod
 
 La razón debe mencionar ambos símbolos del candidato y un fragmento de sus cuerpos ofrecido en `bodyReferences`, con al menos ocho palabras distintas y sin fórmulas de aprobación vacía como «ok», «están bien» o «no necesitan cambios». Ese contrato exige una explicación ligada al código; el Tester sigue siendo responsable de valorar el diseño. Una razón que no cumple ese contrato o una resolución retirada durante la medición no aprueba el candidato.
 
-Cuando existe `active-task.json`, la detección analiza sus fuentes originales con los límites actuales. Compara las identidades de los cuerpos duplicados, sin atribuir a la tarea cambios ajenos en el archivo o traslados identificables; cada par previo puede justificar un único par actual, de modo que nuevas copias siguen pendientes. Cambiar un límite renueva la detección sin reemplazar el baseline. Si cambian los inputs o los límites, las resoluciones previas quedan obsoletas.
+El motor interno utilizado por la verificación de tareas conserva su comparación con las fuentes originales de `active-task.json`: compara identidades de cuerpos, reconoce traslados y no oculta nuevas copias. Esa comparación no se aplica a la CLI de análisis actual; su adaptación a controles opcionales corresponde a T7 (#90). Si cambian los inputs o los límites, las resoluciones previas quedan obsoletas.
 
 Los pragmas `dry4python: ignore` e `ignore-file` se neutralizan únicamente en las copias de análisis. El motor fijado mide funciones y métodos: el código procedural de módulo o clase que alcanza los tamaños mínimos configurados queda `NO_VERIFICADO`, con ubicaciones y los candidatos válidos de las demás partes. También se conservan resultados parciales ante errores sintácticos, sin publicar el texto fuente en el diagnóstico. `NO_VERIFICADO` diferencia errores de herramienta, integridad o medición de `no_duplicates`; esta comprobación tampoco emite `QUALITY_OK`.
 
@@ -171,16 +187,18 @@ Light y Normal pueden cerrar con `approved` y `QUALITY_OK`; sus controles de mut
 ### Ejecución individual de mutantes Python
 
 ```powershell
-node .agentic-core/runtime-launcher.mjs agentic-quality mutate
+node .agentic-core/runtime-launcher.mjs agentic-quality mutate --scope src/payments.py --test tests/test_payments.py
 ```
 
-`mutation` es alias de `mutate`. En esquema 3 se usa el alcance de `config.json`, sin `--target`. mutate4py 0.1.4 genera las modificaciones y el adaptador ejecuta el comando autoritativo completo, incluidos wrapper, argumentos, entorno, configuración y preparación. No instala herramientas en el entorno del proyecto.
+`mutation` es alias de `mutate`. En esquema 3 acepta `--scope` y `--test` repetibles con las mismas restricciones de `test`; sin opciones usa el alcance y comando configurados, sin `--target`. La selección es transitoria. Funciona sin preparar una tarea ni iniciar roles y no ejecuta DRY o C.R.A.P. mutate4py 0.1.4 genera las modificaciones y cada referencia y mutante ejecuta los tests seleccionados mediante el intérprete, wrapper, argumentos y entorno del proyecto. No instala herramientas en el entorno del proyecto.
 
-El informe `.agentic-core/quality/mutation.json` distingue `killed`, `survived`, `uncovered` conocido, `timeout`, `error` e `interrupted`. Solo los fallos atribuidos a las pruebas cuentan como detección. Los tres últimos estados son inconclusos; no se calcula un score ni se emite `QUALITY_OK` desde esta ejecución individual. `verify` Full reutiliza este motor con selección incremental contra las fuentes del baseline, agrega el score configurado y conserva el inventario completo en `verification.json`.
+La salida agrega el score del **estado actual** (`analysis: current_state`), no una comparación incremental ni un cierre `QUALITY_OK`. Usa `limits.mutationScore`: devuelve `approved` (0), `rejected` (1), `NO_APLICA` sin score si no hay mutantes exigibles (0), o `NO_VERIFICADO` ante evidencia insuficiente (2; los fallos operativos conservan su código). El denominador incluye supervivientes y mutantes sin cobertura; excluye equivalentes solo con prueba estática. Compara el valor exacto y redondea únicamente su presentación.
+
+El informe `.agentic-core/quality/mutation.json` conserva la ejecución y su `assessment`, con estado y score. `scopeSelection` identifica código y tests; `selection` identifica los mutantes. La referencia (`baseline`) es la ejecución sin mutar de ese mismo estado. La referencia y cada mutante ejecutado registran el comando y los tests observados. Distingue `killed`, `survived`, `uncovered` conocido, `timeout`, `error` e `interrupted`; solo fallos atribuibles a pruebas cuentan como detección. Timeout, error, interrupción o pendientes impiden aprobar y conservan resultados parciales.
 
 Una referencia aprobada determina el timeout solicitado por mutante: tres veces su duración, con un mínimo de 1000 ms, limitado por `limits.operation.commandTimeoutMs` y el presupuesto restante de la tarea. El informe muestra el límite efectivo y conserva resultados parciales cuando se agota el presupuesto. La ejecución usa un worker, dentro del máximo configurado, y reutiliza una copia para todos los archivos; verifica inputs, permisos y dependencias, restaura cada mutación y retira los outputs entre pruebas. Nunca restaura archivos del proyecto original sobre cambios ajenos.
 
-Con tarea activa se reutiliza un informe completo y concluyente únicamente si sus inputs, comando, configuración y entorno siguen vigentes. Los resultados inconclusos se vuelven a comprobar dentro del presupuesto restante. Una tarea distinta retira solo informes internos íntegros y propios.
+Sin tarea aplica el presupuesto por invocación; con tarea activa conserva su presupuesto compartido. Solo reutiliza informes completos y concluyentes cuya selección de código y tests, inputs, comando, configuración, entorno y tarea sigan vigentes; conserva informes ajenos o divergentes. Las llamadas internas existentes de Full mantienen su selección incremental y agregación. La selección autónoma por cambios de una tarea y su efecto en el cierre corresponden a #92 (T9).
 
 ## Actualización
 

@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { access, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { parseTestSelection } from "../src/quality/selection.js";
 import { configurePythonProject, pythonProject, runPythonProject } from "./support/python-project.mjs";
+
+test("task delta selection requires an explicitly supported command", () => {
+  assert.throws(() => parseTestSelection(["--changes"]), { code: "invalid_selection" });
+  assert.deepEqual(parseTestSelection(["--changes"], { allowChanges: true }), { changes: true });
+});
 
 test("installed test selection preserves the wrapper, inputs and transient evidence", async (t) => {
   const { root, config } = await pythonProject(t);

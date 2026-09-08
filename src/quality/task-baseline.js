@@ -323,7 +323,7 @@ async function inspect(root, args, verify) {
     else selectionArgs.push(args[index]);
   }
   const requiredControls = controlValues.length ? parseControls(controlValues) : undefined;
-  const selection = parseTestSelection(selectionArgs);
+  const selection = parseTestSelection(selectionArgs, { allowChanges: true });
   const loaded = await readActiveTask(root);
   if (!loaded) throw new IntegrationError("task_missing", "Prepare la tarea antes de verificar; Directo puede ejecutar test sin preparar", 4);
   if (!verify) {
