@@ -48,6 +48,11 @@ for (const collision of [false, true]) {
     const owner = JSON.parse(await readFile(ownerPath, "utf8"));
     const target = ".codex/agents/agentic-docs.toml";
     owner.resources = owner.resources.filter((resource) => resource.path !== target);
+    const readTarget = ".codex/agents/agentic-read.toml";
+    const previousReadProfile = "Perfil técnico anterior al cierre documental.\n";
+    await writeFile(path.join(root, readTarget), previousReadProfile);
+    owner.resources.find((resource) => resource.path === readTarget).sha256 =
+      createHash("sha256").update(previousReadProfile).digest("hex");
     await writeFile(ownerPath, JSON.stringify(owner));
     await rm(path.join(root, target));
     if (collision) await writeFile(path.join(root, target), "foreign docs profile\n");
@@ -63,7 +68,11 @@ for (const collision of [false, true]) {
     } else {
       assert.deepEqual(await readFile(path.join(root, target)),
         await readFile(path.join(repository, "adapters/codex/agents/agentic-docs.toml")));
+      const expectedReadProfile = await readFile(path.join(repository, "adapters/codex/agents/agentic-read.toml"));
+      assert.deepEqual(await readFile(path.join(root, readTarget)), expectedReadProfile);
       const updated = JSON.parse(await readFile(ownerPath, "utf8"));
+      assert.equal(updated.resources.find((resource) => resource.path === readTarget).sha256,
+        createHash("sha256").update(expectedReadProfile).digest("hex"));
       assert.equal(updated.tools.treeSha256, owner.tools.treeSha256);
       assert.equal((await run(root, ["doctor", root])).code, 0);
       const repeated = await run(root, ["update", root, "--dry-run"]);

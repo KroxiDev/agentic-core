@@ -84,6 +84,9 @@ independientes. Estas instrucciones son un procedimiento, no evidencia de ejecuc
    Vincular el recibo vigente al estado recibido por el Documentador.
 3. Comprobar Tester → Documentador en Light, Evaluador → Documentador en Normal y
    Arquitecto → Documentador en Full, después de completar todas las correcciones.
+   En Normal y Full, comprobar que la entrega documental diferida no rechaza el
+   cierre técnico ni consume rondas: queda pendiente para Documentador y para la
+   comprobación final del coordinador; un defecto técnico sí impide el despacho.
    Confirmar que solo cambió documentación autorizada y que el coordinador comprueba
    la entrega sin otro Evaluador ni subagente posterior.
 4. Repetir sin petición documental, incluyendo una sugerencia de otro rol y una
