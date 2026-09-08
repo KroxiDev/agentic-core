@@ -163,7 +163,7 @@ demuestra su selección en esta sesión.
    inputs o implementación pertinente, renovar solo lo afectado. No cerrar #58
    ni anunciar los 26 escenarios aprobados mientras falte evidencia obligatoria.
 
-## Resultado de esta entrega
+## Evidencia original de #79 (anterior a la consolidación)
 
 Resultado final: **28/28 pruebas seleccionadas aprobadas, sin omisiones**:
 1 recorrido integrado (97,1 s), 17 de superficies (0,8 s), 8 de contratos
@@ -178,3 +178,27 @@ reprodujo en la base y pasó desde el paquete corregido.
 Los resultados se registran también en la PR vinculada a #58. La PR permanece borrador mientras falte la
 aceptación nativa; no se hace merge ni se cierra el issue automáticamente.
 Linux conserva su aceptación independiente en [#59](https://github.com/KroxiDev/agentic-core/issues/59).
+
+## Consolidación de #80 en #79
+
+Se conserva una sola matriz y un solo recorrido Windows. Esta guía se incluye en
+el tarball mediante el inventario de `package.json`. Se incorporan de #80
+(`b364e60315eaf451ee65d1e360e15c27ffb1379f`) las expectativas corregidas de
+reutilización Normal/Full y comprobaciones de reutilización por control, presupuesto
+sin nuevo cobro, privacidad, mutación reutilizada y mantenimiento con bootstrap
+inaccesible. Se conservan de #79 la instalación mediante npm, `--version`, códigos
+de salida y procedimiento manual actualizado.
+
+La evidencia publicada en #80 registra 57 casos seleccionados, incluidos subcasos.
+Entre ellos, los siete casos de las dos pruebas con terminación de procesos pasaron
+al repetirse fuera del sandbox; dentro habían informado `termination_failed`.
+Es evidencia histórica atribuida a ese SHA, no una ejecución nueva ni aceptación
+nativa de Codex. Su descripción permanece disponible en
+https://github.com/KroxiDev/agentic-core/pull/80.
+
+Para validar la consolidación, ejecutar el recorrido Windows, las dos pruebas
+`normal/full reuses independent controls` de `quality-evidence-reuse.test.js`,
+las superficies semánticas/documentales, la política del clon y las dos pruebas de
+inventario/entradas públicas del paquete. Los resultados actuales se registran en
+la PR #79 asociados al commit probado, separados de los resultados históricos.
+Directo, Light y Normal nativos siguen pendientes; Full sigue reservado al usuario.

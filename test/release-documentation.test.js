@@ -324,12 +324,14 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
     "Implementador",
     "Tester",
     "Planificador",
+    "Arquitecto",
     "Evaluador",
     "Documentador",
     "prepare",
     "verify",
     "not_applicable",
   ], "mode contract");
+  assert.match(modes.body, /Documentador.*petición expresa.*último subagente/u);
 
   assert.deepEqual(markdownTable(
     headingSection(readme, "Límites de permisos"),

@@ -260,7 +260,9 @@ La coordinación mantiene como máximo un agente activo. Los roles reciben alcan
 | `normal` | Planificador → Implementador → Tester → Evaluador; hasta dos rondas adicionales compartidas; Documentador solo por petición y siempre al final. | `prepare` antes de editar y `verify` antes de completar; tests, DRY y C.R.A.P.; Mutation Testing `NO_APLICA`. |
 | `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; hasta dos rondas adicionales compartidas; Documentador solo por petición y siempre al final. | `prepare` antes de editar y `verify` antes de completar; tests, DRY, C.R.A.P. y Mutation Testing completos y vigentes. |
 
-El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Especificador, Verificador, Evaluador y Arquitecto solo leen producción y evidencia y no la modifican. El Documentador modifica únicamente documentación.
+Documentador agrega un rol únicamente por petición expresa, después del cierre técnico y sus correcciones, siempre como último subagente.
+
+El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Especificador, Planificador, Evaluador y Arquitecto solo leen producción y evidencia y no la modifican. El Documentador modifica únicamente documentación.
 
 Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Esta entrega instala únicamente Codex y Python/pytest; otros proveedores, lenguajes y runners están fuera de alcance. La aceptación nativa requiere observaciones del host, registradas por separado en `acceptance/windows-codex.md`.
 
@@ -270,7 +272,7 @@ La máquina semántica de Light tiene una ronda inicial `Implementador → Teste
 
 Las esperas atienden resultados, intervenciones del usuario y vencimientos mediante eventos disponibles en Codex, renovables hasta 60 segundos. Tras 5 minutos sin novedades se comprueba activamente el estado; la lentitud o el silencio por sí solos no reinician trabajo. No se dejan daemon, hooks nuevos ni promesas posteriores a la sesión, y el presupuesto acumulado cuenta comprobaciones, no tiempo de agentes.
 
-El mapping rol → perfil vive en la skill canónica instalada `.agents/skills/orquestar/SKILL.md`; las instalaciones nuevas distribuyen `agentic-read`, `agentic-production`, `agentic-tests` y la dependencia directa `agentic-tdd`. Especificador, Planificador, Evaluador y Arquitecto usan instrucciones estables del perfil de lectura. Si alguno diverge, `doctor` informa la divergencia y `agentic-core update` puede restaurarlo transaccionalmente con ownership demostrado.
+El mapping rol → perfil vive en la skill canónica instalada `.agents/skills/orquestar/SKILL.md`; las instalaciones nuevas distribuyen `agentic-read`, `agentic-production`, `agentic-tests`, `agentic-docs` y la dependencia directa `agentic-tdd`. Especificador, Planificador, Evaluador y Arquitecto usan instrucciones estables del perfil de lectura. Si alguno diverge, `doctor` informa la divergencia y `agentic-core update` puede restaurarlo transaccionalmente con ownership demostrado.
 
 ### Límites de permisos
 
