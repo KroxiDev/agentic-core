@@ -207,7 +207,7 @@ def test_linux_resources():
       assert.equal((await maintenance(["update", "--force"])).status, "updated");
       assert.equal(await fingerprint(path.dirname(activePath)), qualityBefore);
       const diagnostic = await maintenance(["doctor"]);
-      assert.ok(diagnostic.diagnosis.checks.some((check) => check.id === "full.deprecated" || check.code === "full.deprecated"));
+      assert.ok(diagnostic.report.diagnosis.checks.some((check) => check.id === "full.deprecated"));
       const installedFiles = await readdir(a.root, { recursive: true });
       assert.equal(installedFiles.some((file) => /CONTEXT\.md|domain-modeling|technical-reference\.md|agentic-core-spec\.md/.test(file)), false);
       assert.deepEqual(await readFile(profile), original);

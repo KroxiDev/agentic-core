@@ -52,7 +52,8 @@ test("installed update preserves historical Full evidence and rejects execution 
   assert.match(JSON.stringify(explained), /full_deprecated/);
   assert.deepEqual(await contents(quality), before);
   const doctor = await promisify(execFile)(process.execPath, [path.resolve("bin/agentic-core.js"), "doctor", root],
-    { cwd: root, windowsHide: true, timeout: 120000 });
-  assert.match(doctor.stdout, /full.deprecated/);
+    { cwd: root, windowsHide: true, timeout: 120000, env: { ...process.env, AGENTIC_CORE_OUTPUT: "json" } });
+  const diagnostic = JSON.parse(doctor.stdout);
+  assert.ok(diagnostic.report.diagnosis.checks.some((check) => check.id === "full.deprecated"));
   assert.deepEqual(await contents(quality), before);
 });
