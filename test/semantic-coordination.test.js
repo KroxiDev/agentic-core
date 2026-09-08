@@ -100,3 +100,27 @@ test("agentic-tdd keeps red-green semantic without retrospective duplication", a
   assert.match(skill, /producción y tests dentro del alcance/);
   assert.match(skill, /No exige reproducir retrospectivamente el rojo/);
 });
+
+
+test("Normal preserves residual scope, shared retries and final acceptance", async () => {
+  const skill = await text("skills/orquestar/SKILL.md");
+  for (const phrase of [
+    "cuatro roles base: Planificador → Implementador → Tester → Evaluador",
+    "incluidos los ya resueltos", "alcance de corrección se transmite por separado",
+    "inicialmente 0 de 2", "mismo contador del paso 8",
+    "nueva instancia de Planificador con alcance residual",
+    "alternar Tester y Evaluador no reinicia el contador",
+    "Conserva el mismo task, modo, objetivo original, baseline y presupuesto",
+    "Retira una observación únicamente con evidencia de su resolución",
+    "evaluación satisfactoria sobre ese mismo estado final",
+    "renueva la verificación y la evaluación afectadas",
+    "developer_instructions` íntegro", "fork_turns=none",
+    "selección semántica explícita", "detén el despacho",
+  ]) assert.ok(skill.includes(phrase), `Normal contract is missing: ${phrase}`);
+  assert.doesNotMatch(skill, /Planificador independiente solo si|plan breve del coordinador/);
+  const profile = await text("adapters/codex/agents/agentic-read.toml");
+  for (const phrase of ["Propósito:", "Responsabilidades:", "Alcance:", "Entradas:",
+    "Criterios de devolución:", "Golden Rules:", "Planificador:", "Evaluador:",
+    "no modifica producción, tests ni documentación", "QUALITY_OK vigente", "NO_VERIFICADO"])
+    assert.ok(profile.includes(phrase), `Read profile is missing: ${phrase}`);
+});

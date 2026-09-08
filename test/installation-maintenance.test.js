@@ -14,6 +14,7 @@ const repository = path.resolve(import.meta.dirname, "..");
 const binary = path.join(repository, "bin", "agentic-core.js");
 const selection = ["--provider", "codex", "--language", "python"];
 const lightResources = [
+  ["adapters/codex/agents/agentic-read.toml", ".codex/agents/agentic-read.toml"],
   ["adapters/codex/agents/agentic-production.toml", ".codex/agents/agentic-production.toml"],
   ["adapters/codex/agents/agentic-tests.toml", ".codex/agents/agentic-tests.toml"],
   ["skills/orquestar/SKILL.md", ".agents/skills/orquestar/SKILL.md"],
@@ -271,10 +272,37 @@ for (const collision of [false, true]) {
         assert.deepEqual(await readFile(path.join(root, target)), await readFile(path.join(repository, source)));
       }
       const nextOwner = JSON.parse(await readFile(ownerPath, "utf8"));
-      assert.equal(nextOwner.resources.length, 9);
+      assert.equal(nextOwner.resources.length, 10);
       assert.equal(nextOwner.tools.treeSha256, owner.tools.treeSha256);
       assert.match(await readFile(path.join(root, "AGENTS.md"), "utf8"), /^# User instructions/);
       assert.equal((await run(root, ["update", root, "--dry-run"])).code, 0);
+    }
+  });
+}
+
+
+for (const collision of [false, true]) {
+  test(`Light installation gains Normal while preserving ${collision ? "a foreign read profile" : "existing resources"}`, async (t) => {
+    const root = await createTestProject(t);
+    assert.equal((await run(root, ["init", root, ...selection])).code, 0);
+    const ownerPath = path.join(root, ".agentic-core/ownership.json");
+    const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+    const target = ".codex/agents/agentic-read.toml";
+    owner.resources = owner.resources.filter((resource) => resource.path !== target);
+    await writeFile(ownerPath, JSON.stringify(owner));
+    await rm(path.join(root, target));
+    if (collision) await writeFile(path.join(root, target), "foreign read profile\n");
+    const before = await hashDirectory(root);
+    const result = await run(root, ["update", root]);
+    assert.equal(result.code, collision ? 4 : 0, result.stderr);
+    if (collision) {
+      assert.equal(await hashDirectory(root), before);
+    } else {
+      assert.deepEqual(await readFile(path.join(root, target)),
+        await readFile(path.join(repository, "adapters/codex/agents/agentic-read.toml")));
+      const updated = JSON.parse(await readFile(ownerPath, "utf8"));
+      assert.equal(updated.tools.treeSha256, owner.tools.treeSha256);
+      assert.equal((await run(root, ["doctor", root])).code, 0);
     }
   });
 }
