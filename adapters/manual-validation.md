@@ -2,6 +2,12 @@
 
 Esta lista complementa las suites automatizadas. No convierte instrucciones de agentes en enforcement de seguridad ni exige demostrar un sandbox del host.
 
+Para el cierre de #58 como entrega lista para usar y testear resultados reales,
+el usuario difiere todos los recorridos nativos de Directo, Light, Normal y Full,
+incluidos perfiles, secuencias, correcciones, espera y Documentador final. Este
+procedimiento se conserva para su ejecución posterior; no es evidencia aprobada
+ni un bloqueo de ese cierre. La especificación padre #38 permanece sin cambios.
+
 ## Límites de evidencia
 
 | Área | Contrato |
@@ -146,5 +152,5 @@ Confirmar que no se acepta input JSON redactado por el modelo y que los comandos
 1. Construir con el lockfile (`npm.cmd ci`) y seleccionar las suites pertinentes de la matriz en `acceptance/windows-codex.md`; no repetir suites costosas con evidencia vigente.
 2. Ejecutar `node --test test/windows-acceptance.test.js` en Windows y conservar resultado, plataforma y hash del paquete. Un skip no valida otra plataforma.
 3. Ejecutar `npm.cmd run check` y `git diff --check`.
-4. Completar solo los recorridos nativos autorizados y registrar perfiles efectivos, secuencias y límites. El registro de #58 deja Full para la prueba manual del usuario y Linux para #59.
+4. Completar solo los recorridos nativos autorizados y registrar perfiles efectivos, secuencias y límites. El cierre de #58 difiere Directo, Light, Normal y Full al usuario, sin ejecutarlos ni aprobarlos; Linux conserva su aceptación independiente en #59.
 5. Verificar el inventario del paquete y comunicar los escenarios pendientes sin emitir una aceptación global falsa ni exigir KPIs o benchmarks.

@@ -14,6 +14,12 @@
 | Windows 10/11 | Plataforma inicial; aceptación integrada y límites en `acceptance/windows-codex.md`. |
 | Linux | Pendiente de ejecución independiente en #59; no verificado. |
 
+La entrega de #58 queda lista para usar y testear resultados reales. La aceptación
+nativa completa de Codex sigue `NO_VERIFICADO`: el usuario realizará después
+Directo, Light, Normal y Full, incluidos perfiles, correcciones, espera y Documentador
+final. El checklist de `acceptance/windows-codex.md` conserva esos pendientes;
+el cierre de #58 no certifica los 26 escenarios de #38.
+
 ## Desarrollo desde un clon
 
 Después de clonar este repositorio, ejecuta el siguiente paso obligatorio desde la raíz antes de invocar los binarios de `bin/`:

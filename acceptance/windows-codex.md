@@ -1,8 +1,12 @@
 # Aceptación integrada de Windows y Codex — #58
 
-Estado: **PARCIAL / NO_VERIFICADO para el cierre integral**. El recorrido instalado
-de Windows tiene comprobaciones automatizadas; no sustituye la ejecución nativa
-de roles. Full queda para la prueba manual del usuario. Linux pertenece a #59.
+Estado de entrega: **lista para usar y testear resultados reales**, con el alcance
+de cierre de #58 autorizado por el usuario el 2026-09-08. El recorrido instalado
+de Windows tiene comprobaciones automatizadas. La aceptación nativa completa de
+Codex permanece **PARCIAL / NO_VERIFICADO**: Directo, Light, Normal y Full quedan
+para pruebas manuales posteriores del usuario y no bloquean esta entrega.
+Esta decisión se limita a #58; no modifica la especificación padre #38 ni declara
+aprobados sus 26 escenarios. Linux pertenece a #59.
 No se exige medir KPIs, benchmarks ni conveniencia de los modos.
 
 ## Identidad y reproducción
@@ -151,17 +155,20 @@ los perfiles por agentes genéricos. La [documentación oficial de subagentes](h
 describe perfiles TOML en `.codex/agents/`; esa compatibilidad documental no
 demuestra su selección en esta sesión.
 
-1. Repetir Directo en un host autorizado que pueda leer y modificar el consumidor;
+Checklist manual diferido al usuario, sin ejecutar ni aprobar en este cierre:
+
+- [ ] Repetir Directo en un host autorizado que pueda leer y modificar el consumidor;
    observar el cambio acotado, ejecución real y ausencia de subagentes/baseline impuesto.
-2. Continuar Light y Normal con el procedimiento de `adapters/manual-validation.md`:
+- [ ] Continuar Light y Normal con el procedimiento de `adapters/manual-validation.md`:
    perfiles efectivos, secuencias exactas, retornos, contador compartido, espera y
    Documentador explícito final; añadir Normal por defecto sin modo explícito.
-3. El usuario ejecutará Full manualmente, incluidas devoluciones de Evaluador y
+- [ ] Ejecutar Full manualmente, incluidas devoluciones de Evaluador y
    Arquitecto y el máximo de dos rondas adicionales. Registrar también la tarea
    corregida antes de Documentador y el caso sin activación documental.
-4. Vincular evidencia nueva al paquete/runtime y estado probados. Si cambian
-   inputs o implementación pertinente, renovar solo lo afectado. No cerrar #58
-   ni anunciar los 26 escenarios aprobados mientras falte evidencia obligatoria.
+- [ ] Vincular evidencia nueva al paquete/runtime y estado probados. Si cambian
+   inputs o implementación pertinente, renovar solo lo afectado. El cierre de #58
+   acredita preparación para uso; no anuncia aceptación nativa ni los 26 escenarios
+   aprobados mientras falte su evidencia.
 
 ## Evidencia original de #79 (anterior a la consolidación)
 
@@ -175,8 +182,10 @@ Las ejecuciones preliminares corrigieron dos errores del test nuevo: crear
 No se modificó el motor para ocultarlos. La regresión pública de versión se
 reprodujo en la base y pasó desde el paquete corregido.
 
-Los resultados se registran también en la PR vinculada a #58. La PR permanece borrador mientras falte la
-aceptación nativa; no se hace merge ni se cierra el issue automáticamente.
+Los resultados se registran también en la PR vinculada a #58. En esa etapa original
+la PR permanecía en borrador por falta de aceptación nativa. El alcance de cierre
+autorizado ahora permite integrar la entrega y cerrar #58 conservando esa aceptación
+como pendiente manual, sin convertirla en aprobada.
 Linux conserva su aceptación independiente en [#59](https://github.com/KroxiDev/agentic-core/issues/59).
 
 ## Consolidación de #80 en #79
@@ -196,9 +205,15 @@ Es evidencia histórica atribuida a ese SHA, no una ejecución nueva ni aceptaci
 nativa de Codex. Su descripción permanece disponible en
 https://github.com/KroxiDev/agentic-core/pull/80.
 
-Para validar la consolidación, ejecutar el recorrido Windows, las dos pruebas
-`normal/full reuses independent controls` de `quality-evidence-reuse.test.js`,
-las superficies semánticas/documentales, la política del clon y las dos pruebas de
-inventario/entradas públicas del paquete. Los resultados actuales se registran en
-la PR #79 asociados al commit probado, separados de los resultados históricos.
-Directo, Light y Normal nativos siguen pendientes; Full sigue reservado al usuario.
+La consolidación en `b6b6e8d6ef95e97d5f42a2cd54d22e26ae9cf6dd` aprobó 24/24
+comprobaciones seleccionadas: recorrido Windows (1), reutilización Normal/Full (2),
+superficies semánticas/documentales y política del clon (19), inventario y entradas
+CLI del paquete (2). Build, sintaxis y `git diff --check` fueron satisfactorios.
+SHA-256 del tarball probado:
+`142c8e6373ade2571604b2aaf67bebfef27b928ae7be88ff86c309ca93202ac8`.
+Se reutiliza esa evidencia; no se suma a los 28 y 57 casos históricos ni se presenta
+como una nueva ejecución. El ajuste de alcance posterior modifica solo documentación:
+el hash anterior identifica el paquete probado, no un tarball con la guía actualizada.
+Las comprobaciones mínimas del ajuste y la revisión independiente del SHA final se
+registran en #79. No se repiten suites completas, benchmarks ni recorridos nativos.
+Directo, Light, Normal y Full nativos quedan pendientes para el usuario.
