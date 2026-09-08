@@ -10,6 +10,7 @@ import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { compareCodeUnits } from "./order.js";
 import { captureProjectInputs, inputHash, privateInputContent, publicCheckpoint } from "./project-inputs.js";
 import { readActiveTask } from "./task-baseline.js";
+import { normalizeSelection, parseTestSelection, resolveSelection } from "./selection.js";
 
 const engine = Object.freeze({ name: "dry4python", version: PYTHON_TOOLS.dry4python });
 const reportReference = ".agentic-core/quality/dry.json";
@@ -327,7 +328,7 @@ function messageFor(status, code) {
   return "Los candidatos DRY están resueltos o no pertenecen al cambio de la tarea";
 }
 
-function reportBase({ status, code, exitCode, config, checkpoint, baseline, engineInfo, candidates = [], groups = [], issues = [], resolutions, configurationHash }) {
+function reportBase({ status, code, exitCode, config, checkpoint, baseline, engineInfo, candidates = [], groups = [], issues = [], resolutions, configurationHash, currentAnalysis = false, selection }) {
   const limits = config.limits.dry;
   const baselineCandidates = baseline.scan?.candidates ?? [];
   const baselineKeys = new Map();
@@ -342,7 +343,7 @@ function reportBase({ status, code, exitCode, config, checkpoint, baseline, engi
     if (preexisting) baselineKeys.set(key, baselineKeys.get(key) - 1);
     const offeredResolution = resolutionMap.get(candidate.id);
     const resolution = concreteReason(offeredResolution, candidate) ? offeredResolution : undefined;
-    const classification = preexisting ? "preexisting" : resolution ? "resolved" : "new_or_changed";
+    const classification = preexisting ? "preexisting" : resolution ? "resolved" : currentAnalysis ? "current" : "new_or_changed";
     return {
       ...candidate,
       classification,
@@ -372,11 +373,22 @@ function reportBase({ status, code, exitCode, config, checkpoint, baseline, engi
     : finalStatus === "NO_APLICA" ? "no_executable_code" : unresolved.length ? "dry_candidates_unresolved"
       : enriched.length === 0 ? "no_duplicates" : preexisting.length === enriched.length ? "preexisting_only" : "dry_resolved");
   const identity = hash({ engine: engineInfo, limits, inputs: checkpoint.digest,
-    baseline: baseline.digest, candidates: enriched, groups, issues, resolutions: resolutions?.sha256 ?? null });
+    baseline: baseline.digest, candidates: enriched, groups, issues, resolutions: resolutions?.sha256 ?? null,
+    ...(currentAnalysis ? { purpose: "current_analysis", selection } : {}) });
   return {
     command: "dry", schemaVersion: 1, status: finalStatus, code: finalCode,
     exitCode: finalStatus === "NO_VERIFICADO" ? exitCode ?? 2 : finalStatus === "rejected" ? 1 : 0,
-    message: messageFor(finalStatus, finalCode), engine: engineInfo, limits,
+    message: currentAnalysis && finalStatus === "rejected"
+      ? "Hay candidatos DRY actuales sin una resolución concreta; este análisis no aprueba una implementación"
+      : messageFor(finalStatus, finalCode), engine: engineInfo, limits,
+    ...(currentAnalysis ? {
+      purpose: "current_analysis", implementationApproval: false, selection,
+      limitations: [
+        "Solo se comparan funciones y métodos Python entre los archivos medidos; no se buscan duplicaciones fuera de ese alcance.",
+        "Los límites de tamaño y similitud restringen la detección; las partes no medibles se informan en issues.",
+        "No se ejecutan tests, C.R.A.P., mutación ni roles; no se compara con el inicio de una tarea ni se repara el proyecto.",
+      ],
+    } : {}),
     identity, hashes: { inputs: checkpoint.digest, configuration: configurationHash, baseline: baseline.digest,
       resolutions: resolutions?.sha256 ?? null },
     inputs: publicCheckpoint(checkpoint),
@@ -395,7 +407,7 @@ function reportBase({ status, code, exitCode, config, checkpoint, baseline, engi
 
 async function finishReport(root, { ignoreStoredResolutions = false, ...parameters }) {
   const { config, checkpoint, configurationHash, resolutions } = parameters;
-  const after = await captureProjectInputs(root, config.integration.python);
+  const after = await captureProjectInputs(root, config.integration.python, checkpoint.selection);
   let code;
   if (after.issues.length) code = "input_checkpoint_incompatible";
   else if (after.digest !== checkpoint.digest) code = "dry_inputs_changed";
@@ -415,13 +427,20 @@ export async function runPythonDry(root, options = {}) {
   return withCurrentTaskBudget(root, () => measurePythonDry(root, options));
 }
 
-async function measurePythonDry(root, { activeTask, ignoreStoredResolutions = false } = {}) {
+async function measurePythonDry(root, { activeTask, ignoreStoredResolutions = false, currentAnalysis = false, selection } = {}) {
+  selection = normalizeSelection(selection);
+  if (selection?.tests || (selection && !currentAnalysis)) {
+    throw new IntegrationError("invalid_selection", "DRY acepta --scope para analizar código actual; no selecciona ni ejecuta tests", 4);
+  }
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const configurationHash = hash(config);
   const budget = commandBudget(config.limits.operation);
-  const before = await captureProjectInputs(root, config.integration.python);
+  const before = await captureProjectInputs(root, config.integration.python, selection);
+  const effectiveSelection = currentAnalysis ? {
+    ...resolveSelection(before, config.integration.python, selection), tests: [], testSelection: "not_run",
+  } : undefined;
   const currentSources = sourceEntries(before);
-  const baseline = await loadBaseline(root, config, activeTask);
+  const baseline = await loadBaseline(root, config, currentAnalysis ? null : activeTask);
   baseline.changedFiles = baseline.status === "captured"
     ? [...new Set([...baseline.inventory.map((entry) => entry.path), ...before.inventory.map((entry) => entry.path)])]
       .filter((file) => baseline.inventory.find((entry) => entry.path === file)?.sha256
@@ -432,12 +451,13 @@ async function measurePythonDry(root, { activeTask, ignoreStoredResolutions = fa
     ? { status: "missing", entries: [], sha256: null, used: [], unused: [] }
     : await readResolutions(root, before.digest, configurationHash);
   const engineInfo = engine;
+  const parameters = { config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash,
+    ignoreStoredResolutions, currentAnalysis, selection: effectiveSelection };
   if (before.issues.length) {
-    return reportBase({ status: "NO_VERIFICADO", code: "input_checkpoint_incompatible", config,
-      checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
+    return reportBase({ ...parameters, status: "NO_VERIFICADO", code: "input_checkpoint_incompatible" });
   }
   if (currentSources.length === 0) {
-    return finishReport(root, { config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
+    return finishReport(root, parameters);
   }
   const python = privatePython(path.join(root, ".agentic-core/tools"));
   await inspectEngineVersion(root, python, budget);
@@ -458,11 +478,9 @@ async function measurePythonDry(root, { activeTask, ignoreStoredResolutions = fa
   let current;
   try { current = await runEngine(root, python, currentSources, config.limits.dry, budget); }
   catch (error) {
-    return finishReport(root, { status: "NO_VERIFICADO", code: error?.code ?? "dry_engine_failed", exitCode: error?.exitCode ?? 5,
-      config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash });
+    return finishReport(root, { ...parameters, status: "NO_VERIFICADO", code: error?.code ?? "dry_engine_failed", exitCode: error?.exitCode ?? 5 });
   }
-  return finishReport(root, { config, checkpoint: before, baseline, engineInfo, resolutions, configurationHash,
-    ignoreStoredResolutions, ...current });
+  return finishReport(root, { ...parameters, ...current });
 }
 
 async function saveReport(root, result) {
@@ -477,15 +495,17 @@ async function saveReport(root, result) {
     }
   }
   const target = path.join(root, reportReference);
+  let expectedContent = null;
   try {
     const info = await lstat(target);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("unsafe");
-    const previous = JSON.parse(await readFile(target, "utf8"));
+    expectedContent = await readFile(target);
+    const previous = JSON.parse(expectedContent.toString("utf8"));
     if (previous.kind !== "dry" || previous.sha256 !== hash(previous.result)) throw new Error("foreign");
   } catch (error) {
     if (error?.code !== "ENOENT") throw new IntegrationError("quality_report_conflict", "El informe DRY existente es ajeno o divergente; se conserva sin reemplazarlo", 2);
   }
-  await writeTransaction(root, [{ path: target,
+  await writeTransaction(root, [{ path: target, expectedContent,
     content: Buffer.from(`${JSON.stringify({ kind: "dry", sha256: hash(result), result })}\n`) }]);
 }
 
@@ -499,10 +519,10 @@ function candidateLine(candidate) {
 export async function runPythonDryCli(args, io = process) {
   let result;
   try {
-    if (args.length !== 1 || args[0] !== "dry") {
-      throw new IntegrationError("invalid_usage", "Use agentic-quality dry; el alcance y los límites provienen de config.json", 4);
+    if (args[0] !== "dry") {
+      throw new IntegrationError("invalid_usage", "Use agentic-quality dry [--scope <archivo|carpeta>]...", 4);
     }
-    result = await runPythonDry(process.cwd());
+    result = await runPythonDry(process.cwd(), { currentAnalysis: true, selection: parseTestSelection(args.slice(1)) });
     await saveReport(process.cwd(), result);
   } catch (error) {
     const typed = typeof error?.code === "string" && Number.isInteger(error.exitCode);
@@ -519,8 +539,12 @@ export async function runPythonDryCli(args, io = process) {
   else {
     io.stdout.write(`${result.status} [${result.code}] ${result.message}\n`);
     io.stdout.write(formatBudget(result.budget));
-    for (const candidate of (result.candidates ?? []).slice(0, 8)) io.stdout.write(`${candidateLine(candidate)}\n`);
-    for (const issue of (result.issues ?? []).slice(0, 8)) io.stdout.write(`${issue.file}:${issue.startLine} [${issue.code}]\n`);
+    if (result.purpose === "current_analysis") {
+      io.stdout.write(`Análisis actual; no aprueba una implementación. Código: ${result.selection.measuredFiles.join(", ") || "sin medición"}. Tests ejecutados: ninguno.\n`);
+      for (const limitation of result.limitations) io.stdout.write(`${limitation}\n`);
+    }
+    for (const candidate of result.candidates ?? []) io.stdout.write(`${candidateLine(candidate)}\n`);
+    for (const issue of result.issues ?? []) io.stdout.write(`${issue.file}:${issue.startLine} [${issue.code}]\n`);
     if (result.reference) io.stdout.write(`Informe íntegro: ${result.reference}\n`);
   }
   return result.exitCode;
