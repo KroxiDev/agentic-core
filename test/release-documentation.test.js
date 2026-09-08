@@ -285,7 +285,7 @@ test("the README keeps lifecycle, support, and runtime commitments as structure"
   const support = headingSection(readme, "Requisitos y soporte");
   assert.deepEqual(markdownTable(support, ["Plataforma", "Nivel de soporte"]), [
     ["Windows 10/11", "Plataforma inicial; aceptación integrada y límites en `acceptance/windows-codex.md`."],
-    ["Linux", "Pendiente de ejecución independiente en #59; no verificado."],
+    ["Linux", "Aceptación automática en Ubuntu 24.04; perfiles nativos de Codex pendientes de prueba manual."],
   ]);
 
   const installation = commandSection(readme, "agentic-core init");

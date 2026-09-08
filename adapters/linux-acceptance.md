@@ -102,5 +102,7 @@ su opción `install: false` solo prepara la fixture antes de instalar el tarball
 3. Registrar el resultado observado y sus límites. Inspeccionar TOML o aprobar
    Actions no acredita despacho nativo ni aislamiento técnico de Codex.
 
-Hasta contar con esa evidencia, #59 permanece abierto y Linux no se anuncia
-como soporte integral verificado. Esta continuación no bloquea #58.
+Por decisión del usuario, las pruebas manuales de ejecución directa y de
+orquestación Light, Normal y Full quedan a su cargo y no bloquean el merge
+ni el cierre de #59. Hasta contar con esa evidencia, Linux no se anuncia
+como soporte integral verificado. Esta comprobación no bloquea #58.

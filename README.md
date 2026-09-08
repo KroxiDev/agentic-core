@@ -12,7 +12,7 @@
 | Plataforma | Nivel de soporte |
 | --- | --- |
 | Windows 10/11 | Plataforma inicial; aceptación integrada y límites en `acceptance/windows-codex.md`. |
-| Linux | Pendiente de ejecución independiente en #59; no verificado. |
+| Linux | Aceptación automática en Ubuntu 24.04; perfiles nativos de Codex pendientes de prueba manual. |
 
 La entrega de #58 queda lista para usar y testear resultados reales. La aceptación
 nativa completa de Codex sigue `NO_VERIFICADO`: el usuario realizará después
@@ -21,8 +21,8 @@ final. El checklist de `acceptance/windows-codex.md` conserva esos pendientes;
 el cierre de #58 no certifica los 26 escenarios de #38.
 
 Linux dispone de un recorrido automático de aceptación en Ubuntu 24.04 mediante
-GitHub Actions. La comprobación manual de perfiles en Codex sigue pendiente en
-[#59](https://github.com/KroxiDev/agentic-core/issues/59); el soporte integral
+GitHub Actions. La comprobación manual de perfiles en Codex queda a cargo del
+usuario y no bloquea el cierre de [#59](https://github.com/KroxiDev/agentic-core/issues/59); el soporte integral
 permanece **NO_VERIFICADO**. Consulte el
 [alcance automático y la aceptación manual pendiente](https://github.com/KroxiDev/agentic-core/blob/main/adapters/linux-acceptance.md).
 
