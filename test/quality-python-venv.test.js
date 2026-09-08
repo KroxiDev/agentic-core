@@ -53,7 +53,7 @@ test("PR-09 regression: installed pytest uses the project environment and actual
     assert.equal(JSON.parse(wrong.stdout).code, "interpreter_mismatch");
   });
 
-  await t.test("successful commands without observed pytest or coverage cannot approve", async () => {
+  await t.test("observed functional tests can approve without coverage but unobserved commands cannot", async () => {
     await configurePythonProject(root, (c) => { c.integration.python.command.args = ["-c", "pass"]; });
     const bypass = await runPythonProject(root);
     assert.equal(bypass.code, 2);
@@ -61,9 +61,9 @@ test("PR-09 regression: installed pytest uses the project environment and actual
     assert.equal(JSON.parse(bypass.stdout).coverage.files, null);
     await configurePythonProject(root, (c) => { c.integration.python.command.args = config.integration.python.command.args; c.integration.python.scope = ["missing-source"]; });
     const noCoverage = await runPythonProject(root);
-    assert.equal(noCoverage.code, 2, noCoverage.stdout);
+    assert.equal(noCoverage.code, 0, noCoverage.stdout);
     assert.equal(JSON.parse(noCoverage.stdout).suite.status, "passed");
-    assert.equal(JSON.parse(noCoverage.stdout).code, "coverage_failed");
+    assert.equal(JSON.parse(noCoverage.stdout).code, "tests_passed");
     assert.equal(JSON.parse(noCoverage.stdout).coverage.status, "measured");
     assert.deepEqual(JSON.parse(noCoverage.stdout).coverage.loadedFiles, []);
     assert.deepEqual(JSON.parse(noCoverage.stdout).coverage.files, {});

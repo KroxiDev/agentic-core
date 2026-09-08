@@ -116,7 +116,7 @@ async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, executi
       throw new IntegrationError("crap_execution_conflict", "La cobertura corresponde a otros inputs, selección o condiciones; no se reutiliza");
     }
   }
-  const execution = suppliedExecution ?? await runProjectTests(root, selection);
+  const execution = suppliedExecution ?? await runProjectTests(root, selection, { requireCoverage: true });
   const measured = await measure(root, config, before, execution, budget);
   const after = await captureProjectInputs(root, config.integration.python, selection);
   let currentIdentity;

@@ -540,10 +540,16 @@ export async function inspectVerificationEvidence(root, task, checkpoint, enviro
     const selectedEnvironment = selection
       ? { ...environment, executionIdentity: (await projectTestIdentity(root, config, selection)).identity } : environment;
     const request = { ...previous.request, selection: selection ?? null, delta: delta ?? null };
+    const drySelection = selection?.code ? { code: selection.code } : undefined;
+    const dryCheckpoint = drySelection ? await captureProjectInputs(root, config.integration.python, drySelection) : checkpoint;
+    const compatible = hash(request) === hash(previous.request);
     return { tests: hash(request) === hash(previous.request)
       ? controlReuse(previous, "tests", task, selected, selectedEnvironment)
       : { reused: false, reason: "quality_inputs_changed" },
-      ...Object.fromEntries(["dry", "crap"].map((name) => [name, { reused: false, reason: "control_pending" }])) };
+      dry: compatible && request.requiredControls.includes("dry")
+        ? controlReuse(previous, "dry", task, dryCheckpoint, selectedEnvironment, await resolutionHash(root))
+        : { reused: false, reason: "control_pending" },
+      crap: { reused: false, reason: "control_pending" } };
   }
   const resolutions = await resolutionHash(root);
   return Object.fromEntries(["tests", "dry", "crap"].map((name) =>
@@ -563,19 +569,26 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     throw new IntegrationError("quality_inputs_changed", "Los inputs cambiaron después de seleccionar el delta", 2);
   }
   const testCheckpoint = selection ? await captureProjectInputs(root, config.integration.python, selection) : before;
+  const drySelection = selection?.code ? { code: selection.code } : undefined;
+  const dryCheckpoint = drySelection ? await captureProjectInputs(root, config.integration.python, drySelection) : before;
   const reuse = {
     tests: !historical && !compatibleRequest ? { reused: false, reason: "selection_changed" }
       : controlReuse(previous, "tests", task, testCheckpoint, startEnvironment),
   };
-  const tests = reuse.tests.reused ? previous.tests : await runProjectTests(root, selection);
-  reuse.dry = controlReuse(previous, "dry", task, before, startEnvironment, await resolutionHash(root));
+  const tests = reuse.tests.reused ? previous.tests : await runProjectTests(root, selection, { requireCoverage: historical });
+  reuse.dry = !historical && !compatibleRequest ? { reused: false, reason: "selection_changed" }
+    : controlReuse(previous, "dry", task, dryCheckpoint, startEnvironment, await resolutionHash(root));
   reuse.crap = controlReuse(previous, "crap", task, before, startEnvironment);
   // C.R.A.P. depends on the suite's coverage, so a new execution requires a new measurement.
   if (reuse.crap.reused && !reuse.tests.reused) reuse.crap = { reused: false, reason: "tests_executed" };
   let dry;
   let currentCrap;
-  try { dry = !historical ? taskControl("dry", requiredControls.includes("dry")) : reuse.dry.reused ? previous.dry : await runPythonDry(root); }
-  catch (error) { dry = controlFailure("dry", error); }
+  try {
+    dry = !requiredControls.includes("dry") ? taskControl("dry", false)
+      : reuse.dry.reused ? previous.dry
+        : { ...await runPythonDry(root, { activeTask: { task }, selection: drySelection }), required: true, executed: true };
+  }
+  catch (error) { dry = { ...controlFailure("dry", error), required: true, executed: true }; }
   try { currentCrap = !historical ? taskControl("crap", requiredControls.includes("crap")) : reuse.crap.reused ? previous.crap : await runPythonCrap(root, { execution: tests }); }
   catch (error) { currentCrap = controlFailure("crap", error); }
   const after = await captureProjectInputs(root, config.integration.python);
@@ -602,11 +615,11 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     });
     if (before.digest !== after.digest) evidence = { status: noVerification, code: "quality_inputs_changed" };
   }
-  if ((historical ? ["configurationHash", "executionIdentity", "qualityTools"] : ["configurationHash", "executionIdentity"])
+  if ((historical || requiredControls.includes("dry") ? ["configurationHash", "executionIdentity", "qualityTools"] : ["configurationHash", "executionIdentity"])
     .some((key) => startEnvironment[key] !== currentEnvironmentValue[key])) {
     evidence = { status: noVerification, code: "quality_conditions_changed" };
   }
-  if (historical && dry.status !== noVerification && dry.hashes?.resolutions !== await resolutionHash(root)) {
+  if (requiredControls.includes("dry") && dry.status !== noVerification && dry.hashes?.resolutions !== await resolutionHash(root)) {
     evidence = { status: noVerification, code: "dry_resolutions_changed" };
   }
   const crapBaseline = qualityBaselineControl(task);
@@ -678,7 +691,7 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     }
   }
   if (!historical) {
-    for (const name of ["dry", "crap"]) reuse[name] = { reused: false,
+    for (const name of requiredControls.includes("dry") ? ["crap"] : ["dry", "crap"]) reuse[name] = { reused: false,
       reason: requiredControls.includes(name) ? "task_comparison_pending" : "not_requested" };
   }
   reuse.mutation = { reused: mutation.reused === true,

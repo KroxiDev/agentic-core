@@ -56,12 +56,13 @@ async function projectInterpreter(root, unit, context) {
 
 export async function observeProjectTests(root, config, python, context, temporary) {
   const unit = config.integration.python;
+  const requireCoverage = context.requireCoverage !== false;
   const coverageWheel = path.join(root, ".agentic-core/runtime/third_party/python/coverage-7.13.4-py3-none-any.whl");
   try { await access(coverageWheel); }
-  catch { throw new IntegrationError("coverage_unavailable", "Falta el wheel privado de cobertura; actualice la instalación"); }
+  catch { if (requireCoverage) throw new IntegrationError("coverage_unavailable", "Falta el wheel privado de cobertura; actualice la instalación"); }
   const settingsPath = path.join(temporary, "settings.json");
   await writeFile(settingsPath, JSON.stringify({
-    temporary, interpreter: python.executable, coverageWheel, lcovPath: unit.coverage.path,
+    temporary, interpreter: python.executable, coverageWheel, requireCoverage, lcovPath: unit.coverage.path,
     projectRoot: context.copyRoot,
     measured: context.checkpoint.inventory.filter((entry) => entry.kind === "measured_code").map((entry) => entry.path),
     inputs: context.checkpoint.inventory.map((entry) => entry.path),
@@ -124,22 +125,23 @@ export async function observeProjectTests(root, config, python, context, tempora
     return { ...common, code: "tests_not_executed", exitCode: 2,
       message: "Pytest terminó sin evidencia de ejecución de tests; la recolección y la preparación no permiten aprobar" };
   }
-  if (observed.coverage.status !== "measured" || !Object.keys(observed.coverage.files ?? {}).length) {
+  if (requireCoverage && (observed.coverage.status !== "measured" || !Object.keys(observed.coverage.files ?? {}).length)) {
     return { ...common, code: "coverage_failed", exitCode: 2, message: "La suite terminó, pero falta cobertura atribuible; no se asume cobertura cero" };
   }
   if (context.checkpoint.selection) {
     const unmeasuredFiles = context.checkpoint.inventory.filter((entry) => entry.kind === "measured_code"
-      && !Object.hasOwn(observed.coverage.files, entry.path)).map((entry) => entry.path);
-    if (unmeasuredFiles.length) return { ...common, coverage: { ...observed.coverage, unmeasuredFiles },
+      && !Object.hasOwn(observed.coverage.files ?? {}, entry.path)).map((entry) => entry.path);
+    common.coverage = { ...observed.coverage, unmeasuredFiles };
+    if (requireCoverage && unmeasuredFiles.length) return { ...common,
       code: "coverage_incomplete", exitCode: 2, message: "Parte del código seleccionado no tiene cobertura atribuible; se conserva la medición parcial" };
   }
-  return { ...common, code: "tests_passed", exitCode: 0, message: "Suite aprobada y cobertura obtenida; esto no acredita los demás controles de calidad" };
+  return { ...common, code: "tests_passed", exitCode: 0, message: "Tests funcionales aprobados; la cobertura se informa por separado y no acredita otros controles" };
 }
 
-export async function runProjectTests(projectRoot, selection) {
+export async function runProjectTests(projectRoot, selection, { requireCoverage = false } = {}) {
   try { return await withCurrentTaskBudget(projectRoot, async () => {
     const resolved = await resolveTaskSelection(projectRoot, normalizeSelection(selection));
-    const result = await executeProjectTests(projectRoot, resolved.selection);
+    const result = await executeProjectTests(projectRoot, resolved.selection, requireCoverage);
     if (resolved.delta) {
       const config = await readConfiguration(path.join(projectRoot, ".agentic-core/config.json"));
       const current = await captureProjectInputs(projectRoot, config.integration.python);
@@ -151,7 +153,7 @@ export async function runProjectTests(projectRoot, selection) {
   catch (error) { return { command: "test", status: "NO_VERIFICADO", ...integrationFailure(error) }; }
 }
 
-async function executeProjectTests(projectRoot, selection) {
+async function executeProjectTests(projectRoot, selection, requireCoverage) {
   let effectiveCommand;
   let config;
   let effectiveSelection;
@@ -172,7 +174,7 @@ async function executeProjectTests(projectRoot, selection) {
       if (integrity.status !== "preserved") {
         result = { code: "input_integrity_changed", exitCode: 2, message: "Los inputs cambiaron durante la preparación; no se ejecutaron pruebas", integrity };
       } else {
-        try { result = await observeProjectTests(projectRoot, config, python, { ...context, ...isolated, checkpoint, copyRoot: copy.root }, copy.temporary); }
+        try { result = await observeProjectTests(projectRoot, config, python, { ...context, ...isolated, checkpoint, copyRoot: copy.root, requireCoverage }, copy.temporary); }
         catch (error) { result = integrationFailure(error); }
         integrity = await verifyProjectIntegrity(checkpoint, unit, copy.root, "tests");
         integrity.dependencies = await dependencyFingerprint(protectedPaths) === dependencies ? "preserved" : "changed";

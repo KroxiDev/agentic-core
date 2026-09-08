@@ -73,7 +73,9 @@ for (const mode of ["light", "normal"]) {
     assert.equal(reused.reused, true, JSON.stringify(reused));
     const explicit = await invoke(["verify", "--control", "dry", "--control", "crap", "--control", "mutation"]);
     assert.equal(explicit.processCode, 2, JSON.stringify(explicit));
-    assert.equal(explicit.code, "task_comparison_pending");
+    assert.equal(explicit.verification.dry.status, "NO_VERIFICADO");
+    assert.equal(explicit.verification.crap.code, "task_comparison_pending");
+    assert.equal(explicit.verification.mutation.code, "task_comparison_pending");
     assert.doesNotMatch(explicit.receipt, /QUALITY_OK/);
     const reset = await invoke(["verify"]);
     assert.equal(reset.processCode, 0, JSON.stringify(reset));
@@ -99,7 +101,7 @@ for (const mode of ["light", "normal"]) {
       assert.equal(next.processCode, 0, JSON.stringify(next));
       assert.deepEqual(next.task.requiredControls, ["dry"]);
       const pending = await invoke(["verify"]);
-      assert.equal(pending.code, "task_comparison_pending");
+      assert.equal(pending.verification.dry.status, "NO_VERIFICADO");
       assert.equal(pending.verification.dry.required, true);
       const without = await invoke(["verify", "--control", "none"]);
       assert.equal(without.processCode, 0, JSON.stringify(without));

@@ -95,11 +95,11 @@ test("installed test selection preserves the wrapper, inputs and transient evide
     await writeFile(configPath, configBytes);
   });
 
-  await t.test("unloaded code and changed inputs cannot approve", async () => {
+  await t.test("unloaded code reports missing coverage while changed inputs cannot approve", async () => {
     await writeFile(path.join(root, "work dir/src/unloaded.py"), "def unused():\n    return 1\n");
     const incomplete = await invoke(["--scope", "work dir/src", "--test", chosen]);
-    assert.equal(incomplete.processCode, 2, JSON.stringify(incomplete));
-    assert.equal(incomplete.code, "coverage_incomplete");
+    assert.equal(incomplete.processCode, 0, JSON.stringify(incomplete));
+    assert.equal(incomplete.code, "tests_passed");
     assert.deepEqual(incomplete.coverage.unmeasuredFiles, ["work dir/src/unloaded.py"]);
     assert.ok(incomplete.coverage.files[source]);
     await writeFile(path.join(root, chosen), `${originalTest}\n    Path('src/subject.py').write_text('changed')\n`);

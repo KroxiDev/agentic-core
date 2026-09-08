@@ -83,9 +83,13 @@ def pytest_load_initial_conftests(early_config, parser, args):
         )
         _coverage.start()
     except Exception:
-        _state["error"] = "coverage_unavailable"
+        _coverage = None
+        _state["coverage"] = {"status": "error", "code": "coverage_unavailable", "files": None}
+        if _settings.get("requireCoverage", True):
+            _state["error"] = "coverage_unavailable"
         _save()
-        pytest.exit("No se pudo iniciar la cobertura privada", returncode=2)
+        if _settings.get("requireCoverage", True):
+            pytest.exit("No se pudo iniciar la cobertura privada", returncode=2)
 
 
 @pytest.hookimpl(trylast=True)

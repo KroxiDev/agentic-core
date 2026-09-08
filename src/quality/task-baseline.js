@@ -28,7 +28,7 @@ const verificationReports = [
 ];
 const resolutionReference = `${qualityDirectory}/dry-resolutions.json`;
 const hash = (value) => inputHash(JSON.stringify(value));
-const modes = new Set(["light", "normal", "full"]);
+const modes = new Set(["direct", "light", "normal", "full"]);
 
 async function evidencePath(root, create = false) {
   for (const relative of [".agentic-core", ".agentic-core/quality"]) {
@@ -152,7 +152,7 @@ function options(args) {
     const option = args[index];
     const value = args[index + 1];
     if (!["--task", "--mode", "--objective", "--repair-test", "--control"].includes(option) || !value || value.startsWith("--")) {
-      throw new IntegrationError("invalid_usage", "Use prepare --task <id> --mode <light|normal|full> --objective <referencia breve> [--repair-test <ruta relativa>]", 4);
+      throw new IntegrationError("invalid_usage", "Use prepare --task <id> --mode <direct|light|normal|full> --objective <referencia breve> [--repair-test <ruta relativa>] [--control <dry|crap|mutation|none>]", 4);
     }
     const key = { "--task": "id", "--mode": "mode", "--objective": "objective" }[option];
     if (key && result[key] !== undefined) throw new IntegrationError("invalid_usage", "No repita opciones únicas de preparación", 4);
@@ -254,7 +254,7 @@ async function prepare(root, args) {
 }
 
 async function captureTask(root, { requested, loaded, config, before, cleanup }) {
-  let result = await runProjectTests(root);
+  let result = await runProjectTests(root, undefined, { requireCoverage: requested.mode === "full" });
   const after = await captureProjectInputs(root, config.integration.python);
   if (before.digest !== after.digest || result.inputs && result.inputs.digest !== before.digest
     || result.configurationHash && result.configurationHash !== hash(config)) {

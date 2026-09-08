@@ -8,7 +8,7 @@ import { writeTransaction } from "../transaction.js";
 import { commandBudget, executeCommand, IntegrationError } from "./command.js";
 import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { compareCodeUnits } from "./order.js";
-import { captureProjectInputs, inputHash, privateInputContent, publicCheckpoint } from "./project-inputs.js";
+import { captureProjectInputs, inputHash, matchesInput, privateInputContent, publicCheckpoint } from "./project-inputs.js";
 import { readActiveTask } from "./task-baseline.js";
 import { normalizeSelection, parseTestSelection, resolveSelection } from "./selection.js";
 
@@ -389,6 +389,7 @@ function reportBase({ status, code, exitCode, config, checkpoint, baseline, engi
         "No se ejecutan tests, C.R.A.P., mutación ni roles; no se compara con el inicio de una tarea ni se repara el proyecto.",
       ],
     } : {}),
+    ...(!currentAnalysis ? { purpose: "task_comparison", selection } : {}),
     identity, hashes: { inputs: checkpoint.digest, configuration: configurationHash, baseline: baseline.digest,
       resolutions: resolutions?.sha256 ?? null },
     inputs: publicCheckpoint(checkpoint),
@@ -429,18 +430,27 @@ export async function runPythonDry(root, options = {}) {
 
 async function measurePythonDry(root, { activeTask, ignoreStoredResolutions = false, currentAnalysis = false, selection } = {}) {
   selection = normalizeSelection(selection);
-  if (selection?.tests || (selection && !currentAnalysis)) {
+  if (selection?.tests) {
     throw new IntegrationError("invalid_selection", "DRY acepta --scope para analizar código actual; no selecciona ni ejecuta tests", 4);
   }
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const configurationHash = hash(config);
   const budget = commandBudget(config.limits.operation);
   const before = await captureProjectInputs(root, config.integration.python, selection);
-  const effectiveSelection = currentAnalysis ? {
+  const effectiveSelection = {
     ...resolveSelection(before, config.integration.python, selection), tests: [], testSelection: "not_run",
-  } : undefined;
+  };
   const currentSources = sourceEntries(before);
   const baseline = await loadBaseline(root, config, currentAnalysis ? null : activeTask);
+  if (!currentAnalysis && selection?.code && baseline.status === "captured") {
+    // A scope outside the captured code cannot establish whether today's files
+    // already existed at task start. Do not manufacture an empty baseline.
+    if (selection.code.some((requested) => !config.integration.python.scope.some((scope) => matchesInput(requested, scope)))) {
+      Object.assign(baseline, invalidBaseline("baseline_scope_not_captured"));
+    } else {
+      baseline.sources = baseline.sources.filter((entry) => selection.code.some((scope) => matchesInput(entry.path, scope)));
+    }
+  }
   baseline.changedFiles = baseline.status === "captured"
     ? [...new Set([...baseline.inventory.map((entry) => entry.path), ...before.inventory.map((entry) => entry.path)])]
       .filter((file) => baseline.inventory.find((entry) => entry.path === file)?.sha256
