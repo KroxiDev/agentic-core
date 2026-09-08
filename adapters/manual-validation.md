@@ -2,6 +2,12 @@
 
 Esta lista complementa las suites automatizadas. No convierte instrucciones de agentes en enforcement de seguridad ni exige demostrar un sandbox del host.
 
+Para el cierre de #58 como entrega lista para usar y testear resultados reales,
+el usuario difiere todos los recorridos nativos de Directo, Light, Normal y Full,
+incluidos perfiles, secuencias, correcciones, espera y Documentador final. Este
+procedimiento se conserva para su ejecución posterior; no es evidencia aprobada
+ni un bloqueo de ese cierre. La especificación padre #38 permanece sin cambios.
+
 ## Límites de evidencia
 
 | Área | Contrato |
@@ -34,8 +40,8 @@ En Codex:
 | Host | Modo | Roles esperados | Gate esperado |
 | --- | --- | --- | --- |
 | Codex | `light` | Implementador → Tester; dos roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
-| Codex | `normal` | Planificador solo con HOW material → Implementador → Verificador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
-| Codex | `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; seis roles base y hasta dos rondas adicionales compartidas; Documentador solo si corresponde | `prepare` + tests/DRY/C.R.A.P./Mutation completos en `verify`; `QUALITY_OK` vigente. |
+| Codex | `normal` | Planificador → Implementador → Tester → Evaluador; cuatro roles base y hasta dos rondas adicionales compartidas; Documentador solo por petición y al final | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `NO_APLICA`. |
+| Codex | `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; seis roles base y hasta dos rondas adicionales compartidas; Documentador solo por petición y al final | `prepare` + tests/DRY/C.R.A.P./Mutation completos en `verify`; `QUALITY_OK` vigente. |
 
 Las frases de permisos son contratos semánticos:
 
@@ -106,7 +112,7 @@ Usar un proyecto de prueba con código, tests, configuración del runner, manife
    node .agentic-core/runtime-launcher.mjs agentic-quality prepare --task manual-light --mode light --objective manual-validation
    ```
 
-2. Confirmar el recibo `QUALITY_SESSION`, la captura de cambios preexistentes y del archivo relevante no trackeado, y la ausencia de `.env`, caches, binarios y archivos irrelevantes en el checkpoint.
+2. Confirmar `baseline_ready`, la captura de cambios preexistentes y del archivo pertinente no versionado en `active-task.json`, y la exclusión de secretos. Un nombre como `cache` o `data` no excluye por sí solo código legítimo.
 3. Repetir el mismo comando sin cambiar entradas y confirmar que reutiliza el mismo ID.
 4. Cambiar producción y tests dentro del scope y ejecutar:
 
@@ -117,15 +123,16 @@ Usar un proyecto de prueba con código, tests, configuración del runner, manife
 5. Confirmar tests reales, C.R.A.P. diferencial, reporte hasheado y `QUALITY_OK` solo cuando todos los gates estén aprobados.
 6. Modificar luego código, tests, configuración, manifest, lockfile o comando del runner y confirmar que el recibo anterior ya no es vigente.
 7. En `light` y `normal`, confirmar `mutation=not_applicable` sin ejecución. En `full`, confirmar que Mutation Testing se ejecuta, restaura snapshots y no cambia el worktree relevante.
-8. Corromper una copia de una sesión y confirmar que `verify` devuelve código 4 y `doctor` preserva y reporta la evidencia sin repararla.
+8. Corromper una copia de la evidencia de tarea y confirmar `NO_VERIFICADO`, sin `QUALITY_OK`; `explain` informa la causa sin ejecutar tests ni reparar evidencia.
 
 ## Interfaces públicas
 
 ```powershell
-node .agentic-core/runtime-launcher.mjs agentic-quality scan --target src
-node .agentic-core/runtime-launcher.mjs agentic-quality crap --target src
-node .agentic-core/runtime-launcher.mjs agentic-quality mutate --target src
-node .agentic-core/runtime-launcher.mjs agentic-quality mutation --target src
+node .agentic-core/runtime-launcher.mjs agentic-quality test
+node .agentic-core/runtime-launcher.mjs agentic-quality dry
+node .agentic-core/runtime-launcher.mjs agentic-quality crap
+node .agentic-core/runtime-launcher.mjs agentic-quality mutate
+node .agentic-core/runtime-launcher.mjs agentic-quality explain --json
 node .agentic-core/runtime-launcher.mjs agentic-quality prepare --task manual-light --mode light --objective manual-validation
 node .agentic-core/runtime-launcher.mjs agentic-quality verify
 ```
@@ -142,10 +149,8 @@ Confirmar que no se acepta input JSON redactado por el modelo y que los comandos
 
 ## Gate final
 
-1. `npm.cmd test`
-2. `npm.cmd run test:python`
-3. `npm.cmd run check`
-4. `npm.cmd run build:runtime`
-5. `npm.cmd pack --dry-run --json` con cache temporal local si el global falla.
-6. `git diff --check`
-7. Verificar que el tarball y el runtime contienen únicamente el conjunto canónico y que no quedaron caches, transport files ni artefactos de prueba.
+1. Construir con el lockfile (`npm.cmd ci`) y seleccionar las suites pertinentes de la matriz en `acceptance/windows-codex.md`; no repetir suites costosas con evidencia vigente.
+2. Ejecutar `node --test test/windows-acceptance.test.js` en Windows y conservar resultado, plataforma y hash del paquete. Un skip no valida otra plataforma.
+3. Ejecutar `npm.cmd run check` y `git diff --check`.
+4. Completar solo los recorridos nativos autorizados y registrar perfiles efectivos, secuencias y límites. El cierre de #58 difiere Directo, Light, Normal y Full al usuario, sin ejecutarlos ni aprobarlos; Linux conserva su aceptación independiente en #59.
+5. Verificar el inventario del paquete y comunicar los escenarios pendientes sin emitir una aceptación global falsa ni exigir KPIs o benchmarks.

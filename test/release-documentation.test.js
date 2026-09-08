@@ -284,8 +284,8 @@ test("the README keeps lifecycle, support, and runtime commitments as structure"
 
   const support = headingSection(readme, "Requisitos y soporte");
   assert.deepEqual(markdownTable(support, ["Plataforma", "Nivel de soporte"]), [
-    ["Windows 10", "Oficial"],
-    ["Windows 11", "Oficial"],
+    ["Windows 10/11", "Plataforma inicial; aceptación integrada y límites en `acceptance/windows-codex.md`."],
+    ["Linux", "Pendiente de ejecución independiente en #59; no verificado."],
   ]);
 
   const installation = commandSection(readme, "agentic-core init");
@@ -324,13 +324,14 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
     "Implementador",
     "Tester",
     "Planificador",
-    "Verificador",
+    "Arquitecto",
     "Evaluador",
     "Documentador",
     "prepare",
     "verify",
     "not_applicable",
   ], "mode contract");
+  assert.match(modes.body, /Documentador.*petición expresa.*último subagente/u);
 
   assert.deepEqual(markdownTable(
     headingSection(readme, "Límites de permisos"),
