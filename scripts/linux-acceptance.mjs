@@ -124,13 +124,21 @@ def test_linux_resources():
     const launcher = path.join(a.root, ".agentic-core/runtime-launcher.mjs");
     const maintenance = (args, env, expected) => core(a.root, launcher, ["agentic-core", ...args], env, expected);
     const prepare = (id) => quality(a.root, ["prepare", "--task", id, "--mode", "normal", "--objective", "issue:59"]);
-    await step("runtime sin bootstrap, pytest autoritativo, DRY y C.R.A.P.", async () => {
+    await step("runtime sin bootstrap, tests funcionales y controles explícitos", async () => {
       assert.equal((await maintenance(["doctor"])).status, "healthy");
       await prepare("linux-first");
       const verified = await quality(a.root, ["verify"]);
-      for (const name of ["tests", "dry", "crap"]) assert.equal(verified.verification.controls[name].status, "approved");
+      assert.equal(verified.verification.controls.tests.status, "approved");
       assert.equal(verified.result.suite.phases.call, 2);
-      assert.equal(verified.verification.controls.mutation.status, "NO_APLICA");
+      for (const name of ["dry", "crap", "mutation"]) {
+        assert.equal(verified.verification.controls[name].status, "NO_SOLICITADO");
+        assert.equal(verified.verification[name].executed, false);
+        await assert.rejects(lstat(path.join(a.root, `.agentic-core/quality/${name}.json`)), { code: "ENOENT" });
+      }
+      // Keep installed engine coverage through explicit public commands.
+      for (const name of ["dry", "crap"]) {
+        assert.equal((await quality(a.root, [name])).status, "approved");
+      }
     });
     await step("mutación real conserva helper, mayúsculas y consumidor", async () => {
       // Standalone mutation reports execution, not an aggregate quality approval.

@@ -37,6 +37,10 @@ test("installed diagnosis explains current, stale and corrupt evidence without i
   assert.equal(data.status, JSON.parse(verified.stdout).status);
   assert.equal(data.evidence.current, true);
   assert.equal(data.testsExecuted, false);
+  for (const name of ["dry", "crap", "mutation"]) {
+    assert.equal(data.controls[name].status, "NO_SOLICITADO");
+    assert.ok(!data.causes.some((item) => item.control === name));
+  }
   assert.equal(data.integration.command.args[0], "wrapper space.py");
   assert.equal(data.limits.crap, 7);
   assert.ok(data.inputs.exclusions.private >= 2);
@@ -102,14 +106,15 @@ test("installed diagnosis explains current, stale and corrupt evidence without i
   assert.equal(await readFile(activePath, "utf8"), active);
   assert.equal(await readFile(budgetPath, "utf8"), budget);
   assert.equal(await count(), 2);
-  await writeFile(source, original.replace("    if value > 0:", "    if value == 999:\n        return 'rare'\n    if value > 0:"));
+  await writeFile(source, original.replace("return 'positive'", "return 'broken'"));
   const rejected = await run(["verify"], { AGENTIC_CORE_OUTPUT: "" });
   assert.equal(rejected.code, 1, rejected.stdout + rejected.stderr);
-  assert.match(rejected.stdout, /work dir\/src\/subject.py:1; valor .*límite 2/);
+  assert.match(rejected.stdout, /tests_failed:.*work dir\/python checks\/check_subject.py/);
   const diagnosis = await run(["explain"]);
   assert.equal(diagnosis.code, 1, diagnosis.stdout);
-  assert.equal(JSON.parse(diagnosis.stdout).code, "crap_limit_exceeded");
-  assert.ok(JSON.parse(diagnosis.stdout).causes.some((item) => item.file === "work dir/src/subject.py" && item.limit === 2));
+  assert.equal(JSON.parse(diagnosis.stdout).code, "tests_failed");
+  assert.ok(JSON.parse(diagnosis.stdout).causes.some((item) => item.control === "tests"
+    && item.file === "work dir/python checks/check_subject.py"));
   assert.equal(await count(), 3);
 });
 
