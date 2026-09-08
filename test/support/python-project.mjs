@@ -30,7 +30,7 @@ export async function configurePythonProject(root, update) {
   return config;
 }
 
-export async function pythonProject(t) {
+export async function pythonProject(t, { install = true } = {}) {
   const root = await createTestProject(t, { files: {
     "work dir/src/subject.py": "def classify(value):\n    if value > 0:\n        return 'positive'\n    return 'other'\n",
     "work dir/config space.ini": "[pytest]\npythonpath = .\npython_files = check_*.py\naddopts = -q\n",
@@ -83,9 +83,11 @@ for name in ['pytest', '_pytest', 'pluggy', 'packaging', 'iniconfig', 'pygments'
   config.integration.python.command = { executable: python,
     args: ["wrapper space.py", "argument with spaces & literal", "-c", "config space.ini", "python checks"] };
   await writeFile(path.join(root, "settings.json"), JSON.stringify(config));
-  const result = await execute(process.execPath, [path.join(repository, "bin/agentic-core.js"), "init", root, "--config", path.join(root, "settings.json")],
-    { cwd: root, encoding: "utf8", windowsHide: true, timeout: 120000, env: { ...process.env, AGENTIC_CORE_PYTHON: python } });
-  assert.match(result.stdout, /INSTALACIÓN COMPLETADA/u);
+  if (install) {
+    const result = await execute(process.execPath, [path.join(repository, "bin/agentic-core.js"), "init", root, "--config", path.join(root, "settings.json")],
+      { cwd: root, encoding: "utf8", windowsHide: true, timeout: 120000, env: { ...process.env, AGENTIC_CORE_PYTHON: python } });
+    assert.match(result.stdout, /INSTALACIÓN COMPLETADA/u);
+  }
   const hostPython = (await execute("python", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" })).stdout.trim();
   return { root, python, hostPython, config };
 }
