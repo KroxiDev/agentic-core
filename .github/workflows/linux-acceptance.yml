@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   installed-linux:
     runs-on: ubuntu-24.04
@@ -36,7 +40,7 @@ jobs:
           python-version: '3.11'
       - name: Preparar dependencias independientes
         run: |
-          python -m pip install pytest==8.3.5 py==1.11.0
+          python -m pip install pytest==8.3.5 py==1.11.0 pygments==2.19.2
           npm ci
           mkdir -p .codex-temp/linux-artifacts
       - name: Recorrido del paquete instalado
