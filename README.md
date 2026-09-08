@@ -14,6 +14,11 @@
 | Windows 10 | Oficial |
 | Windows 11 | Oficial |
 
+Linux: **NO_VERIFICADO**. La aceptación independiente permanece pendiente en
+[#59](https://github.com/KroxiDev/agentic-core/issues/59); el
+[registro de bloqueo y recorrido pendiente](https://github.com/KroxiDev/agentic-core/blob/main/adapters/linux-acceptance.md)
+separa las comprobaciones del host de la ejecución Linux aún necesaria.
+
 ## Desarrollo desde un clon
 
 Después de clonar este repositorio, ejecuta el siguiente paso obligatorio desde la raíz antes de invocar los binarios de `bin/`:
