@@ -94,7 +94,7 @@ async function copyChanges(checkpoint, copyRoot) {
 }
 
 export async function verifyProjectIntegrity(checkpoint, unit, copyRoot, phase, copyCheckpoint = checkpoint) {
-  const current = await captureProjectInputs(checkpoint.root, unit);
+  const current = await captureProjectInputs(checkpoint.root, unit, checkpoint.selection);
   const before = new Map(checkpoint.inventory.map((entry) => [entry.path, JSON.stringify(entry)]));
   const after = new Map(current.inventory.map((entry) => [entry.path, JSON.stringify(entry)]));
   const original = [...new Set([...before.keys(), ...after.keys()])].filter((file) => before.get(file) !== after.get(file));

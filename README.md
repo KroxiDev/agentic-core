@@ -70,6 +70,18 @@ La integración añade un bloque de Codex a `AGENTS.md` y los perfiles de los mo
 contenido previo y la política canónica en `.agentic-core/golden-rules.md`. El ignore local
 excluye `/quality/` y `/tools/`.
 
+## Tests funcionales con alcance por invocación
+
+```powershell
+node .agentic-core/runtime-launcher.mjs agentic-quality test --scope src/payments.py --test tests/test_payments.py
+```
+
+`--scope` selecciona el código medido y `--test` los tests que se ejecutan. Ambas opciones admiten archivos o carpetas relativos a la raíz del consumidor y pueden repetirse. No admiten globs, rutas externas ni selección por función. Sin `--scope` se usa el alcance configurado; sin `--test` se conserva la selección del comando del proyecto. Los flags son transitorios: no modifican `config.json` ni activan DRY, C.R.A.P. o mutación.
+
+Se conserva el intérprete, wrapper, directorio, configuración y opciones de pytest del proyecto, incluidos filtros como `-k`. El observador privado sustituye las rutas de colección dentro de pytest; no reescribe los argumentos del wrapper. La selección por rutas no admite `--pyargs`. Los inputs auxiliares permitidos siguen en la copia controlada, aunque no formen parte del código medido. Las exclusiones e integridad siguen vigentes.
+
+La salida muestra el alcance y los archivos de tests ejecutados. `AGENTIC_CORE_OUTPUT=json` añade `selection`, inventario, identidad de ejecución, cobertura y `suite.executed` (ruta, identificador opaco y resultado por test, sin publicar parámetros). Cambiar código o tests seleccionados cambia la identidad de evidencia; esta ejecución no publica un recibo `QUALITY_OK` ni reemplaza aprobaciones de tareas. Fallos reales se rechazan; falta de ejecución, cobertura no atribuible o parcial del alcance explícito, límites o cambios de inputs impiden aprobar. La selección por cambios de tarea queda para T6 (#89).
+
 ## Baseline de tarea Python (esquema 3)
 
 Antes de editar en Light, Normal o Full, prepare el estado real del worktree con el alcance e inputs de `config.json`:
