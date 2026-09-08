@@ -8,6 +8,7 @@ import { runTaskQualityCli } from "./quality/task-baseline.js";
 import { runPythonCrapCli } from "./quality/python-crap.js";
 import { runPythonDryCli } from "./quality/python-dry.js";
 import { runPythonMutationCli } from "./quality/python-mutation.js";
+import { runExplainCli } from "./quality/diagnostics.js";
 import { runResultExportCli } from "./quality/result-export.js";
 
 const [seam, ...args] = process.argv.slice(2);
@@ -16,7 +17,9 @@ try {
   if (seam === "agentic-core") {
     process.exitCode = await runMaintenanceCli(args);
   } else if (seam === "agentic-quality") {
-    if (await isPythonInstallation(process.cwd())) {
+    if (args[0] === "explain") {
+      process.exitCode = await runExplainCli(args.slice(1));
+    } else if (await isPythonInstallation(process.cwd())) {
       process.exitCode = await (args[0] === "export" ? runResultExportCli(args)
         : args[0] === "crap" ? runPythonCrapCli(args)
         : args[0] === "dry" ? runPythonDryCli(args)

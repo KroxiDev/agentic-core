@@ -42,7 +42,8 @@ export const CONFIG_SCHEMA = {
 };
 
 function validate(value, schema, location) {
-  const fail = () => { throw new InstallationError("invalid_configuration", `Configuración inválida en ${location}`); };
+  const failure = (code, message) => Object.assign(new InstallationError(code, message), { location });
+  const fail = () => { throw failure("invalid_configuration", `Configuración inválida en ${location}`); };
   if (Object.hasOwn(schema, "const") && value !== schema.const) fail();
   if (!schema.type) return;
   const type = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
@@ -58,7 +59,7 @@ function validate(value, schema, location) {
     for (const key of schema.required ?? []) if (!Object.hasOwn(value, key)) fail();
     for (const [key, item] of Object.entries(value)) {
       const child = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : schema.additionalProperties;
-      if (!child) throw new InstallationError("unknown_configuration_key", `Clave desconocida en ${location}`);
+      if (!child) throw failure("unknown_configuration_key", `Clave desconocida en ${location}`);
       validate(item, child, `${location}.${schema.properties ? key : "valor"}`);
     }
   }

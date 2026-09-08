@@ -8,6 +8,7 @@ import { captureProjectInputs, inputHash, privateInputContent, publicCheckpoint 
 import { dependencyFingerprint } from "./project-copy.js";
 import { projectTestIdentity, runProjectTests } from "./python-project.js";
 import { parseDryResolutions } from "./python-dry.js";
+import { formatVerificationSummary } from "./diagnostics.js";
 import {
   capturePythonQualityBaseline,
   readVerificationReport,
@@ -323,7 +324,7 @@ export async function runTaskQualityCli(args, io = process) {
       message: typed ? error.message : "No se pudo conservar o consultar la evidencia de tarea", exitCode: typed ? error.exitCode : 5 };
   }
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
-  else if (result.receipt) io.stdout.write(`${result.receipt}\n`);
+  else if (args[0] === "verify") io.stdout.write(formatVerificationSummary(result));
   else io.stdout.write(`${result.status} [${result.code}] ${result.message}\n${result.task ? `Tarea ${result.task.id}; objetivo: ${result.task.objective}; baseline: ${reference}\n` : ""}`);
   if (io.env?.AGENTIC_CORE_OUTPUT !== "json") io.stdout.write(formatBudget(result.budget));
   return result.exitCode;
