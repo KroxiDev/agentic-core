@@ -58,6 +58,7 @@ async function quality(root, args, expected = 0) {
 
 test("Linux: paquete autónomo, helper ejecutable, calidad y mantenimiento entre dos instalaciones", async (t) => {
   assert.equal(process.platform, "linux", "Esta aceptación requiere Linux real; no se omite por plataforma");
+  assert.notEqual(process.getuid(), 0, "Los permisos deben verificarse con un usuario sin privilegios de root");
   await mkdir(artifacts, { recursive: true });
   const evidence = { status: "NO_VERIFICADO", nativeCodex: "NO_VERIFICADO", steps: [],
     environment: { platform: process.platform, architecture: process.arch, kernel: release(), node: process.version,
@@ -79,7 +80,8 @@ test("Linux: paquete autónomo, helper ejecutable, calidad y mantenimiento entre
     const a = await pythonProject(t, { install: false });
     const b = await pythonProject(t, { install: false });
     const work = path.join(a.root, "work dir");
-    evidence.environment.filesystem = (await execute("stat", ["-f", "-c", "%T", work])).stdout.trim();
+    evidence.environment.filesystem = (await execute("findmnt", ["--target", work, "--noheadings", "--output", "FSTYPE"])).stdout.trim();
+    evidence.environment.unprivileged = true;
     await writeFile(path.join(a.root, "AGENTS.md"), "# Instrucciones del consumidor\n");
     await writeFile(path.join(a.root, "uv.lock"), "synthetic consumer lock\n");
     await writeFile(path.join(work, "Case.txt"), "UPPER");
@@ -150,7 +152,7 @@ def test_linux_resources():
       const saved = await readFile(output, "utf8");
       const foreign = path.join(a.root, ".agentic-core/quality/foreign.txt");
       await writeFile(foreign, "keep foreign evidence\n");
-      await prepare("linux-second");
+      assert.equal((await prepare("linux-second")).task.id, "linux-second");
       await assert.rejects(lstat(path.join(a.root, ".agentic-core/quality/verification.json")), { code: "ENOENT" });
       await assert.rejects(lstat(path.join(a.root, ".agentic-core/quality/mutation.json")), { code: "ENOENT" });
       assert.equal(await readFile(output, "utf8"), saved);

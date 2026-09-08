@@ -14,10 +14,11 @@
 | Windows 10 | Oficial |
 | Windows 11 | Oficial |
 
-Linux: **NO_VERIFICADO**. La aceptación independiente permanece pendiente en
-[#59](https://github.com/KroxiDev/agentic-core/issues/59); el
-[registro de bloqueo y recorrido pendiente](https://github.com/KroxiDev/agentic-core/blob/main/adapters/linux-acceptance.md)
-separa las comprobaciones del host de la ejecución Linux aún necesaria.
+Linux dispone de un recorrido automático de aceptación en Ubuntu 24.04 mediante
+GitHub Actions. La comprobación manual de perfiles en Codex sigue pendiente en
+[#59](https://github.com/KroxiDev/agentic-core/issues/59); el soporte integral
+permanece **NO_VERIFICADO**. Consulte el
+[alcance automático y la aceptación manual pendiente](https://github.com/KroxiDev/agentic-core/blob/main/adapters/linux-acceptance.md).
 
 ## Desarrollo desde un clon
 
