@@ -7,6 +7,8 @@ Lenguaje de agentic-core para distinguir la coordinación del trabajo, los contr
 **Modo**: Forma de coordinar una tarea: Directo, Light o Normal. La elección de controles es independiente del modo.
 _Evitar_: nivel de calidad.
 
+**Orquestación**: Coordinación de los roles de una tarea según la secuencia y las responsabilidades del modo elegido. Es independiente de la selección de controles opcionales.
+
 **Directo**: Modo en el que un único agente resuelve el encargo.
 
 **Light**: Modo con Implementador y Tester, en ese orden.
@@ -45,6 +47,9 @@ _Evitar_: estado actual como inicio, última aprobación.
 
 **Evidencia vigente**: Resultado comprobable que corresponde a los inputs, selección y condiciones de la evaluación actual.
 _Evitar_: último resultado como sinónimo de resultado vigente.
+
+**Veredicto**: Conclusión de una evaluación sobre el alcance solicitado, sustentada en la evidencia disponible y sus límites. Puede expresar aprobación, rechazo o imposibilidad de verificar.
+_Evitar_: recibo de calidad como sinónimo de la conclusión.
 
 **Recibo de calidad**: Constancia de una verificación asociada a su tarea, alcance y evidencia.
 
