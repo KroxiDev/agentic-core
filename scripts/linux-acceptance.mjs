@@ -46,6 +46,7 @@ async function core(root, entry, args, extraEnv = {}, expected = 0) {
     result = { code: error.code, stdout: error.stdout, stderr: error.stderr };
   }
   assert.equal(result.code, expected, result.stdout + result.stderr);
+  if (expected !== 0) return result;
   return JSON.parse(result.stdout);
 }
 
