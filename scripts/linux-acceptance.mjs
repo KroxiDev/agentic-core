@@ -50,9 +50,9 @@ async function core(root, entry, args, extraEnv = {}, expected = 0) {
   return JSON.parse(result.stdout);
 }
 
-async function quality(root, args) {
+async function quality(root, args, expected = 0) {
   const result = await runPythonProject(root, args);
-  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.equal(result.code, expected, result.stdout + result.stderr);
   return JSON.parse(result.stdout);
 }
 
@@ -131,9 +131,13 @@ def test_linux_resources():
       assert.equal(verified.verification.controls.mutation.status, "NO_APLICA");
     });
     await step("mutación real conserva helper, mayúsculas y consumidor", async () => {
-      const mutation = await quality(a.root, ["mutate"]);
+      // Standalone mutation reports execution, not an aggregate quality approval.
+      const mutation = await quality(a.root, ["mutate"], 2);
+      assert.equal(mutation.code, "mutation_execution_complete");
       assert.equal(mutation.complete, true);
-      assert.deepEqual(mutation.summary, { killed: 1, survived: 0, uncovered: 0, timeout: 0, error: 0, interrupted: 0 });
+      assert.equal(mutation.generated, 2);
+      assert.equal(mutation.selected, 2);
+      assert.deepEqual(mutation.summary, { killed: 2, survived: 0, uncovered: 0, timeout: 0, error: 0, interrupted: 0 });
       assert.equal(mutation.integrity.status, "preserved");
       evidence.mutation = mutation.summary;
       assert.equal(await fingerprint(work), consumer.work);
@@ -172,8 +176,8 @@ def test_linux_resources():
       const before = await fingerprint(a.root);
       await maintenance(["uninstall", "--dry-run"]);
       assert.equal(await fingerprint(a.root), before);
-      assert.equal((await maintenance(["uninstall"])).status, "uninstalled");
-      for (const item of ["runtime", "tools", "ownership.json"]) {
+      assert.equal((await maintenance(["uninstall"])).dryRun, false);
+      for (const item of ["runtime", "tools", "ownership.json", "quality/active-task.json", "quality/budget.json"]) {
         await assert.rejects(lstat(path.join(a.root, ".agentic-core", item)), { code: "ENOENT" });
       }
       assert.equal(await readFile(foreign, "utf8"), "keep foreign\n");
