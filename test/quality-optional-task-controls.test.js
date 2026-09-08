@@ -79,7 +79,7 @@ for (const mode of ["light", "normal"]) {
     assert.doesNotMatch(explicit.receipt, /QUALITY_OK/);
     const reset = await invoke(["verify"]);
     assert.equal(reset.processCode, 0, JSON.stringify(reset));
-    assert.equal(reset.reused, undefined);
+    assert.equal(reset.reused, true);
     assert.deepEqual(reset.verification.request.requiredControls, []);
     assert.deepEqual(await readFile(path.join(root, ".agentic-core/config.json")), beforeConfig);
     await writeFile(path.join(root, source), initialSource.replace("return 'positive'", "return 'broken'"));

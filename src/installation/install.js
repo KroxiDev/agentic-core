@@ -38,13 +38,32 @@ o recibo \`QUALITY_OK\`.
 Nunca declares un cambio ejecutable orquestado completo sin un \`QUALITY_OK\` vigente de
 \`agentic-quality verify\`.
 
-### Controles de Light/Normal
+### Controles a pedido en Directo, Light y Normal
 
-Prepare conserva el inicio real y ejecuta tests funcionales sin medir controles opcionales.
-DRY, C.R.A.P. y mutacion se seleccionan expresamente con \`--control\` en prepare o verify;
-sin peticion figuran como NO_SOLICITADO. La configuracion heredada y los informes anteriores
-no los activan. Verify exige tests funcionales comprobados; una comparacion solicitada
-sin implementar devuelve NO_VERIFICADO. Full conserva sus controles historicos.
+1. Distingue finalidad, controles, codigo y tests pedidos. Una consulta como "analiza
+   duplicacion en src" usa \`dry --scope src\`; C.R.A.P. usa \`crap\` y mutacion \`mutate\`,
+   con \`--scope\` y \`--test\` cuando correspondan. Son informes actuales, sin reparaciones.
+   Usa el prefijo \`node .agentic-core/runtime-launcher.mjs agentic-quality\`.
+2. Para una implementacion, conserva el inicio antes de cambiar codigo con \`prepare
+   --task <id> --mode <direct|light|normal> --objective <referencia>\`. Agrega cada control
+   pedido con \`--control dry\`, \`--control crap\` o \`--control mutation\`.
+   Preparar conserva inputs y tests funcionales; los motores se miden al verificar.
+   Directo solo prepara si necesita comparar la implementacion; conserva un agente.
+3. "Exige DRY y C.R.A.P. en este cambio" se traduce a \`verify --control dry --control crap\`
+   y el alcance elegido: \`--scope <archivo|carpeta>\` repetible o \`--changes\`, con
+   \`--test <archivo|carpeta>\` repetible. Sin seleccion de tests se conserva el comando
+   del proyecto; no se infieren tests asociados. DRY es estatico; los otros controles
+   ejecutan los tests internos que necesitan. Los tests funcionales deben pasar.
+4. Una peticion tardia reutiliza el inicio conservado. Si falta, informa NO_VERIFICADO:
+   preparar el estado ya modificado no reconstruye el inicio. "Agrega mutacion" incorpora
+   \`--control mutation\` al conjunto vigente. En cada cierre o renovacion pasa el conjunto
+   completo y la seleccion vigente: los flags de verify reemplazan la seleccion de esa
+   ejecucion. \`--control none\` la vacia; cada nueva tarea comienza sin heredar controles.
+5. Conserva modo, roles y limites de correccion. Solo los controles solicitados condicionan
+   la aprobacion; deuda previa sin empeoramiento es contexto. Conserva evidencia compatible
+   y renueva la afectada por cambios de codigo, tests o condiciones. Reporta el recibo y
+   el alcance efectivo; NO_SOLICITADO no significa aprobado. Rechazos o evidencia insuficiente
+   de un control pedido mantienen el cierre pendiente. Full conserva sus controles historicos.
 
 ### Light
 

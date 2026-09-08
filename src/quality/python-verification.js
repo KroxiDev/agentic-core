@@ -563,7 +563,9 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
   requiredControls = historical ? ["dry", "crap", "mutation"] : requiredControls ?? task.requiredControls ?? [];
   const { selection, delta } = await resolveTaskSelection(root, requestedSelection, task);
   const request = { requiredControls, selection: selection ?? null, delta: delta ?? null };
-  const compatibleRequest = hash(previous?.request ?? null) === hash(request);
+  const compatibleRequest = Boolean(previous?.request)
+    && hash(previous.request.selection) === hash(request.selection)
+    && hash(previous.request.delta) === hash(request.delta);
   const config = await readConfiguration(path.join(root, ".agentic-core", "config.json"));
   const before = await captureProjectInputs(root, config.integration.python);
   const startEnvironment = await currentEnvironment(root, previous?.tests ?? {}, selection);
@@ -789,7 +791,7 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     throw new IntegrationError("quality_report_conflict", "No se pudo conservar el veredicto sin afectar evidencia existente", 2);
   }
   const receiptStatus = status === "approved" || status === "NO_APLICA" ? "QUALITY_OK" : "QUALITY_FAILED";
-  const receipt = `${receiptStatus} task=${task.id} mode=${task.mode} tests=${tests.status} dry=${dry.status} crap=${crap.status} mutation=${mutation.status} report=${reference} sha256=${persisted.sha256}`;
+  const receipt = `${receiptStatus} task=${task.id} mode=${task.mode} tests=${tests.status} dry=${dry.status} crap=${crap.status} mutation=${mutation.status} selection=${hash(request)} report=${reference} sha256=${persisted.sha256}`;
   return {
     command: "verify",
     status,
