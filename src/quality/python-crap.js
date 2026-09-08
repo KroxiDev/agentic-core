@@ -9,6 +9,7 @@ import { commandBudget, executeCommand, IntegrationError } from "./command.js";
 import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { captureProjectInputs, inputHash, matchesInput, publicCheckpoint } from "./project-inputs.js";
 import { projectTestIdentity, runProjectTests } from "./python-project.js";
+import { normalizeSelection, parseTestSelection, resolveSelection } from "./selection.js";
 
 const adapter = fileURLToPath(new URL("agentic_crap.py", import.meta.url));
 const reference = ".agentic-core/quality/crap.json";
@@ -17,9 +18,9 @@ const hash = (value) => inputHash(JSON.stringify(value));
 // Unknown suffixes and extensionless files may contain code: retain a limitation.
 const resourceFormat = /\.(?:md|markdown|rst|txt|json|jsonl|csv|tsv|toml|ini|cfg|ya?ml|png|jpe?g|gif|webp|ico|pdf|woff2?|ttf|otf)$/iu;
 
-function requiresMeasurement(entry, unit) {
+function requiresMeasurement(entry, scope) {
   if (entry.kind === "measured_code") return true;
-  if (!unit.scope.some((scope) => matchesInput(entry.path, scope))) return false;
+  if (!scope.some((selected) => matchesInput(entry.path, selected))) return false;
   // The shared input policy already excludes Python tests from measured code.
   if (entry.path.endsWith(".py")) return false;
   return !resourceFormat.test(entry.path) || (entry.mode & 0o111) !== 0
@@ -39,7 +40,12 @@ const causes = {
   no_executable_code: "El AST no contiene comportamiento ejecutable que medir",
 };
 
-async function saveReport(root, result) {
+async function reportContent(root) {
+  try { return await readFile(path.join(root, reference)); }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
+}
+
+async function saveReport(root, result, expectedContent) {
   for (const relative of [".agentic-core", ".agentic-core/quality"]) {
     try {
       const info = await lstat(path.join(root, relative));
@@ -54,16 +60,25 @@ async function saveReport(root, result) {
     const info = await lstat(target);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error("unsafe");
     const previous = JSON.parse(await readFile(target, "utf8"));
-    if (previous.kind !== "crap" || previous.sha256 !== hash(previous.result)) throw new Error("foreign");
+    if (previous.kind !== "crap" || previous.result?.command !== "crap"
+      || previous.result.schemaVersion !== 1 || previous.result.reference !== reference
+      || previous.sha256 !== hash(previous.result)) throw new Error("foreign");
   } catch (error) {
     if (error.code !== "ENOENT") throw new IntegrationError("quality_report_conflict", "El informe existente es ajeno o divergente; se conserva sin reemplazarlo");
   }
-  await writeTransaction(root, [{ path: target,
-    content: Buffer.from(`${JSON.stringify({ kind: "crap", sha256: hash(result), result })}\n`) }]);
+  try {
+    await writeTransaction(root, [{ path: target, expectedContent,
+      content: Buffer.from(`${JSON.stringify({ kind: "crap", sha256: hash(result), result })}\n`) }]);
+  } catch (error) {
+    if (error.code === "ERR_TRANSACTION_CONFLICT") {
+      throw new IntegrationError("quality_report_conflict", "El informe cambió durante la medición; se conserva sin reemplazarlo");
+    }
+    throw error;
+  }
 }
 
 async function measure(root, config, checkpoint, execution, budget) {
-  const sources = checkpoint.entries.filter((entry) => requiresMeasurement(entry, config.integration.python))
+  const sources = checkpoint.entries.filter((entry) => requiresMeasurement(entry, checkpoint.selection?.code ?? config.integration.python.scope))
     .map(({ content, ...entry }) => ({ ...entry, content: content.toString("base64") }));
   const temporary = await mkdtemp(path.join(tmpdir(), "agentic-crap-"));
   try {
@@ -85,15 +100,27 @@ export async function runPythonCrap(root, options = {}) {
   return withCurrentTaskBudget(root, () => measurePythonCrap(root, options));
 }
 
-async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, execution: suppliedExecution } = {}) {
+async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, execution: suppliedExecution, selection: requestedSelection } = {}) {
+  const selection = normalizeSelection(requestedSelection);
   const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
   const budget = commandBudget(config.limits.operation);
-  const before = suppliedCheckpoint ?? await captureProjectInputs(root, config.integration.python);
-  const execution = suppliedExecution ?? await runProjectTests(root);
+  const before = suppliedCheckpoint ?? await captureProjectInputs(root, config.integration.python, selection);
+  if (JSON.stringify(before.selection) !== JSON.stringify(selection)) {
+    throw new IntegrationError("crap_selection_conflict", "El checkpoint corresponde a otra selección; no se reutiliza");
+  }
+  const effectiveSelection = resolveSelection(before, config.integration.python, selection);
+  if (suppliedExecution) {
+    const expectedIdentity = (await projectTestIdentity(root, config, selection)).identity;
+    if (suppliedExecution.inputs?.digest !== before.digest || suppliedExecution.executionIdentity !== expectedIdentity
+      || suppliedExecution.configurationHash !== hash(config)) {
+      throw new IntegrationError("crap_execution_conflict", "La cobertura corresponde a otros inputs, selección o condiciones; no se reutiliza");
+    }
+  }
+  const execution = suppliedExecution ?? await runProjectTests(root, selection);
   const measured = await measure(root, config, before, execution, budget);
-  const after = await captureProjectInputs(root, config.integration.python);
+  const after = await captureProjectInputs(root, config.integration.python, selection);
   let currentIdentity;
-  try { currentIdentity = (await projectTestIdentity(root, config)).identity; }
+  try { currentIdentity = (await projectTestIdentity(root, config, selection)).identity; }
   catch { /* The execution's typed environment cause remains in the report. */ }
   const changed = before.digest !== after.digest || execution.inputs && execution.inputs.digest !== before.digest
     || execution.configurationHash && execution.configurationHash !== hash(config)
@@ -115,6 +142,7 @@ async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, executi
         : noCode ? "No hay comportamiento ejecutable medible en el alcance" : "C.R.A.P. medido dentro del límite; los demás controles de calidad son independientes",
     engine: measured.engine, limit: config.limits.crap,
     identity: hash({ inputs: before.digest, execution: execution.executionIdentity, engine: measured.engine, config }),
+    analysis: "current", selection: effectiveSelection,
     inputs: publicCheckpoint(before), execution, details, reference,
     summary: { measured: details.filter((row) => Number.isFinite(row.value)).length,
       rejected: details.filter((row) => row.status === "rejected").length,
@@ -124,9 +152,10 @@ async function measurePythonCrap(root, { checkpoint: suppliedCheckpoint, executi
 export async function runPythonCrapCli(args, io = process) {
   let result;
   try {
-    if (args.length !== 1) throw new IntegrationError("invalid_usage", "Use agentic-quality crap; alcance y límite provienen de config.json", 4);
-    result = await runPythonCrap(process.cwd());
-    await saveReport(process.cwd(), result);
+    const selection = parseTestSelection(args.slice(1));
+    const expectedContent = await reportContent(process.cwd());
+    result = await runPythonCrap(process.cwd(), { selection });
+    await saveReport(process.cwd(), result, expectedContent);
   } catch (error) {
     const typed = typeof error.code === "string" && Number.isInteger(error.exitCode);
     const { reference: _unsaved, ...partial } = result ?? {};
