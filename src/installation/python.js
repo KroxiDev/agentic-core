@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat } from "node:fs/promises";
+import { lstat, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { InstallationError } from "./config.js";
@@ -62,6 +62,9 @@ export async function inspectTools(root) {
 
 export async function installTools(root, interpreter, wheelRoot) {
   try {
+    // CPython creates lib64 -> lib on Linux even with --copies. Reserve a real
+    // directory in this fresh private venv so its owned tree contains no links.
+    if (process.platform === "linux") await mkdir(path.join(root, "lib64"), { recursive: true });
     await run(interpreter, ["-I", "-m", "venv", "--copies", root], path.dirname(root), 120000);
     await run(privatePython(root), ["-I", "-m", "pip", "--isolated", "install", "--no-index", "--no-deps", "--no-compile",
       ...Object.entries(PYTHON_TOOLS).map(([name, version]) => path.join(wheelRoot, `${name}-${version}-py3-none-any.whl`))], root, 120000);

@@ -109,6 +109,8 @@ def test_linux_resources():
         assert.equal(installed.status, "installed");
         assert.ok(installed.python.version[1] >= 11);
         assert.equal(installed.python.executable, project.python);
+        assert.ok((await lstat(path.join(project.root, ".agentic-core/tools/lib64"))).isDirectory());
+        assert.ok((await lstat(path.join(project.root, ".venv/lib64"))).isSymbolicLink());
       }
       const owner = async (root) => JSON.parse(await readFile(path.join(root, ".agentic-core/ownership.json"), "utf8"));
       assert.notEqual((await owner(a.root)).installationId, (await owner(b.root)).installationId);
