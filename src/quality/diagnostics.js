@@ -1,4 +1,5 @@
 import path from "node:path";
+import { lstat } from "node:fs/promises";
 import { readConfiguration } from "../installation/install.js";
 import { PYTHON_TOOLS } from "../installation/python.js";
 import { getVersion } from "../version.js";
@@ -7,6 +8,7 @@ import { captureProjectInputs, inputHash, matchesInput, publicCheckpoint } from 
 import { dependencyFingerprint, publicArgument, publicArguments } from "./project-copy.js";
 import { projectTestIdentity } from "./python-project.js";
 import { readActiveTask } from "./task-baseline.js";
+import { compareCodeUnits } from "./order.js";
 import { inspectVerificationEvidence, readVerificationReport, verificationExit, verificationReference } from "./python-verification.js";
 
 const fullReport = "node .agentic-core/runtime-launcher.mjs agentic-quality explain --json";
@@ -106,6 +108,22 @@ function publicFindings(report, checkpoint, limits) {
   return findings;
 }
 
+async function changedInputPaths(root, previous, inventory) {
+  const prior = new Map(previous.map((entry) => [entry.path, entry.sha256]));
+  const current = new Set(inventory.map((entry) => entry.path));
+  const changed = inventory.filter((entry) => prior.get(entry.path) !== entry.sha256).map((entry) => entry.path);
+  for (const file of prior.keys()) {
+    if (current.has(file)) continue;
+    // An existing input may now be private or excluded; only disclose actual deletions.
+    try { await lstat(path.join(root, file)); }
+    catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      changed.push(file);
+    }
+  }
+  return changed.sort(compareCodeUnits);
+}
+
 export async function explainQuality(root) {
   const result = { schemaVersion: 1, command: "explain", status: "NO_VERIFICADO", code: "evidence_missing",
     exitCode: 2, version: await getVersion(), requiredToolVersions: PYTHON_TOOLS, testsExecuted: false, causes: [], fullReport };
@@ -147,8 +165,7 @@ export async function explainQuality(root) {
     if (changes.size) {
       result.code = [...changes][0];
       result.causes = [...changes].map((code) => cause(code, "La evidencia guardada no corresponde a las condiciones actuales."));
-      const prior = new Map((report.tests.inputs?.inventory ?? []).map((entry) => [entry.path, entry.sha256]));
-      result.changedInputs = checkpoint.inventory.filter((entry) => prior.get(entry.path) !== entry.sha256).map((entry) => entry.path);
+      result.changedInputs = await changedInputPaths(root, report.tests.inputs?.inventory ?? [], checkpoint.inventory);
     } else {
       result.evidence.current = true;
       result.status = report.status;

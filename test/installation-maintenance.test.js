@@ -6,6 +6,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { initialize } from "../src/init.js";
+import { updatePythonProject } from "../src/installation/install.js";
+import { distributedRuntime } from "../src/runtime.js";
 import { createTestProject } from "./project-builder.js";
 import { hashDirectory } from "../src/transaction.js";
 
@@ -216,6 +218,35 @@ test("schema 2 migration maps compatible limits and preserves legacy runs", asyn
   assert.equal(config.limits.operation.workers, 2);
   assert.equal(await readFile(path.join(productRoot, "runs", "legacy.json"), "utf8"), "legacy state\n");
 });
+
+for (const change of ["edited", "deleted"]) {
+  test(`schema 2 migration preserves concurrently ${change} configuration`, async (t) => {
+    const root = await createTestProject(t);
+    await initialize(root);
+    const configPath = path.join(root, ".agentic-core/config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.quality.crapThreshold = 7;
+    await writeFile(configPath, JSON.stringify(config));
+    const runtime = await distributedRuntime();
+    let concurrentState;
+    // Pause at the existing runtime boundary, after conversion but before planning writes.
+    const runtimeSource = { then(resolve, reject) {
+      const edit = async () => {
+        if (change === "deleted") await rm(configPath);
+        else {
+          config.quality.crapThreshold = 5;
+          await writeFile(configPath, JSON.stringify(config));
+        }
+        concurrentState = await hashDirectory(root);
+        return runtime;
+      };
+      return edit().then(resolve, reject);
+    } };
+    await assert.rejects(updatePythonProject(root, { runtimeSource }),
+      { code: "transaction_conflict", exitCode: 5 });
+    assert.equal(await hashDirectory(root), concurrentState);
+  });
+}
 
 test("ambiguous legacy configuration is diagnosed before migration writes", async (t) => {
   const root = await createTestProject(t);

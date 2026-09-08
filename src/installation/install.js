@@ -953,7 +953,11 @@ async function migrateLegacyInstallation(loaded, options = {}) {
   const oldConfigPath = projectTarget(project, ".agentic-core/config.json", "migrar");
   if (await kind(oldConfigPath) !== "file") throw maintenanceError("invalid_configuration", "La configuracion legacy no existe como archivo");
   let oldConfig;
-  try { oldConfig = JSON.parse((await readFile(oldConfigPath)).toString("utf8")); }
+  let oldConfigContent;
+  try {
+    oldConfigContent = await readFile(oldConfigPath);
+    oldConfig = JSON.parse(oldConfigContent.toString("utf8"));
+  }
   catch (error) { throw maintenanceError("invalid_configuration", "La configuracion legacy no es JSON valido", 4, error); }
   const python = await resolvePython(project);
   const migrated = migrateLegacyConfiguration(oldConfig, python);
@@ -969,9 +973,10 @@ async function migrateLegacyInstallation(loaded, options = {}) {
   for (const resource of resources) {
     const state = await inspectState(projectTarget(project, resource.path, "migrar"));
     if (resource.path === ".agentic-core/config.json") {
-      if (state.kind === "file") addFileOperation(operations, actions, project, resource.path, state, resource.content, "write_resource");
-      else if (state.kind === "missing") addFileOperation(operations, actions, project, resource.path, state, resource.content, "write_resource");
-      else blockers.push(unsafeResource(resource.path));
+      if (state.kind !== "file" || !state.content.equals(oldConfigContent)) {
+        throw maintenanceError("transaction_conflict", "La configuración cambió durante la migración; se conservó el estado nuevo. Repita la operación.", 5);
+      }
+      addFileOperation(operations, actions, project, resource.path, state, resource.content, "write_resource");
       continue;
     }
     const recorded = recordedResources.get(resource.path);
