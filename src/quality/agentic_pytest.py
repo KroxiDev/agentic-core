@@ -23,9 +23,15 @@ _state = {
 _coverage = None
 _phases = {"setup": 0, "call": 0, "teardown": 0}
 _failures = []
+_executed = []
 _collection_errors = 0
 _root = Path(_settings["projectRoot"]).resolve()
 _measured = {str((_root / file).resolve()): file for file in _settings["measured"]}
+_selected_tests = (_settings.get("selection") or {}).get("tests")
+
+
+def _test_paths():
+    return [str(_root / file) for file in _selected_tests]
 
 
 def _public_path(value):
@@ -52,6 +58,10 @@ _save()
 def pytest_load_initial_conftests(early_config, parser, args):
     global _coverage
     _save()
+    if _selected_tests:
+        # Preserve the command, root/config and options; load selected conftests
+        # before collection without guessing positional arguments in wrappers.
+        early_config.known_args_namespace.file_or_dir = _test_paths()
     if (os.path.normcase(os.path.abspath(sys.executable)) !=
             os.path.normcase(os.path.abspath(_settings["interpreter"]))):
         _state["error"] = "interpreter_mismatch"
@@ -76,6 +86,23 @@ def pytest_load_initial_conftests(early_config, parser, args):
         _state["error"] = "coverage_unavailable"
         _save()
         pytest.exit("No se pudo iniciar la cobertura privada", returncode=2)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config):
+    if _selected_tests:
+        if config.option.pyargs:
+            raise pytest.UsageError("La selección por rutas no admite --pyargs")
+        config.args = _test_paths()
+        _state["selection"] = {"tests": _selected_tests}
+        _save()
+
+
+def _selected_path(file):
+    return not _selected_tests or any(
+        selected == "." or file == selected or file.startswith(selected + "/")
+        for selected in _selected_tests
+    )
 
 
 def pytest_runtest_logreport(report):
@@ -110,6 +137,9 @@ def _failure_kind(error):
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
+    if report.when == "call":
+        _executed.append({"id": hashlib.sha256(report.nodeid.encode("utf-8")).hexdigest(),
+                          "path": _public_path(item.path), "outcome": report.outcome})
     if report.failed:
         # Parameter values and traceback text can contain private runtime data.
         _failures.append({
@@ -131,7 +161,11 @@ def pytest_collection_finish(session):
     _public_path(session.config.rootpath)
     _public_path(session.config.inipath)
     for item in session.items:
-        _public_path(item.path)
+        file = _public_path(item.path)
+        if file is not None and not _selected_path(file):
+            _state["error"] = "test_selection_changed"
+            _save()
+            pytest.exit("La colección amplió la selección explícita de tests", returncode=2)
     if _state.get("error") == "isolation_unsupported":
         _save()
         pytest.exit("La suite usa rutas ajenas a la copia controlada", returncode=2)
@@ -148,6 +182,7 @@ def pytest_sessionfinish(session, exitstatus):
         "collected": session.testscollected,
         "failed": session.testsfailed,
         "phases": dict(_phases),
+        "executed": list(_executed),
         "failures": list(_failures),
         "collectionErrors": _collection_errors,
         "root": _public_path(session.config.rootpath),

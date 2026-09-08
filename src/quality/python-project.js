@@ -8,11 +8,12 @@ import { IntegrationError, commandBudget, executeCommand } from "./command.js";
 import { formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { captureProjectInputs, publicCheckpoint } from "./project-inputs.js";
 import { createProjectCopy, dependencyFingerprint, isolatedCommand, publicArgument, publicArguments, verifyProjectIntegrity } from "./project-copy.js";
+import { normalizeSelection, parseTestSelection, resolveSelection } from "./selection.js";
 
 const plugin = fileURLToPath(new URL("agentic_pytest.py", import.meta.url));
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-export async function projectTestIdentity(root, config) {
+export async function projectTestIdentity(root, config, selection) {
   const unit = config.integration.python;
   const env = { ...process.env, ...unit.environment, PYTHONDONTWRITEBYTECODE: "1" };
   const context = { cwd: path.resolve(root, unit.cwd), env, budget: commandBudget(config.limits.operation) };
@@ -22,7 +23,8 @@ export async function projectTestIdentity(root, config) {
   const dependencies = await dependencyFingerprint(protectedPaths);
   const environment = Object.fromEntries(Object.entries(env).filter(([key]) => key !== "AGENTIC_CORE_OUTPUT").sort());
   return { context, python, protectedPaths, dependencies,
-    identity: digest({ configuration: config, dependencies, environment, node: process.version, platform: process.platform, arch: process.arch }) };
+    identity: digest({ configuration: config, dependencies, environment, node: process.version, platform: process.platform, arch: process.arch,
+      ...(selection ? { selection } : {}) }) };
 }
 
 async function inspectInterpreter(executable, context) {
@@ -63,6 +65,7 @@ export async function observeProjectTests(root, config, python, context, tempora
     projectRoot: context.copyRoot,
     measured: context.checkpoint.inventory.filter((entry) => entry.kind === "measured_code").map((entry) => entry.path),
     inputs: context.checkpoint.inventory.map((entry) => entry.path),
+    selection: context.checkpoint.selection,
   }));
   const env = { ...context.env,
     AGENTIC_CORE_PYTHON: python.executable, AGENTIC_CORE_TEST_SETTINGS: settingsPath,
@@ -99,6 +102,9 @@ export async function observeProjectTests(root, config, python, context, tempora
     return { ...common, code: execution.exitCode === 4 ? "pytest_invalid_usage" : "pytest_internal_error",
       exitCode: execution.exitCode === 4 ? 4 : 5, message: "Pytest no pudo completar su inicialización" };
   }
+  if (context.checkpoint.selection?.tests && JSON.stringify(observed.selection?.tests) !== JSON.stringify(context.checkpoint.selection.tests)) {
+    return { ...common, code: "test_selection_unobserved", exitCode: 2, message: "Pytest no confirmó la selección explícita; no se puede aprobar" };
+  }
   const pytestCodes = { 1: ["tests_failed", 1], 2: ["pytest_interrupted", 6], 3: ["pytest_internal_error", 5], 4: ["pytest_invalid_usage", 4], 5: ["no_tests_collected", 2] };
   if (suite.exitCode !== 0) {
     if (suite.exitCode === 1 && suite.failures?.some((failure) => failure.kind === "dependency_error")) {
@@ -121,25 +127,33 @@ export async function observeProjectTests(root, config, python, context, tempora
   if (observed.coverage.status !== "measured" || !Object.keys(observed.coverage.files ?? {}).length) {
     return { ...common, code: "coverage_failed", exitCode: 2, message: "La suite terminó, pero falta cobertura atribuible; no se asume cobertura cero" };
   }
+  if (context.checkpoint.selection) {
+    const unmeasuredFiles = context.checkpoint.inventory.filter((entry) => entry.kind === "measured_code"
+      && !Object.hasOwn(observed.coverage.files, entry.path)).map((entry) => entry.path);
+    if (unmeasuredFiles.length) return { ...common, coverage: { ...observed.coverage, unmeasuredFiles },
+      code: "coverage_incomplete", exitCode: 2, message: "Parte del código seleccionado no tiene cobertura atribuible; se conserva la medición parcial" };
+  }
   return { ...common, code: "tests_passed", exitCode: 0, message: "Suite aprobada y cobertura obtenida; esto no acredita los demás controles de calidad" };
 }
 
-export async function runProjectTests(projectRoot) {
-  try { return await withCurrentTaskBudget(projectRoot, () => executeProjectTests(projectRoot)); }
+export async function runProjectTests(projectRoot, selection) {
+  try { return await withCurrentTaskBudget(projectRoot, () => executeProjectTests(projectRoot, normalizeSelection(selection))); }
   catch (error) { return { command: "test", status: "NO_VERIFICADO", ...integrationFailure(error) }; }
 }
 
-async function executeProjectTests(projectRoot) {
+async function executeProjectTests(projectRoot, selection) {
   let effectiveCommand;
   let config;
+  let effectiveSelection;
   try {
     config = await readConfiguration(path.join(projectRoot, ".agentic-core/config.json"));
     const unit = config.integration.python;
-    const checkpoint = await captureProjectInputs(projectRoot, unit);
+    const checkpoint = await captureProjectInputs(projectRoot, unit, selection);
+    effectiveSelection = resolveSelection(checkpoint, unit, selection);
     const inputEvidence = publicCheckpoint(checkpoint);
     if (checkpoint.issues.length) return { command: "test", status: "NO_VERIFICADO", code: "input_checkpoint_incompatible",
-      message: "Los inputs no admiten una copia fiel: revise enlaces, tipos, cambios o código excluido por privacidad", exitCode: 2, inputs: inputEvidence };
-    const { context, python, protectedPaths, dependencies, identity } = await projectTestIdentity(projectRoot, config);
+      message: "Los inputs no admiten una copia fiel: revise enlaces, tipos, cambios o código excluido por privacidad", exitCode: 2, inputs: inputEvidence, selection: effectiveSelection };
+    const { context, python, protectedPaths, dependencies, identity } = await projectTestIdentity(projectRoot, config, selection);
     const copy = await createProjectCopy(checkpoint);
     let result;
     try {
@@ -164,13 +178,13 @@ async function executeProjectTests(projectRoot) {
     }
     finally { await copy.dispose(); }
     return { command: "test", ...result, status: result.exitCode === 0 ? "approved" : result.exitCode === 1 ? "rejected" : "NO_VERIFICADO",
-      inputs: inputEvidence, configurationHash: digest(config), executionIdentity: identity, limits: config.limits.operation };
+      inputs: inputEvidence, selection: effectiveSelection, configurationHash: digest(config), executionIdentity: identity, limits: config.limits.operation };
   } catch (error) {
     effectiveCommand = error.effectiveCommand;
     const typed = error instanceof IntegrationError || (typeof error.code === "string" && Number.isInteger(error.exitCode));
     return { command: "test", status: "NO_VERIFICADO", code: typed ? error.code : "integration_internal_error",
       message: typed ? error.message : "Fallo interno de integración; no se obtuvo evidencia completa",
-      exitCode: typed ? error.exitCode : 5, effectiveCommand,
+      exitCode: typed ? error.exitCode : 5, effectiveCommand, selection: effectiveSelection ?? selection,
       suite: { status: "NO_VERIFICADO" }, coverage: { status: "unknown", files: null }, limits: config?.limits.operation };
   }
 }
@@ -185,6 +199,7 @@ function integrationFailure(error) {
 
 export async function runPythonQualityCli(args, io = process) {
   if (args.length === 0 || (args.length === 1 && ["--help", "-h"].includes(args[0]))) {
+    io.stdout.write("Tests por invocación: agentic-quality test [--scope <archivo|carpeta>]... [--test <archivo|carpeta>]... Rutas relativas a la raíz del proyecto, sin globs ni funciones. Selecciones transitorias: código medido y tests por separado, sin editar configuración ni ejecutar DRY, C.R.A.P. o mutación. Sin opciones conserva el alcance y comando del proyecto.\n");
     io.stdout.write("Diagnóstico: agentic-quality explain [--json] explica integración, inputs, límites y vigencia sin ejecutar pruebas ni reparar evidencia. La salida habitual es breve también por pipes; AGENTIC_CORE_OUTPUT=json conserva la automatización.\n");
     io.stdout.write("Exportación por petición: agentic-quality export --output <archivo.md> guarda el último veredicto con evidencia resumida; export --stdout prepara Markdown para una entrega autorizada del host, sin confirmar publicación remota. No vuelve a ejecutar pruebas ni activa al Documentador.\n");
     io.stdout.write("Mutación: agentic-quality mutate ejecuta mutantes de mutate4py con el comando autoritativo en una copia controlada. Informe: .agentic-core/quality/mutation.json. La aprobación Full requiere además selección y agregación.\n");
@@ -193,11 +208,17 @@ export async function runPythonQualityCli(args, io = process) {
     io.stdout.write("Uso: agentic-quality test\nEjecuta el comando pytest de config.json en una copia controlada y devuelve cobertura con rutas públicas relativas.\nTareas Light, Normal y Full: prepare --task <id> --mode <modo> --objective <referencia> [--repair-test <ruta>]; baseline consulta el inicio y verify exige la suite final, DRY y C.R.A.P. aprobados. Full exige además Mutation Testing incremental concluyente. Directo no requiere preparación.\nCódigos: 0 suite aprobada o baseline válido (puede contener fallos); 1 fallo; 2 aislamiento, integridad, entorno, cobertura o calidad no verificados; 4 uso inválido; 5 fallo interno; 6 timeout o interrupción.\n");
     return 0;
   }
-  const result = args.length === 1 && args[0] === "test" ? await runProjectTests(process.cwd())
+  let result;
+  try { result = args[0] === "test" ? await runProjectTests(process.cwd(), parseTestSelection(args.slice(1)))
     : { command: args[0], status: "NO_VERIFICADO", code: ["prepare", "verify", "scan", "crap", "mutate", "mutation"].includes(args[0]) ? "quality_pending" : "invalid_usage",
       message: "Use agentic-quality test, dry o los comandos de tarea prepare, baseline y verify",
       exitCode: ["prepare", "verify", "scan", "crap", "mutate", "mutation"].includes(args[0]) ? 2 : 4 };
+  } catch (error) { result = { command: args[0], status: "NO_VERIFICADO", ...integrationFailure(error) }; }
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
-  else io.stdout.write(`${result.status} [${result.code}] ${result.message}\n${formatBudget(result.budget)}`);
+  else {
+    io.stdout.write(`${result.status} [${result.code}] ${result.message}\n${formatBudget(result.budget)}`);
+    if (result.selection) io.stdout.write(`Código: ${result.selection.measuredFiles?.join(", ") || "sin medición"}\nTests: ${result.selection.tests?.join(", ") ?? "comando del proyecto"}\n`);
+    if (result.suite?.executed) io.stdout.write(`Tests ejecutados: ${result.suite.executed.length}; archivos: ${[...new Set(result.suite.executed.map((entry) => entry.path))].join(", ")}\n`);
+  }
   return result.exitCode;
 }

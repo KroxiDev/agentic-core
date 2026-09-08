@@ -73,13 +73,14 @@ async function gitIgnored(root, enabled) {
 
 // Shared checkpoint for execution, diagnosis and the subsequent quality adapters.
 // Only entries carry bytes (in memory); public evidence is the sanitized inventory.
-export async function captureProjectInputs(projectRoot, unit) {
+export async function captureProjectInputs(projectRoot, unit, selection) {
   const root = await realpath(projectRoot);
   const ignored = await gitIgnored(root, unit.inputs.respectGitIgnore !== false);
   const entries = [];
   const exclusions = { private: 0, generated: 0, configured: 0, git: 0, unselected: 0 };
   const issues = [];
-  const selected = (file) => [...unit.scope, ...unit.inputs.include, ...unit.inputs.includeIgnored ?? []].some((p) => matchesInput(file, p));
+  const selected = (file) => [...unit.scope, ...unit.inputs.include, ...unit.inputs.includeIgnored ?? [],
+    ...selection?.code ?? [], ...selection?.tests ?? []].some((p) => matchesInput(file, p));
   const visit = async (directory) => {
     for (const name of (await readdir(directory)).sort(compareCodeUnits)) {
       const absolute = path.join(directory, name);
@@ -113,7 +114,7 @@ export async function captureProjectInputs(projectRoot, unit) {
         if (/\.py$/iu.test(file)) issues.push({ code: "private_executable_input", phase: "checkpoint" });
         continue;
       }
-      const measured = file.endsWith(".py") && !testInput.test(file) && unit.scope.some((p) => matchesInput(file, p));
+      const measured = file.endsWith(".py") && !testInput.test(file) && (selection?.code ?? unit.scope).some((p) => matchesInput(file, p));
       entries.push({ path: file, kind: measured ? "measured_code" : "test_input", mode: info.mode & 0o777,
         sha256: inputHash(content), content });
     }
@@ -121,8 +122,8 @@ export async function captureProjectInputs(projectRoot, unit) {
   try { await visit(root); }
   catch { throw new IntegrationError("input_capture_failed", "No se pudo obtener un checkpoint íntegro de los inputs", 2); }
   const inventory = entries.map(({ content: _content, ...entry }) => entry);
-  return { root, entries, inventory, exclusions, issues,
-    digest: inputHash(JSON.stringify({ inventory, scope: unit.scope, inputs: unit.inputs })),
+  return { root, entries, inventory, exclusions, issues, selection,
+    digest: inputHash(JSON.stringify({ inventory, scope: unit.scope, inputs: unit.inputs, ...(selection ? { selection } : {}) })),
     policy: { respectGitIgnore: unit.inputs.respectGitIgnore !== false,
       precedence: ["mandatory", "exclude", "includeIgnored", "git", "scope/include"],
       explanation: "Solo el código Python del alcance se mide. Los demás inputs seleccionados permiten ejecutar las pruebas. Las exclusiones privadas son obligatorias y no se publican sus rutas." } };
