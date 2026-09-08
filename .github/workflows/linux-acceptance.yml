@@ -1,0 +1,71 @@
+name: Aceptación Linux
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/linux-acceptance.yml'
+      - 'scripts/linux-acceptance.mjs'
+      - 'src/**'
+      - 'bin/**'
+      - 'test/**'
+      - 'third_party/**'
+      - 'package*.json'
+      - 'adapters/**'
+      - 'skills/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  installed-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Preparar dependencias independientes
+        run: |
+          python -m pip install pytest==8.3.5 py==1.11.0 pygments==2.19.2
+          npm ci
+          mkdir -p .codex-temp/linux-artifacts
+      - name: Integridad de herramientas después de trasladarlas
+        run: node --test --test-reporter=tap test/python-tools.test.js | tee .codex-temp/linux-artifacts/tools.tap
+      - name: Recorrido del paquete instalado
+        run: node --test --test-reporter=tap scripts/linux-acceptance.mjs | tee .codex-temp/linux-artifacts/installed.tap
+      - name: Regresiones puntuales de calidad, exportación y diagnóstico
+        run: |
+          node --test --test-reporter=tap --test-concurrency=1 \
+            --test-name-pattern='installed mutate4py executes the authoritative corpus|installed export is explicit|installed diagnosis explains current|incremental C.R.A.P. rejects new code|incremental DRY requires a concrete resolution' \
+            test/quality-python-mutation.test.js test/quality-result-export.test.js test/quality-diagnostics.test.js test/quality-python-verification.test.js \
+            | tee .codex-temp/linux-artifacts/regressions.tap
+          grep -qx '# tests 5' .codex-temp/linux-artifacts/regressions.tap
+          grep -qx '# pass 5' .codex-temp/linux-artifacts/regressions.tap
+          grep -qx '# skipped 0' .codex-temp/linux-artifacts/regressions.tap
+      - name: Sintaxis y formato
+        run: |
+          npm run check
+          git diff --check
+      - name: Conservar evidencia de esta ejecución
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .codex-temp/linux-artifacts/
+          if-no-files-found: error
+          retention-days: 7
