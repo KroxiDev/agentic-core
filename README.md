@@ -132,9 +132,17 @@ El adaptador conserva el cálculo de complejidad y C.R.A.P. del motor; delimita 
 
 ### DRY de Python
 
-`node .agentic-core/runtime-launcher.mjs agentic-quality dry` ejecuta `dry4python==0.1.0` en un directorio temporal con el código Python medido por la política de inputs vigente. Usa `limits.dry.similarity`, `limits.dry.minLines` y `limits.dry.minNodes`; el motor recibe los tres límites y sus candidatos se normalizan con ubicación, rango de líneas, símbolo, score y nodos. El código de salida del motor no decide por sí solo si hay duplicaciones ni si la comprobación está aprobada.
+`dry` analiza el estado actual sin preparar una tarea ni ejecutar tests, C.R.A.P., mutación o roles. Acepta `--scope` repetible para archivos o carpetas, con las mismas reglas de selección transitoria de `test`: rutas relativas a la raíz, sin globs ni escapes y sujetas a la política de inputs. No acepta `--test`. Sin opciones usa el alcance configurado.
 
-El resultado queda en `.agentic-core/quality/dry.json`. Un candidato nuevo o modificado produce `rejected` hasta que se corrija o se registre una justificación concreta en `.agentic-core/quality/dry-resolutions.json`, asociada al ID del candidato, al digest de inputs y a la configuración actual:
+```powershell
+node .agentic-core/runtime-launcher.mjs agentic-quality dry --scope src/orders --scope src/shared.py
+```
+
+Ejecuta `dry4python==0.1.0` en un directorio temporal con los archivos Python medidos. Usa `limits.dry.similarity`, `limits.dry.minLines` y `limits.dry.minNodes`; sus candidatos se normalizan con ubicación, rango de líneas, símbolo, score y nodos. Solo busca coincidencias entre esos archivos: no atribuye resultados al resto del proyecto. El código de salida del motor no decide por sí solo si hay duplicaciones ni si la comprobación está aprobada.
+
+El JSON (`AGENTIC_CORE_OUTPUT=json`) declara `purpose: current_analysis`, `implementationApproval: false`, `selection.measuredFiles`, tests no ejecutados y limitaciones. Aunque exista una tarea activa, muestra todos los candidatos actuales sin descontar deuda preexistente ni medir el baseline. No repara archivos ni cambia configuración; conserva los informes de los demás controles y el veredicto de tarea. Cambiar la selección cambia la identidad DRY e impide aplicar resoluciones de un alcance incompatible, sin borrar esas resoluciones.
+
+El resultado queda en `.agentic-core/quality/dry.json`. Un candidato actual sin resolución produce `rejected` (salida 1); sin candidatos pendientes, `approved` (salida 0) describe únicamente este análisis, nunca la aprobación de una implementación. Las resoluciones concretas se reconocen sin ocultar los candidatos resueltos. Se registran en `.agentic-core/quality/dry-resolutions.json`, asociadas al ID del candidato, al digest de inputs y a la configuración actual:
 
 ```json
 {
@@ -153,7 +161,7 @@ El resultado queda en `.agentic-core/quality/dry.json`. Un candidato nuevo o mod
 
 La razón debe mencionar ambos símbolos del candidato y un fragmento de sus cuerpos ofrecido en `bodyReferences`, con al menos ocho palabras distintas y sin fórmulas de aprobación vacía como «ok», «están bien» o «no necesitan cambios». Ese contrato exige una explicación ligada al código; el Tester sigue siendo responsable de valorar el diseño. Una razón que no cumple ese contrato o una resolución retirada durante la medición no aprueba el candidato.
 
-Cuando existe `active-task.json`, la detección analiza sus fuentes originales con los límites actuales. Compara las identidades de los cuerpos duplicados, sin atribuir a la tarea cambios ajenos en el archivo o traslados identificables; cada par previo puede justificar un único par actual, de modo que nuevas copias siguen pendientes. Cambiar un límite renueva la detección sin reemplazar el baseline. Si cambian los inputs o los límites, las resoluciones previas quedan obsoletas.
+El motor interno utilizado por la verificación de tareas conserva su comparación con las fuentes originales de `active-task.json`: compara identidades de cuerpos, reconoce traslados y no oculta nuevas copias. Esa comparación no se aplica a la CLI de análisis actual; su adaptación a controles opcionales corresponde a T7 (#90). Si cambian los inputs o los límites, las resoluciones previas quedan obsoletas.
 
 Los pragmas `dry4python: ignore` e `ignore-file` se neutralizan únicamente en las copias de análisis. El motor fijado mide funciones y métodos: el código procedural de módulo o clase que alcanza los tamaños mínimos configurados queda `NO_VERIFICADO`, con ubicaciones y los candidatos válidos de las demás partes. También se conservan resultados parciales ante errores sintácticos, sin publicar el texto fuente en el diagnóstico. `NO_VERIFICADO` diferencia errores de herramienta, integridad o medición de `no_duplicates`; esta comprobación tampoco emite `QUALITY_OK`.
 
