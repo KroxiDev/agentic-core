@@ -17,7 +17,9 @@ try {
   if (seam === "agentic-core") {
     process.exitCode = await runMaintenanceCli(args);
   } else if (seam === "agentic-quality") {
-    if (args[0] === "explain") {
+    if (args.length === 1 && args[0] === "--version") {
+      process.exitCode = await runQualityCli(args);
+    } else if (args[0] === "explain") {
       process.exitCode = await runExplainCli(args.slice(1));
     } else if (await isPythonInstallation(process.cwd())) {
       process.exitCode = await (args[0] === "export" ? runResultExportCli(args)

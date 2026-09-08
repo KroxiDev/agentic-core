@@ -11,8 +11,14 @@
 
 | Plataforma | Nivel de soporte |
 | --- | --- |
-| Windows 10 | Oficial |
-| Windows 11 | Oficial |
+| Windows 10/11 | Plataforma inicial; aceptación integrada y límites en `acceptance/windows-codex.md`. |
+| Linux | Pendiente de ejecución independiente en #59; no verificado. |
+
+La entrega de #58 queda lista para usar y testear resultados reales. La aceptación
+nativa completa de Codex sigue `NO_VERIFICADO`: el usuario realizará después
+Directo, Light, Normal y Full, incluidos perfiles, correcciones, espera y Documentador
+final. El checklist de `acceptance/windows-codex.md` conserva esos pendientes;
+el cierre de #58 no certifica los 26 escenarios de #38.
 
 ## Desarrollo desde un clon
 
@@ -51,8 +57,9 @@ Sin selección explícita, una terminal interactiva pregunta proveedor y lenguaj
 
 El payload se valida por origen declarado, inventario y hashes, independientemente del bootstrap. El runtime queda en `.agentic-core/runtime` y las herramientas en `.agentic-core/tools`, sin modificar dependencias, manifests, lockfiles ni el entorno del consumidor. Los wheels y licencias viajan con el paquete; instalar no requiere red. La operación rechaza conflictos y revierte sus escrituras ante fallos.
 
-La integración añade únicamente un bloque de Codex a `AGENTS.md` y los recursos de Light
-(`.codex/agents/agentic-production.toml`, `.codex/agents/agentic-tests.toml`,
+La integración añade un bloque de Codex a `AGENTS.md` y los perfiles de los modos actuales
+(`.codex/agents/agentic-read.toml`, `.codex/agents/agentic-production.toml`,
+`.codex/agents/agentic-tests.toml`, `.codex/agents/agentic-docs.toml`,
 `.agents/skills/orquestar/SKILL.md` y `.agents/skills/agentic-tdd/SKILL.md`). Conserva el
 contenido previo y la política canónica en `.agentic-core/golden-rules.md`. El ignore local
 excluye `/quality/` y `/tools/`.
@@ -256,12 +263,14 @@ La coordinación mantiene como máximo un agente activo. Los roles reciben alcan
 | Modo | Coordinación semántica | Gate determinista |
 | --- | --- | --- |
 | `light` | Implementador → Tester; TDD cuando corresponda; hasta dos rondas adicionales compartidas. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
-| `normal` | Plan breve; Planificador solo ante una decisión HOW material; Implementador; Verificador independiente; máximo dos ciclos de corrección; Documentador solo si corresponde. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
-| `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; máximo dos ciclos de corrección; Documentador solo si corresponde. | `prepare` antes de editar y `verify` antes de completar; C.R.A.P. y Mutation Testing completos y vigentes. |
+| `normal` | Planificador → Implementador → Tester → Evaluador; hasta dos rondas adicionales compartidas; Documentador solo por petición y siempre al final. | `prepare` antes de editar y `verify` antes de completar; tests, DRY y C.R.A.P.; Mutation Testing `NO_APLICA`. |
+| `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; hasta dos rondas adicionales compartidas; Documentador solo por petición y siempre al final. | `prepare` antes de editar y `verify` antes de completar; tests, DRY, C.R.A.P. y Mutation Testing completos y vigentes. |
 
-El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Especificador, Verificador, Evaluador y Arquitecto solo leen producción y evidencia y no la modifican. El Documentador modifica únicamente documentación.
+Documentador agrega un rol únicamente por petición expresa, después del cierre técnico y sus correcciones, siempre como último subagente.
 
-Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Esta entrega instala y valida únicamente el recorrido nativo de Codex; Claude queda fuera del alcance de Light.
+El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Especificador, Planificador, Evaluador y Arquitecto solo leen producción y evidencia y no la modifican. El Documentador modifica únicamente documentación.
+
+Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Esta entrega instala únicamente Codex y Python/pytest; otros proveedores, lenguajes y runners están fuera de alcance. La aceptación nativa requiere observaciones del host, registradas por separado en `acceptance/windows-codex.md`.
 
 Cada instancia recibe propósito, responsabilidades, alcance, entradas, criterios de devolución, Golden Rules y contexto pertinente. En Light, las entregas entre Implementador y Tester son prosa breve con objetivo, alcance, aceptación, decisiones condicionantes, resultado, defectos y referencias; no incluyen la conversación completa, reportes completos ni JSON. Un rechazo agrupa los defectos y crea una nueva instancia de Implementador seguida de un nuevo Tester, con dos rondas adicionales como límite compartido. El Tester puede corregir tests dentro del alcance, pero nunca producción.
 
@@ -269,7 +278,7 @@ La máquina semántica de Light tiene una ronda inicial `Implementador → Teste
 
 Las esperas atienden resultados, intervenciones del usuario y vencimientos mediante eventos disponibles en Codex, renovables hasta 60 segundos. Tras 5 minutos sin novedades se comprueba activamente el estado; la lentitud o el silencio por sí solos no reinician trabajo. No se dejan daemon, hooks nuevos ni promesas posteriores a la sesión, y el presupuesto acumulado cuenta comprobaciones, no tiempo de agentes.
 
-El mapping rol → perfil vive en la skill canónica instalada `.agents/skills/orquestar/SKILL.md`; las instalaciones nuevas distribuyen `agentic-read`, `agentic-production`, `agentic-tests` y la dependencia directa `agentic-tdd`. Especificador, Planificador, Evaluador y Arquitecto usan instrucciones estables del perfil de lectura. Si alguno diverge, `doctor` informa la divergencia y `agentic-core update` puede restaurarlo transaccionalmente con ownership demostrado.
+El mapping rol → perfil vive en la skill canónica instalada `.agents/skills/orquestar/SKILL.md`; las instalaciones nuevas distribuyen `agentic-read`, `agentic-production`, `agentic-tests`, `agentic-docs` y la dependencia directa `agentic-tdd`. Especificador, Planificador, Evaluador y Arquitecto usan instrucciones estables del perfil de lectura. Si alguno diverge, `doctor` informa la divergencia y `agentic-core update` puede restaurarlo transaccionalmente con ownership demostrado.
 
 ### Límites de permisos
 
@@ -367,7 +376,9 @@ Las sesiones se conservan como evidencia local y permanecen ignoradas por Git. U
 
 ## Comandos independientes de calidad
 
-Los análisis independientes se conservan y no requieren una sesión:
+Esta sección conserva exclusivamente la referencia del esquema 2, fuera del soporte funcional de la entrega actual. No use `--target` ni `scan` en una instalación Python de esquema 3: allí se usan `test`, `dry`, `crap`, `mutate`, `prepare --task`, `baseline`, `verify`, `explain` y `export`, con el alcance de `config.json` descrito arriba. La presencia de código legado en el payload permite mantenimiento y no anuncia soporte adicional ni historial de tareas.
+
+Los análisis independientes anteriores se conservan y no requieren una sesión:
 
 ### `agentic-quality scan`
 

@@ -1,7 +1,7 @@
 <!-- AGENTIC_CORE_START -->
 ## agentic-core
 
-Follow the canonical policy in `.agentic-core/golden-rules.md`.
+Lee y aplica la política canónica de este clon en `golden-rules.md`.
 
 If a request begins with `Orquesta`, `/orquestar`, or `$orquestar`, load and follow `.agents/skills/orquestar/SKILL.md`. `Orquesta` without a mode means `normal`.
 
