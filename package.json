@@ -15,6 +15,7 @@
     "bin/",
     "dist/runtime/",
     "README.md",
+    "adapters/windows-acceptance.md",
     "THIRD_PARTY_NOTICES.md",
     "LICENSE"
   ],

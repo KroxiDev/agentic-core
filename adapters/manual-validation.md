@@ -34,15 +34,16 @@ En Codex:
 | Host | Modo | Roles esperados | Gate esperado |
 | --- | --- | --- | --- |
 | Codex | `light` | Implementador → Tester; dos roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
-| Codex | `normal` | Planificador solo con HOW material → Implementador → Verificador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
-| Codex | `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; seis roles base y hasta dos rondas adicionales compartidas; Documentador solo si corresponde | `prepare` + tests/DRY/C.R.A.P./Mutation completos en `verify`; `QUALITY_OK` vigente. |
+| Codex | `normal` | Planificador → Implementador → Tester → Evaluador; cuatro roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
+| Codex | `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; seis roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P./Mutation completos en `verify`; `QUALITY_OK` vigente. |
+
+Documentador se agrega solo por petición expresa, después de las correcciones y siempre al final. Registrar las ejecuciones y pendientes en la [matriz de aceptación integrada](windows-acceptance.md); esta tabla es un procedimiento, no evidencia nativa.
 
 Las frases de permisos son contratos semánticos:
 
 - Planificador y Evaluador: “solo lee producción; no la modifiques”.
 - Implementador: “modifica únicamente producción y tests dentro del alcance”.
 - Tester: “solo lee producción; puede corregir únicamente tests dentro del alcance; nunca modifica producción”.
-- Verificador: “solo lee producción; no modifica tests ni documentación”.
 - Documentador: “solo documentación”.
 - Especificador: “delimita alcance y aceptación; identifica ambigüedades materiales; solo lectura”.
 - Arquitecto: “revisa arquitectura y Golden Rules; ejecuta o solicita Mutation Testing; solo lectura”.

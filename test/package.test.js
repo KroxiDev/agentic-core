@@ -16,6 +16,7 @@ const expectedInventory = [
   "LICENSE",
   "README.md",
   "THIRD_PARTY_NOTICES.md",
+  "adapters/windows-acceptance.md",
   "bin/agentic-core.js",
   "bin/agentic-quality.js",
   "bin/runtime-loader.js",
