@@ -99,9 +99,12 @@ test("installed mutate4py executes the authoritative corpus and distinguishes fi
   const { root } = await corpus(t);
   const before = await hashDirectory(path.join(root, "work dir"));
   const result = parse(await runPythonProject(root, ["mutate"]));
-  assert.equal(result.code, "mutation_execution_complete", JSON.stringify(result));
+  assert.equal(result.code, "mutation_inconclusive", JSON.stringify(result));
   assert.equal(result.complete, true);
-  assert.deepEqual(result.summary, { killed: 1, survived: 1, uncovered: 1, timeout: 1, error: 1, interrupted: 0 });
+  assert.deepEqual(Object.fromEntries(["killed", "survived", "uncovered", "timeout", "error", "interrupted"]
+    .map((status) => [status, result.summary[status]])), { killed: 1, survived: 1, uncovered: 1, timeout: 1, error: 1, interrupted: 0 });
+  assert.equal(result.score.inconclusive, 2);
+  assert.equal(result.score.denominator, 5);
   assert.equal(result.status, "NO_VERIFICADO");
   assert.equal(result.engine.version, "0.1.4");
   assert.ok(result.details.every((item) => Number.isInteger(item.endLine)
@@ -114,7 +117,7 @@ test("installed mutate4py executes the authoritative corpus and distinguishes fi
   assert.ok(result.budget.commands >= 6);
   assert.equal(result.details.filter((item) => item.restored).length, 4);
   assert.deepEqual(await hashDirectory(path.join(root, "work dir")), before);
-  assert.equal(JSON.parse(await readFile(path.join(root, result.reference), "utf8")).result.code, result.code);
+  assert.equal(JSON.parse(await readFile(path.join(root, result.reference), "utf8")).result.assessment.code, result.code);
   assert.doesNotMatch(JSON.stringify(result), /QUALITY_OK|synthetic missing dependency/u);
 });
 

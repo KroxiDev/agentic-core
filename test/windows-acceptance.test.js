@@ -109,9 +109,9 @@ test("Windows distributed package completes the independent consumer lifecycle",
 
     const mutationRun = await run(["mutate"]);
     const mutation = JSON.parse(mutationRun.stdout);
-    assert.equal(mutationRun.code, 2, mutationRun.stdout);
-    assert.equal(mutation.code, "mutation_execution_complete");
-    assert.equal(mutation.status, "NO_VERIFICADO", "mutate individual no emite aprobación agregada");
+    assert.equal(mutationRun.code, 0, mutationRun.stdout);
+    assert.equal(mutation.code, "mutation_score_approved");
+    assert.equal(mutation.status, "approved", "mutate agrega el score del estado actual");
     assert.equal(mutation.engine.version, "0.1.4");
     assert.equal(mutation.complete, true);
     assert.equal(mutation.summary.killed, 2);
@@ -122,7 +122,7 @@ test("Windows distributed package completes the independent consumer lifecycle",
 
     const mutationCalls = await count();
     const repeatedMutation = await run(["mutate"]);
-    assert.equal(repeatedMutation.code, 2);
+    assert.equal(repeatedMutation.code, 0);
     assert.equal(JSON.parse(repeatedMutation.stdout).reused, true);
     assert.equal(await count(), mutationCalls);
     assert.deepEqual(await readdir(root), initialFiles, "sin exportación automática");

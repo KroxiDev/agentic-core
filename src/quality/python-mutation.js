@@ -10,6 +10,8 @@ import { readActiveTask } from "./task-baseline.js";
 import { captureProjectInputs, inputHash, publicCheckpoint } from "./project-inputs.js";
 import { createProjectCopy, dependencyFingerprint, isolatedCommand, verifyProjectIntegrity } from "./project-copy.js";
 import { observeProjectTests, projectTestIdentity } from "./python-project.js";
+import { normalizeSelection, parseTestSelection, resolveSelection } from "./selection.js";
+import { aggregateMutation } from "./mutation-aggregation.js";
 
 const adapter = fileURLToPath(new URL("agentic_mutation.py", import.meta.url));
 const reference = ".agentic-core/quality/mutation.json";
@@ -213,6 +215,19 @@ export function selectIncrementalMutants(task, checkpoint, mutants) {
   };
 }
 
+function selectCurrentMutants(checkpoint, mutants) {
+  const required = [];
+  const equivalent = [];
+  for (const mutant of mutants) {
+    const proof = staticEquivalent(mutant);
+    if (proof) equivalent.push({ ...publicMutant(mutant, "equivalent"), evidence: proof });
+    else required.push(publicMutant(mutant, "required"));
+  }
+  return { version: "current-state-v1", method: "current_state",
+    current: { inputs: checkpoint.digest }, required, preexisting: [], equivalent,
+    counts: { generated: mutants.length, required: required.length, preexisting: 0, equivalent: equivalent.length } };
+}
+
 function classify(result) {
   if (result.code === "tests_passed") return "survived";
   if (result.code === "tests_failed" && result.suite?.failures?.length
@@ -336,7 +351,8 @@ async function executeMutants(root, config, checkpoint, identity, report, select
     report.timeout = { referenceMs, multiplier: 3, minimumMs: 1000,
       requestedMs: Math.min(config.limits.operation.commandTimeoutMs, Math.max(1000, referenceMs * 3)) };
     const mutants = await generate(root, checkpoint, copy, config.limits.operation.commandTimeoutMs);
-    const selection = selectionTask ? selectIncrementalMutants(selectionTask, checkpoint, mutants) : null;
+    const selection = selectionTask ? selectIncrementalMutants(selectionTask, checkpoint, mutants)
+      : report.analysis === "current_state" ? selectCurrentMutants(checkpoint, mutants) : null;
     const selectedIds = selection ? new Set(selection.required.map((mutant) => mutant.id)) : null;
     const selectedMutants = selectedIds ? mutants.filter((mutant) => selectedIds.has(mutant.id)) : mutants;
     if (selection) report.selection = selection;
@@ -366,7 +382,7 @@ async function executeMutants(root, config, checkpoint, identity, report, select
       catch (error) { outcome = { code: error.code ?? "mutation_execution_failed" }; }
       if (outcome.code === "pytest_interrupted" && outcome.suite?.collectionErrors > 0) outcome.code = "pytest_collection_failed";
       const item = { ...detail, status: classify(outcome), code: outcome.code, durationMs: Math.ceil(performance.now() - testStarted),
-        timeoutMs: outcome.effectiveCommand?.timeoutMs, suite: outcome.suite };
+        timeoutMs: outcome.effectiveCommand?.timeoutMs, effectiveCommand: outcome.effectiveCommand, suite: outcome.suite };
       report.details.push(item);
       if (outcome.code === "termination_failed") {
         terminationConfirmed = false;
@@ -404,25 +420,29 @@ async function executeMutants(root, config, checkpoint, identity, report, select
   }
 }
 
-export async function runPythonMutation(root, { incremental = false } = {}) {
+export async function runPythonMutation(root, { incremental = false, selection, standalone = false } = {}) {
   try {
+    selection = normalizeSelection(selection);
+    if (incremental && (standalone || selection)) throw new IntegrationError("invalid_selection", "La selección transitoria no admite comparación incremental en esta interfaz", 4);
+    standalone ||= Boolean(selection);
     return await withCurrentTaskBudget(root, async () => {
       const stored = await storedReport(root);
       const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
       const active = await readActiveTask(root);
       const task = active?.task;
-      const checkpoint = await captureProjectInputs(root, config.integration.python);
+      const checkpoint = await captureProjectInputs(root, config.integration.python, selection);
+      const scopeSelection = resolveSelection(checkpoint, config.integration.python, selection);
       if (checkpoint.issues.length) throw fail("input_checkpoint_incompatible", "Los inputs no admiten una copia fiel y privada");
-      const identity = await projectTestIdentity(root, config);
+      const identity = await projectTestIdentity(root, config, selection);
       identity.protectedPaths.push(path.join(root, ".agentic-core/tools"));
       identity.dependencies = await dependencyFingerprint(identity.protectedPaths);
       const selectionTask = incremental && task ? task : null;
       const execution = { configurationHash: hash(config), executionIdentity: identity.identity,
         qualityTools: await dependencyFingerprint([path.join(root, ".agentic-core/tools")]) };
       const evidenceIdentity = hash({ task, inputs: publicCheckpoint(checkpoint), execution: identity.identity,
-        dependencies: identity.dependencies, mutation: { selection: selectionTask ? selectionVersion : "complete",
+        dependencies: identity.dependencies, mutation: { selection: selectionTask ? selectionVersion : standalone ? "current-state-v1" : "complete",
           threshold: config.limits.mutationScore, configuration: hash(config) } });
-      if (task && stored.result?.evidenceIdentity === evidenceIdentity && stored.result.complete
+      if ((task || standalone) && stored.result?.evidenceIdentity === evidenceIdentity && stored.result.complete
         && stored.result.code === "mutation_execution_complete" && stored.result.resources?.cleanup === "completed"
         && stored.result.execution?.configurationHash === execution.configurationHash
         && stored.result.execution?.executionIdentity === execution.executionIdentity
@@ -430,14 +450,17 @@ export async function runPythonMutation(root, { incremental = false } = {}) {
         && stored.result.integrity?.status === "preserved"
         && (!selectionTask || stored.result.selection?.version === selectionVersion)
         && stored.result.details.every((item) => ["killed", "survived", "uncovered"].includes(item.status))) {
-        return { ...stored.result, reused: true, budget: budgetSummary() };
+        const reused = { ...stored.result, reused: true, budget: budgetSummary() };
+        return standalone ? aggregateMutation(reused, config.limits.mutationScore) : reused;
       }
       const report = { command: "mutation", schemaVersion: 1, reference, status: "NO_VERIFICADO", exitCode: 2,
         code: "mutation_execution_incomplete", message: selectionTask
           ? "Ejecución incremental de mutantes para el veredicto Full"
-          : "Ejecución individual de mutantes; el comando no emite un score de aprobación",
+          : standalone ? "Análisis de mutación del estado actual, sin comparación incremental"
+            : "Ejecución individual de mutantes; el comando no emite un score de aprobación",
         engine: { name: "mutate4py", version: PYTHON_TOOLS.mutate4py }, taskId: task?.id ?? null, evidenceIdentity,
-        inputs: publicCheckpoint(checkpoint), execution, complete: false, details: [], reused: false };
+        inputs: publicCheckpoint(checkpoint), execution, scopeSelection,
+        ...(standalone ? { analysis: "current_state" } : {}), complete: false, details: [], reused: false };
       try { await executeMutants(root, config, checkpoint, identity, report, selectionTask); }
       catch (error) {
         report.code = error.code ?? "mutation_internal_error";
@@ -447,10 +470,14 @@ export async function runPythonMutation(root, { incremental = false } = {}) {
       report.summary = Object.fromEntries(["killed", "survived", "uncovered", "timeout", "error", "interrupted"].map((status) => [status, report.details.filter((item) => item.status === status).length]));
       report.pending = Math.max(0, (report.selected ?? report.generated ?? 0) - report.details.length);
       report.budget = budgetSummary();
+      if (standalone) {
+        const { status, code, message, exitCode, score } = aggregateMutation(report, config.limits.mutationScore);
+        report.assessment = { status, code, message, exitCode, score };
+      }
       if ((await readActiveTask(root))?.sha256 !== active?.sha256) throw fail("task_metadata_conflict", "La tarea cambió durante la mutación; se conserva el informe previo");
       await writeTransaction(root, [{ path: path.join(root, reference), expectedContent: stored.content,
         content: Buffer.from(`${JSON.stringify({ kind: "mutation", sha256: hash(report), result: report })}\n`) }]);
-      return report;
+      return standalone ? aggregateMutation(report, config.limits.mutationScore) : report;
     });
   } catch (error) {
     return { command: "mutation", status: "NO_VERIFICADO", code: error.code ?? "mutation_internal_error", exitCode: error.exitCode ?? 5,
@@ -459,11 +486,17 @@ export async function runPythonMutation(root, { incremental = false } = {}) {
 }
 
 export async function runPythonMutationCli(args, io = process) {
-  const result = args.length === 1 ? await runPythonMutation(process.cwd())
-    : { status: "NO_VERIFICADO", code: "invalid_usage", exitCode: 4, message: "Use agentic-quality mutate; el alcance se declara en config.json" };
+  let result;
+  try {
+    result = await runPythonMutation(process.cwd(), { standalone: true, selection: parseTestSelection(args.slice(1)) });
+  } catch (error) {
+    result = { command: "mutation", status: "NO_VERIFICADO", code: error.code ?? "invalid_usage",
+      exitCode: error.exitCode ?? 4, message: error.message };
+  }
   if (io.env?.AGENTIC_CORE_OUTPUT === "json") io.stdout.write(`${JSON.stringify(result)}\n`);
   else {
     io.stdout.write(`${result.status} [${result.code}] ${result.message}\n`);
+    if (result.scopeSelection) io.stdout.write(`Código: ${result.scopeSelection.measuredFiles.join(", ")}\nTests: ${result.scopeSelection.tests?.join(", ") ?? "comando del proyecto"}\nAnálisis: estado actual, sin comparación incremental\n`);
     if (result.summary) io.stdout.write(`Mutantes: ${result.summary.killed} detectados; ${result.summary.survived} supervivientes; ${result.summary.uncovered} sin cobertura; ${result.summary.timeout} timeouts; ${result.summary.error} errores; ${result.summary.interrupted} interrumpidos; ${result.pending} pendientes\n`);
     for (const item of (result.details ?? []).filter((detail) => ["error", "timeout", "interrupted"].includes(detail.status)).slice(0, 3)) {
       io.stdout.write(`${item.file}:${item.line} [${item.code}]\n`);

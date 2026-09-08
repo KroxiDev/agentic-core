@@ -176,16 +176,18 @@ Light y Normal pueden cerrar con `approved` y `QUALITY_OK`; sus controles de mut
 ### Ejecución individual de mutantes Python
 
 ```powershell
-node .agentic-core/runtime-launcher.mjs agentic-quality mutate
+node .agentic-core/runtime-launcher.mjs agentic-quality mutate --scope src/payments.py --test tests/test_payments.py
 ```
 
-`mutation` es alias de `mutate`. En esquema 3 se usa el alcance de `config.json`, sin `--target`. mutate4py 0.1.4 genera las modificaciones y el adaptador ejecuta el comando autoritativo completo, incluidos wrapper, argumentos, entorno, configuración y preparación. No instala herramientas en el entorno del proyecto.
+`mutation` es alias de `mutate`. En esquema 3 acepta `--scope` y `--test` repetibles con las mismas restricciones de `test`; sin opciones usa el alcance y comando configurados, sin `--target`. La selección es transitoria. Funciona sin preparar una tarea ni iniciar roles y no ejecuta DRY o C.R.A.P. mutate4py 0.1.4 genera las modificaciones y cada referencia y mutante ejecuta los tests seleccionados mediante el intérprete, wrapper, argumentos y entorno del proyecto. No instala herramientas en el entorno del proyecto.
 
-El informe `.agentic-core/quality/mutation.json` distingue `killed`, `survived`, `uncovered` conocido, `timeout`, `error` e `interrupted`. Solo los fallos atribuidos a las pruebas cuentan como detección. Los tres últimos estados son inconclusos; no se calcula un score ni se emite `QUALITY_OK` desde esta ejecución individual. `verify` Full reutiliza este motor con selección incremental contra las fuentes del baseline, agrega el score configurado y conserva el inventario completo en `verification.json`.
+La salida agrega el score del **estado actual** (`analysis: current_state`), no una comparación incremental ni un cierre `QUALITY_OK`. Usa `limits.mutationScore`: devuelve `approved` (0), `rejected` (1), `NO_APLICA` sin score si no hay mutantes exigibles (0), o `NO_VERIFICADO` ante evidencia insuficiente (2; los fallos operativos conservan su código). El denominador incluye supervivientes y mutantes sin cobertura; excluye equivalentes solo con prueba estática. Compara el valor exacto y redondea únicamente su presentación.
+
+El informe `.agentic-core/quality/mutation.json` conserva la ejecución y su `assessment`, con estado y score. `scopeSelection` identifica código y tests; `selection` identifica los mutantes. La referencia (`baseline`) es la ejecución sin mutar de ese mismo estado. La referencia y cada mutante ejecutado registran el comando y los tests observados. Distingue `killed`, `survived`, `uncovered` conocido, `timeout`, `error` e `interrupted`; solo fallos atribuibles a pruebas cuentan como detección. Timeout, error, interrupción o pendientes impiden aprobar y conservan resultados parciales.
 
 Una referencia aprobada determina el timeout solicitado por mutante: tres veces su duración, con un mínimo de 1000 ms, limitado por `limits.operation.commandTimeoutMs` y el presupuesto restante de la tarea. El informe muestra el límite efectivo y conserva resultados parciales cuando se agota el presupuesto. La ejecución usa un worker, dentro del máximo configurado, y reutiliza una copia para todos los archivos; verifica inputs, permisos y dependencias, restaura cada mutación y retira los outputs entre pruebas. Nunca restaura archivos del proyecto original sobre cambios ajenos.
 
-Con tarea activa se reutiliza un informe completo y concluyente únicamente si sus inputs, comando, configuración y entorno siguen vigentes. Los resultados inconclusos se vuelven a comprobar dentro del presupuesto restante. Una tarea distinta retira solo informes internos íntegros y propios.
+Sin tarea aplica el presupuesto por invocación; con tarea activa conserva su presupuesto compartido. Solo reutiliza informes completos y concluyentes cuya selección de código y tests, inputs, comando, configuración, entorno y tarea sigan vigentes; conserva informes ajenos o divergentes. Las llamadas internas existentes de Full mantienen su selección incremental y agregación. La selección autónoma por cambios de una tarea y su efecto en el cierre corresponden a #92 (T9).
 
 ## Actualización
 
