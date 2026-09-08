@@ -71,6 +71,17 @@ especificacion, a Especificador. Todos los rechazos comparten como maximo dos ro
 adicionales y el cierre exige \`agentic-quality verify\` completo y vigente, incluido
 Mutation Testing de #50.
 
+### Documentación solicitada
+
+Ante una petición explícita como “y documéntalo” o “usa un documentador”, aplica el
+cierre documental de \`.agents/skills/orquestar/SKILL.md\` con el perfil \`agentic-docs\`.
+En Light, Normal y Full agrega un rol después de completar el flujo técnico y sus
+correcciones: Documentador es siempre el último subagente. El coordinador comprueba
+su entrega y comunica el resultado sin otro Evaluador.
+El tamaño del cambio, las sugerencias de roles, las reglas generales de documentación
+y la exportación de calidad no activan este rol. Sin petición, solo puede recomendarse.
+Una solicitud ordinaria cuyo objetivo es documentar sigue siendo trabajo Directo.
+
 ### Guardar o publicar el resultado de calidad
 
 Solo ante una petición expresa de guardar o publicar el resultado, usa
@@ -99,6 +110,7 @@ const CORE_RESOURCE_PATHS = [
   ".agentic-core/.gitignore",
 ];
 const COORDINATION_RESOURCE_SPECS = [
+  { source: "adapters/codex/agents/agentic-docs.toml", target: ".codex/agents/agentic-docs.toml" },
   { source: "adapters/codex/agents/agentic-read.toml", target: ".codex/agents/agentic-read.toml" },
   { source: "adapters/codex/agents/agentic-production.toml", target: ".codex/agents/agentic-production.toml" },
   { source: "adapters/codex/agents/agentic-tests.toml", target: ".codex/agents/agentic-tests.toml" },
@@ -109,7 +121,8 @@ const SCHEMA3_RESOURCE_PATHS = [
   ...CORE_RESOURCE_PATHS,
   ...COORDINATION_RESOURCE_SPECS.map(({ target }) => target),
 ];
-const LIGHT_RESOURCE_PATHS = SCHEMA3_RESOURCE_PATHS.filter((resource) => resource !== ".codex/agents/agentic-read.toml");
+const TECHNICAL_RESOURCE_PATHS = SCHEMA3_RESOURCE_PATHS.filter((resource) => resource !== ".codex/agents/agentic-docs.toml");
+const LIGHT_RESOURCE_PATHS = TECHNICAL_RESOURCE_PATHS.filter((resource) => resource !== ".codex/agents/agentic-read.toml");
 const OWNED_DIRECTORIES = [QUALITY_DIRECTORY, ".codex/agents", ".agents/skills/orquestar", ".agents/skills/agentic-tdd"];
 const LEGACY_CONFIG_VERSIONS = new Set([1, 2]);
 const LEGACY_RESOURCE_PATHS = new Set([
@@ -329,7 +342,10 @@ function validateOwnershipDocument(owner, action = "actualizar") {
   const lightSchema3 = owner.configVersion === CONFIG_VERSION
     && owner.resources.length === LIGHT_RESOURCE_PATHS.length
     && owner.resources.every((resource, index) => resource.path === LIGHT_RESOURCE_PATHS[index]);
-  if (owner.configVersion === CONFIG_VERSION && !originalSchema3 && !lightSchema3
+  const technicalSchema3 = owner.configVersion === CONFIG_VERSION
+    && owner.resources.length === TECHNICAL_RESOURCE_PATHS.length
+    && owner.resources.every((resource, index) => resource.path === TECHNICAL_RESOURCE_PATHS[index]);
+  if (owner.configVersion === CONFIG_VERSION && !originalSchema3 && !lightSchema3 && !technicalSchema3
     && (owner.resources.length !== SCHEMA3_RESOURCE_PATHS.length
       || owner.resources.some((resource, index) => resource.path !== SCHEMA3_RESOURCE_PATHS[index]))) {
     ownershipFailure(`No se puede ${action}: el esquema 3 reclama recursos fuera de sus limites`);

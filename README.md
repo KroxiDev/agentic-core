@@ -228,7 +228,12 @@ Por ejemplo, `Corrige esta función` y `Orquesta Directo corrige esta función` 
 
 Una solicitud ordinaria de documentación también es un encargo directo. La ausencia de
 Documentador no añade documentación a otras tareas; puede recomendarse al cerrar el encargo.
-En un flujo orquestado, Documentador requiere petición expresa y actúa siempre al final.
+En un flujo orquestado, “y documéntalo”, “usa un documentador” o una petición equivalente
+activa el perfil instalado `agentic-docs`. Actúa después del Tester en Light, del Evaluador
+en Normal o del Arquitecto en Full, una vez cerradas las correcciones y sobre el resultado
+técnico definitivo. Agrega un rol a la secuencia base y es siempre el último subagente.
+El coordinador comprueba su entrega sin otro Evaluador. El tamaño del cambio, sugerencias
+de otros roles, reglas generales de documentación y exportar calidad no lo activan.
 
 Light ejecuta Implementador → Tester con los perfiles instalados, un contador compartido y hasta
 dos rondas adicionales; Normal conserva su secuencia documentada y Full ejecuta sus seis roles con el mismo límite.

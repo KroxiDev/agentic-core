@@ -14,6 +14,7 @@ const repository = path.resolve(import.meta.dirname, "..");
 const binary = path.join(repository, "bin", "agentic-core.js");
 const selection = ["--provider", "codex", "--language", "python"];
 const lightResources = [
+  ["adapters/codex/agents/agentic-docs.toml", ".codex/agents/agentic-docs.toml"],
   ["adapters/codex/agents/agentic-read.toml", ".codex/agents/agentic-read.toml"],
   ["adapters/codex/agents/agentic-production.toml", ".codex/agents/agentic-production.toml"],
   ["adapters/codex/agents/agentic-tests.toml", ".codex/agents/agentic-tests.toml"],
@@ -37,6 +38,38 @@ async function run(root, args) {
     if (typeof error.code !== "number") throw error;
     return { stdout: error.stdout, stderr: error.stderr, code: error.code };
   }
+}
+
+for (const collision of [false, true]) {
+  test(`technical schema 3 gains Documentador and preserves ${collision ? "foreign docs profile" : "existing tools"}`, async (t) => {
+    const root = await createTestProject(t);
+    assert.equal((await run(root, ["init", root, ...selection])).code, 0);
+    const ownerPath = path.join(root, ".agentic-core/ownership.json");
+    const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+    const target = ".codex/agents/agentic-docs.toml";
+    owner.resources = owner.resources.filter((resource) => resource.path !== target);
+    await writeFile(ownerPath, JSON.stringify(owner));
+    await rm(path.join(root, target));
+    if (collision) await writeFile(path.join(root, target), "foreign docs profile\n");
+    const before = await hashDirectory(root);
+    const preview = await run(root, ["update", root, "--dry-run"]);
+    assert.equal(preview.code, collision ? 4 : 0, preview.stderr);
+    assert.equal(await hashDirectory(root), before);
+    const result = await run(root, ["update", root, ...(collision ? ["--force"] : [])]);
+    assert.equal(result.code, collision ? 4 : 0, result.stderr);
+    if (collision) {
+      assert.equal(JSON.parse(preview.stdout).plan.error.code, "unowned_resource");
+      assert.equal(await hashDirectory(root), before);
+    } else {
+      assert.deepEqual(await readFile(path.join(root, target)),
+        await readFile(path.join(repository, "adapters/codex/agents/agentic-docs.toml")));
+      const updated = JSON.parse(await readFile(ownerPath, "utf8"));
+      assert.equal(updated.tools.treeSha256, owner.tools.treeSha256);
+      assert.equal((await run(root, ["doctor", root])).code, 0);
+      const repeated = await run(root, ["update", root, "--dry-run"]);
+      assert.equal(JSON.parse(repeated.stdout).plan.actions.length, 0);
+    }
+  });
 }
 
 test("schema 3 update previews, preserves configuration and replaces only with force", async (t) => {
@@ -272,7 +305,7 @@ for (const collision of [false, true]) {
         assert.deepEqual(await readFile(path.join(root, target)), await readFile(path.join(repository, source)));
       }
       const nextOwner = JSON.parse(await readFile(ownerPath, "utf8"));
-      assert.equal(nextOwner.resources.length, 10);
+      assert.equal(nextOwner.resources.length, 11);
       assert.equal(nextOwner.tools.treeSha256, owner.tools.treeSha256);
       assert.match(await readFile(path.join(root, "AGENTS.md"), "utf8"), /^# User instructions/);
       assert.equal((await run(root, ["update", root, "--dry-run"])).code, 0);
@@ -288,7 +321,9 @@ for (const collision of [false, true]) {
     const ownerPath = path.join(root, ".agentic-core/ownership.json");
     const owner = JSON.parse(await readFile(ownerPath, "utf8"));
     const target = ".codex/agents/agentic-read.toml";
-    owner.resources = owner.resources.filter((resource) => resource.path !== target);
+    owner.resources = owner.resources.filter((resource) => resource.path !== target
+      && resource.path !== ".codex/agents/agentic-docs.toml");
+    await rm(path.join(root, ".codex/agents/agentic-docs.toml"));
     await writeFile(ownerPath, JSON.stringify(owner));
     await rm(path.join(root, target));
     if (collision) await writeFile(path.join(root, target), "foreign read profile\n");

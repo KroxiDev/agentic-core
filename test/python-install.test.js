@@ -14,6 +14,7 @@ const repository = path.resolve(import.meta.dirname, "..");
 const binary = path.join(repository, "bin/agentic-core.js");
 const selection = ["--provider", "codex", "--language", "python"];
 const lightResources = [
+  ["adapters/codex/agents/agentic-docs.toml", ".codex/agents/agentic-docs.toml"],
   ["adapters/codex/agents/agentic-read.toml", ".codex/agents/agentic-read.toml"],
   ["adapters/codex/agents/agentic-production.toml", ".codex/agents/agentic-production.toml"],
   ["adapters/codex/agents/agentic-tests.toml", ".codex/agents/agentic-tests.toml"],

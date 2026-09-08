@@ -70,6 +70,29 @@ La evidencia nativa debe cubrir una tarea aprobada y devoluciones reproducibles:
 4. Provocar por separado rechazos del Arquitecto por tests o mutación, por diseño o plan, y por alcance o especificación. Confirmar el retorno a Implementador, Planificador o Especificador, respectivamente, y que todos consumen el mismo máximo de dos rondas adicionales.
 5. Confirmar que el cierre exige el resultado completo de Mutation Testing de #50, tests/DRY/C.R.A.P., evaluación satisfactoria, revisión arquitectónica sin pendientes y `QUALITY_OK` vigente. La evidencia de los archivos instalados no sustituye esta ejecución real.
 
+## Documentador explícito y final (#54)
+
+Ejecutar en Codex real con una instalación del paquete actual y proyectos temporales
+independientes. Estas instrucciones son un procedimiento, no evidencia de ejecución.
+
+1. Repetir un cambio acotado en Light, Normal y Full con “y documéntalo” o “usa un
+   documentador”. Registrar petición, identificadores y orden de instancias, perfil
+   efectivo `agentic-docs`, handoff y archivos modificados. Distinguir carga nativa
+   del TOML de la entrega semántica íntegra de `developer_instructions`.
+2. Provocar una corrección que cambie la solución inicial: comprobar que no hay
+   Documentador mientras quedan defectos y que describe solo la solución final.
+   Vincular el recibo vigente al estado recibido por el Documentador.
+3. Comprobar Tester → Documentador en Light, Evaluador → Documentador en Normal y
+   Arquitecto → Documentador en Full, después de completar todas las correcciones.
+   Confirmar que solo cambió documentación autorizada y que el coordinador comprueba
+   la entrega sin otro Evaluador ni subagente posterior.
+4. Repetir sin petición documental, incluyendo una sugerencia de otro rol y una
+   exportación de calidad solicitada: ninguna debe activar Documentador. Comprobar
+   también una solicitud ordinaria de documentación atendida en Directo.
+5. Registrar por separado pruebas de instalación, observaciones del host y límites:
+   no presentar instrucciones o tests de texto como prueba de despacho, orden o
+   aislamiento técnico. Un recorrido no ejecutado queda NO_VERIFICADO.
+
 ## QualitySession
 
 Usar un proyecto de prueba con código, tests, configuración del runner, manifest, lockfile, un archivo relevante no trackeado, `.env`, un cache y un archivo fuera del scope.
