@@ -1,5 +1,10 @@
 # Especificación arquitectónica de agentic-core 0.2.0
 
+Documento histórico de la arquitectura del esquema 2. Para los modos activos,
+los controles a pedido y las tareas Python del esquema 3 prevalecen la
+[referencia vigente](docs/technical-reference.md) y la [especificación #83](https://github.com/KroxiDev/agentic-core/issues/83).
+Full está deprecado y se conserva en [archive/full](docs/full-archive.md).
+
 ## Problema
 
 La coordinación anterior mezclaba decisiones semánticas de agentes con un reducer determinista, estado de runs, briefs y handoffs JSON, validación de protocolo y afirmaciones de permisos efectivos que los hosts no siempre podían demostrar. A la vez, tests, cobertura, C.R.A.P. y Mutation Testing sí necesitan ejecución, persistencia e integridad deterministas.

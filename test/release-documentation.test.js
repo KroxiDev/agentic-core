@@ -154,7 +154,7 @@ function compareCodeUnits(left, right) {
 let cliDocumentationPromise;
 function loadCliDocumentation() {
   cliDocumentationPromise ??= Promise.all([
-    read("README.md"),
+    read("docs/technical-reference.md"),
     runBinary("bin/agentic-core.js", ["--help"]),
     runBinary("bin/agentic-quality.js", ["--help"]),
   ]).then(([readme, maintenanceHelp, qualityHelp]) => {
@@ -219,7 +219,7 @@ Literal coverage replaced here remains traceable as follows:
 - changelog wording -> Unreleased/Incompatible structure and stable CLI identifiers.
 */
 
-test("every public CLI command has a README section whose option schema matches --help", async () => {
+test("every public CLI command has a technical-reference section whose option schema matches --help", async () => {
   const { readme, schemas } = await loadCliDocumentation();
   assertDocumentedCliContracts(readme, schemas);
 });
@@ -264,7 +264,7 @@ test("rewriting editorial prose does not change the documented CLI contracts", a
   assertDocumentedCliContracts(paraphraseEditorialProse(readme), schemas);
 });
 
-test("the README keeps lifecycle, support, and runtime commitments as structure", async () => {
+test("the technical reference keeps lifecycle, support, and runtime commitments as structure", async () => {
   const { readme } = await loadCliDocumentation();
   const topLevelHeadings = markdownSections(readme)
     .filter(({ level }) => level === 2)
@@ -306,7 +306,7 @@ test("the README keeps lifecycle, support, and runtime commitments as structure"
   )));
 });
 
-test("the README keeps coordination and QualitySession contracts as identifiers and schemas", async () => {
+test("the technical reference keeps coordination and QualitySession contracts as identifiers and schemas", async () => {
   const { readme } = await loadCliDocumentation();
   const activation = headingSection(readme, "Activación explícita y modo directo");
   assertIncludesEach(inlineCode(activation.body), [
@@ -375,7 +375,7 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
   );
 });
 
-test("the README keeps retired and maintained interfaces as explicit identifier sets", async () => {
+test("the technical reference keeps retired and maintained interfaces as explicit identifier sets", async () => {
   const { readme } = await loadCliDocumentation();
   const migration = headingSection(readme, "Migración desde el runtime determinista anterior");
   assertIncludesEach(inlineCode(migration.body), [
