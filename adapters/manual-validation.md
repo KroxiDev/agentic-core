@@ -16,7 +16,7 @@ Esta lista complementa las suites automatizadas. No convierte instrucciones de a
 1. Construir el runtime final con `npm.cmd run build:runtime` y comprobar `runtime-manifest.json`, hashes por archivo y `treeSha256` antes de instalarlo en fixtures limpias.
 2. Instalar los mismos bytes en una fixture Codex, al menos una con espacios en la ruta.
 3. Confirmar que `AGENTS.md` contiene routing positivo para `Orquesta`, `/orquestar` y `$orquestar`, que `Orquesta` sin modo usa `normal` y que una solicitud sin activador continúa directa.
-4. Confirmar que los recursos instalados conservan `agentic-production`, `agentic-tests`, `orquestar` y `agentic-tdd`, y que las responsabilidades de Tester no amplían la escritura a producción.
+4. Confirmar que los recursos instalados conservan `agentic-read`, `agentic-production`, `agentic-tests`, `orquestar` y `agentic-tdd`, y que las responsabilidades de Tester no amplían la escritura a producción.
 5. No registrar secretos, `.env`, datos personales ni contenido irrelevante en la evidencia.
 
 ## Routing visible
@@ -35,7 +35,7 @@ En Codex:
 | --- | --- | --- | --- |
 | Codex | `light` | Implementador → Tester; dos roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
 | Codex | `normal` | Planificador solo con HOW material → Implementador → Verificador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P. en `verify`; Mutation `not_applicable`. |
-| Codex | `full` | Planificador → Implementador → Evaluador; Documentador solo si corresponde | `prepare` + tests/C.R.A.P./Mutation en `verify`. |
+| Codex | `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; seis roles base y hasta dos rondas adicionales compartidas; Documentador solo si corresponde | `prepare` + tests/DRY/C.R.A.P./Mutation completos en `verify`; `QUALITY_OK` vigente. |
 
 Las frases de permisos son contratos semánticos:
 
@@ -44,6 +44,8 @@ Las frases de permisos son contratos semánticos:
 - Tester: “solo lee producción; puede corregir únicamente tests dentro del alcance; nunca modifica producción”.
 - Verificador: “solo lee producción; no modifica tests ni documentación”.
 - Documentador: “solo documentación”.
+- Especificador: “delimita alcance y aceptación; identifica ambigüedades materiales; solo lectura”.
+- Arquitecto: “revisa arquitectura y Golden Rules; ejecuta o solicita Mutation Testing; solo lectura”.
 
 No atribuir a estas frases aislamiento técnico, permisos efectivos ni resistencia frente a un proceso adversarial.
 
@@ -57,6 +59,16 @@ La evidencia nativa debe demostrar el comportamiento del host, no solo la presen
 4. Ejecutar una segunda fixture donde Tester rechace por un defecto reproducible. Confirmar que el coordinador agrupa las causas, crea una nueva instancia de Implementador y después un nuevo Tester, comparte el contador y conserva las causas pendientes al agotarlo.
 5. Observar una espera por resultado, intervención o vencimiento. Renovar como máximo 60 segundos por espera, comprobar activamente tras 5 minutos sin novedades y confirmar que la lentitud o el silencio no reinician trabajo.
 6. Etiquetar cada artefacto como evidencia nativa, simulación controlada o restricción semántica no demostrada técnicamente. La interpretación del agente no reemplaza el recibo de calidad.
+
+## Full real en Codex
+
+La evidencia nativa debe cubrir una tarea aprobada y devoluciones reproducibles:
+
+1. Ejecutar `Orquesta Full` o `/orquestar full` y observar Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto, con `agentic-read` asignado explícitamente a Especificador, Planificador, Evaluador y Arquitecto.
+2. Registrar capacidades efectivas, handoffs breves, objetivo, alcance, aceptación, baseline, presupuesto y contador compartido, sin registrar secretos ni conversaciones completas.
+3. Provocar un rechazo del Evaluador y confirmar una nueva instancia de Especificador con requisitos pendientes; después, comprobar que recorre la secuencia pertinente y conserva el contexto original.
+4. Provocar por separado rechazos del Arquitecto por tests o mutación, por diseño o plan, y por alcance o especificación. Confirmar el retorno a Implementador, Planificador o Especificador, respectivamente, y que todos consumen el mismo máximo de dos rondas adicionales.
+5. Confirmar que el cierre exige el resultado completo de Mutation Testing de #50, tests/DRY/C.R.A.P., evaluación satisfactoria, revisión arquitectónica sin pendientes y `QUALITY_OK` vigente. La evidencia de los archivos instalados no sustituye esta ejecución real.
 
 ## QualitySession
 

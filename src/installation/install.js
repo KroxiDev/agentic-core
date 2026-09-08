@@ -58,8 +58,18 @@ El cierre requiere evaluacion satisfactoria y calidad vigente de la misma tarea.
 
 ### Full
 
-Full continua pendiente de integracion en #53. No se despachan roles genericos
-ni se usa el flujo legacy del esquema 2 como sustituto.
+Full esta habilitado para Codex con seis roles base:
+Especificador -> Planificador -> Implementador -> Tester -> Evaluador -> Arquitecto.
+Full lee y sigue \`.agents/skills/orquestar/SKILL.md\` antes de despachar.
+Especificador y Arquitecto usan el perfil estable \`agentic-read\` con instrucciones
+especificas para sus responsabilidades.
+Especificador delimita el alcance y la aceptacion; Arquitecto revisa arquitectura,
+Golden Rules y Mutation Testing con evidencia concreta. Un rechazo del Evaluador vuelve
+a un nuevo Especificador con requisitos pendientes. Un rechazo del Arquitecto por tests
+o mutacion vuelve a Implementador; por diseno o plan, a Planificador; por alcance o
+especificacion, a Especificador. Todos los rechazos comparten como maximo dos rondas
+adicionales y el cierre exige \`agentic-quality verify\` completo y vigente, incluido
+Mutation Testing de #50.
 
 ### Guardar o publicar el resultado de calidad
 
