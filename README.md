@@ -1,6 +1,6 @@
 # agentic-core 0.2.0
 
-`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. Directo aplica las Golden Rules y las comprobaciones pertinentes del encargo. La verificación de Light y Normal exige tests funcionales y solo controles explícitos y puede emitir `QUALITY_OK`; Full integra Mutation Testing incremental. Las secciones de coordinación y `QualitySession` del esquema 2 se conservan para instalaciones anteriores.
+`@kroxidev/agentic-core` instala una capa autónoma para Codex y una unidad Python 3.11+ (esquema 3), con runtime y herramientas privados. Directo aplica las Golden Rules y las comprobaciones pertinentes del encargo. La verificación de Light y Normal exige tests funcionales y solo controles explícitos y puede emitir `QUALITY_OK`; Full está deprecado; su contenido se conserva en [archive/full](docs/full-archive.md). Las secciones de coordinación y `QualitySession` del esquema 2 se conservan para instalaciones anteriores.
 
 ## Requisitos y soporte
 
@@ -16,7 +16,7 @@
 
 La entrega de #58 queda lista para usar y testear resultados reales. La aceptación
 nativa completa de Codex sigue `NO_VERIFICADO`: el usuario realizará después
-Directo, Light, Normal y Full, incluidos perfiles, correcciones, espera y Documentador
+Directo, Light y Normal, incluidos perfiles, correcciones, espera y Documentador
 final. El checklist de `acceptance/windows-codex.md` conserva esos pendientes;
 el cierre de #58 no certifica los 26 escenarios de #38.
 
@@ -84,7 +84,7 @@ La salida muestra el alcance y los archivos de tests ejecutados. `AGENTIC_CORE_O
 
 ## Baseline de tarea Python (esquema 3)
 
-Antes de editar en Light, Normal o Full, prepare el estado real del worktree con el alcance e inputs de `config.json`:
+Antes de editar en Light o Normal, prepare el estado real del worktree con el alcance e inputs de `config.json`:
 
 ```powershell
 node .agentic-core/runtime-launcher.mjs agentic-quality prepare --task arreglo-43 --mode normal --objective issue:43 --repair-test tests/test_subject.py
@@ -94,7 +94,7 @@ node .agentic-core/runtime-launcher.mjs agentic-quality verify
 
 `--repair-test` es opcional y repetible: identifica archivos de pruebas cuyos fallos iniciales pertenecen al encargo. Los demás fallos se informan como ajenos y no amplían el alcance. El baseline conserva código, inputs no versionados, cobertura y evidencia de fallos sin usar el diff contra HEAD para atribuir autoría. Los fallos de comprobación y los defectos atribuibles al código medido pueden conservarse como baseline fallido válido aunque se detecten en fixtures. Los grupos anidados requieren atribución de cada excepción interna. Los errores de importación o dependencias producen `NO_VERIFICADO` incluso desde código medido; también lo producen los errores de integridad, de preparación sin atribución o los grupos con errores no atribuibles. Declarar `--repair-test` no valida esa evidencia.
 
-La referencia breve `.agentic-core/quality/active-task.json` contiene el objetivo, alcance e inicio inmutable de la tarea. Repetir `prepare` conserva ese inicio, incluso después de cambios; `baseline` compara inputs y condiciones actuales sin ejecutar pytest. Un cambio de pruebas, comando, configuración, runtime, dependencias o recursos vuelve obsoleta la evidencia afectada. `verify` exige los tests funcionales finales aprobados; los controles omitidos son `NO_SOLICITADO`, sin ejecutar sus motores; Light y Normal emiten `QUALITY_OK` solo con evidencia vigente y completa. Full integra Mutation Testing incremental sobre el baseline real y solo emite `QUALITY_OK` cuando todos los mutantes exigibles tienen un resultado concluyente. Directo puede usar `test` sin preparar una tarea.
+La referencia breve `.agentic-core/quality/active-task.json` contiene el objetivo, alcance e inicio inmutable de la tarea. Repetir `prepare` conserva ese inicio, incluso después de cambios; `baseline` compara inputs y condiciones actuales sin ejecutar pytest. Un cambio de pruebas, comando, configuración, runtime, dependencias o recursos vuelve obsoleta la evidencia afectada. `verify` exige los tests funcionales finales aprobados; los controles omitidos son `NO_SOLICITADO`, sin ejecutar sus motores; Light y Normal emiten `QUALITY_OK` solo con evidencia vigente y completa. La mutación opcional exige que todos los mutantes exigibles tengan un resultado concluyente. Directo puede usar `test` sin preparar una tarea.
 
 En Directo/Light/Normal, `prepare` conserva fuentes, tests e inputs del inicio y ejecuta los tests funcionales sin medir DRY, C.R.A.P. ni mutación. Directo puede preparar voluntariamente una referencia con `--mode direct` para comparar una implementación; esto no inicia roles. `--control dry`, `--control crap` y `--control mutation` son repetibles en `prepare` (requerimientos de esa tarea) o `verify` (reemplazo por esa ejecución); `--control none` solicita el conjunto vacío. La configuración heredada y los informes anteriores no activan controles.
 
@@ -113,7 +113,7 @@ node .agentic-core/runtime-launcher.mjs agentic-quality verify --changes --test 
 El recibo referencia el informe con los tests realmente ejecutados, la selección efectiva, controles requeridos y estados `NO_SOLICITADO`. Cambiar selecciones impide reutilizar una aprobación incompatible; repetir `prepare` preserva el inicio y el presupuesto.
 
 
-Una continuación conserva el mismo `--task`; cambiar su modo, objetivo o `--repair-test` se rechaza con `task_metadata_conflict` sin reemplazar el baseline. `verify` comprueba la vigencia por control y registra en el informe cuáles reutiliza y la causa de cada nueva ejecución. En el recorrido histórico Full, cambiar solo las resoluciones DRY conserva las pruebas y C.R.A.P. vigentes; Full también aprovecha los controles válidos y vuelve a medir la mutación solo cuando cambia su identidad de evidencia. Al preparar una tarea distinta se retiran únicamente los artefactos internos reconocibles de la tarea anterior y se conserva cualquier archivo desconocido o externo, sin historial ni caché entre tareas. Si un archivo previsto para limpieza cambia durante la captura, la operación se aborta conservando la tarea anterior y el contenido divergente.
+Una continuación conserva el mismo `--task`; cambiar su modo, objetivo o `--repair-test` se rechaza con `task_metadata_conflict` sin reemplazar el baseline. `verify` comprueba la vigencia por control y registra en el informe cuáles reutiliza y la causa de cada nueva ejecución. Con controles explícitos, cambiar solo las resoluciones DRY conserva las pruebas y C.R.A.P. vigentes; La verificación también aprovecha los controles válidos y vuelve a medir la mutación solo cuando cambia su identidad de evidencia. Al preparar una tarea distinta se retiran únicamente los artefactos internos reconocibles de la tarea anterior y se conserva cualquier archivo desconocido o externo, sin historial ni caché entre tareas. Si un archivo previsto para limpieza cambia durante la captura, la operación se aborta conservando la tarea anterior y el contenido divergente.
 
 ### Presupuesto acumulado de comprobaciones
 
@@ -131,7 +131,7 @@ El acumulado de `.agentic-core/quality/budget.json` suma el tiempo efectivo de l
 
 Una sola operación puede poseer `budget.lock`; otra devuelve `budget_busy`. Tras una interrupción del controlador, confirme que sus procesos terminaron antes de retirar ese bloqueo. Una reserva pendiente, un presupuesto corrupto o ausente en una tarea anterior a esta versión no se convierten en consumo cero: requieren iniciar una tarea distinta. No se recupera automáticamente un proceso cuya terminación no se puede demostrar.
 
-La mutación integrada de Full (#49–#50) usa `withCurrentTaskBudget` y `executeCommand` dentro del mismo contexto de ejecución. Este contrato reserva, contabiliza y aplica concurrencia y límites a cada comando sin crear otro presupuesto por worker o por mutante.
+La mutación opcional usa `withCurrentTaskBudget` y `executeCommand` dentro del mismo contexto de ejecución. Este contrato reserva, contabiliza y aplica concurrencia y límites a cada comando sin crear otro presupuesto por worker o por mutante.
 
 ### C.R.A.P. de Python
 
@@ -188,7 +188,7 @@ Los pragmas `dry4python: ignore` e `ignore-file` se neutralizan únicamente en l
 
 El diferencial de C.R.A.P. aplica `limits.crap` al código nuevo y exige que los símbolos existentes dentro del alcance no empeoren respecto de su valor inicial. La deuda heredada por encima del límite se conserva como contexto y solo debe no empeorar. Un traslado se atribuye únicamente con una identidad de símbolo y fingerprint únicos; si no puede establecerse la correspondencia, el resultado queda sin verificar. DRY conserva candidatos nuevos o modificados como rechazados hasta que exista una resolución concreta ligada al ID, inputs y configuración actuales.
 
-Light y Normal pueden cerrar con `approved` y `QUALITY_OK`; sus controles de mutación son `NO_APLICA`. Full selecciona, sin muestreo, los mutantes de líneas añadidas o modificadas respecto de las fuentes reales del baseline. Los mutantes fuera del delta se informan como preexistentes y los equivalentes solo se excluyen con una prueba estática de identidad de bytes o de identidad estructural del AST de Python, ligada a los hashes de ambas fuentes. El denominador incluye los mutantes sin cobertura y el mínimo configurable es `limits.mutationScore` (90 inicialmente); cualquier timeout, error, interrupción o pendiente deja el control en `NO_VERIFICADO`. Un denominador vacío produce `NO_APLICA` con explicación y no un score automático de 100. `approved`, `rejected`, `NO_VERIFICADO` y `NO_APLICA` incluyen códigos de causa, y el estado agregado nunca convierte una medición ausente en un aprobado.
+Light y Normal pueden cerrar con `approved` y `QUALITY_OK`; los controles omitidos son `NO_SOLICITADO`. La mutación solicitada selecciona, sin muestreo, los mutantes de líneas añadidas o modificadas respecto de las fuentes reales del baseline. Los mutantes fuera del delta se informan como preexistentes y los equivalentes solo se excluyen con una prueba estática de identidad de bytes o de identidad estructural del AST de Python, ligada a los hashes de ambas fuentes. El denominador incluye los mutantes sin cobertura y el mínimo configurable es `limits.mutationScore` (90 inicialmente); cualquier timeout, error, interrupción o pendiente deja el control en `NO_VERIFICADO`. Un denominador vacío produce `NO_APLICA` con explicación y no un score automático de 100. `approved`, `rejected`, `NO_VERIFICADO` y `NO_APLICA` incluyen códigos de causa, y el estado agregado nunca convierte una medición ausente en un aprobado.
 
 ### Ejecución individual de mutantes Python
 
@@ -204,7 +204,7 @@ El informe `.agentic-core/quality/mutation.json` conserva la ejecución y su `as
 
 Una referencia aprobada determina el timeout solicitado por mutante: tres veces su duración, con un mínimo de 1000 ms, limitado por `limits.operation.commandTimeoutMs` y el presupuesto restante de la tarea. El informe muestra el límite efectivo y conserva resultados parciales cuando se agota el presupuesto. La ejecución usa un worker, dentro del máximo configurado, y reutiliza una copia para todos los archivos; verifica inputs, permisos y dependencias, restaura cada mutación y retira los outputs entre pruebas. Nunca restaura archivos del proyecto original sobre cambios ajenos.
 
-Sin tarea aplica el presupuesto por invocación; con tarea activa conserva su presupuesto compartido. Solo reutiliza informes completos y concluyentes cuya selección de código y tests, inputs, comando, configuración, entorno y tarea sigan vigentes; conserva informes ajenos o divergentes. Las llamadas internas existentes de Full mantienen su selección incremental y agregación. La selección autónoma por cambios de una tarea y su efecto en el cierre corresponden a #92 (T9).
+Sin tarea aplica el presupuesto por invocación; con tarea activa conserva su presupuesto compartido. Solo reutiliza informes completos y concluyentes cuya selección de código y tests, inputs, comando, configuración, entorno y tarea sigan vigentes; conserva informes ajenos o divergentes. La selección incremental se solicita con `verify --control mutation`.
 
 ## Actualización
 
@@ -276,7 +276,7 @@ Las instalaciones del esquema 3 usan español neutro y salida breve tanto en ter
 ### Instalaciones nuevas (esquema 3)
 
 El bloque instalado en `AGENTS.md` selecciona Directo para solicitudes sin activador al comienzo.
-`Orquesta`, `/orquestar` y `$orquestar` reconocen Directo, Light, Normal y Full como modo
+`Orquesta`, `/orquestar` y `$orquestar` reconocen Directo, Light y Normal como modo
 explícito inmediatamente posterior, sin distinguir mayúsculas en el modo. Sin modo explícito,
 seleccionan Normal. Las menciones posteriores y los ejemplos citados no activan la orquestación.
 El usuario elige el modo; la capa lo conserva sin cuestionarlo ni recomendar otro.
@@ -290,13 +290,13 @@ Una solicitud ordinaria de documentación también es un encargo directo. La aus
 Documentador no añade documentación a otras tareas; puede recomendarse al cerrar el encargo.
 En un flujo orquestado, “y documéntalo”, “usa un documentador” o una petición equivalente
 activa el perfil instalado `agentic-docs`. Actúa después del Tester en Light, del Evaluador
-en Normal o del Arquitecto en Full, una vez cerradas las correcciones y sobre el resultado
+en Normal, una vez cerradas las correcciones y sobre el resultado
 técnico definitivo. Agrega un rol a la secuencia base y es siempre el último subagente.
 El coordinador comprueba su entrega sin otro Evaluador. El tamaño del cambio, sugerencias
 de otros roles, reglas generales de documentación y exportar calidad no lo activan.
 
 Light ejecuta Implementador → Tester con los perfiles instalados, un contador compartido y hasta
-dos rondas adicionales; Normal conserva su secuencia documentada y Full ejecuta sus seis roles con el mismo límite.
+dos rondas adicionales; Normal conserva su secuencia documentada con el mismo límite.
 El gate local de calidad exige `prepare` antes de editar y `verify` antes de completar; en Light Mutation
 Testing es `not_applicable`. No se ejecuta el flujo del esquema 2 como sustituto. Esta selección
 vive en la superficie nativa de Codex y no incorpora otro proveedor ni un protocolo externo.
@@ -315,13 +315,12 @@ La coordinación mantiene como máximo un agente activo. Los roles reciben alcan
 
 | Modo | Coordinación semántica | Gate determinista |
 | --- | --- | --- |
-| `light` | Implementador → Tester; TDD cuando corresponda; hasta dos rondas adicionales compartidas. | `prepare` antes de editar y `verify` antes de completar; Mutation Testing `not_applicable`. |
-| `normal` | Planificador → Implementador → Tester → Evaluador; hasta dos rondas adicionales compartidas; Documentador solo por petición y siempre al final. | `prepare` antes de editar y `verify` antes de completar; tests, DRY y C.R.A.P.; Mutation Testing `NO_APLICA`. |
-| `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; hasta dos rondas adicionales compartidas; Documentador solo por petición y siempre al final. | `prepare` antes de editar y `verify` antes de completar; tests, DRY, C.R.A.P. y Mutation Testing completos y vigentes. |
+| `light` | Implementador → Tester; TDD cuando corresponda; hasta dos rondas adicionales compartidas. | `prepare` antes de editar y `verify` antes de completar; controles opcionales solo por petición. |
+| `normal` | Planificador → Implementador → Tester → Evaluador; hasta dos rondas adicionales compartidas; Documentador solo por petición y siempre al final. | `prepare` antes de editar y `verify` antes de completar; tests funcionales y controles explícitos. |
 
 Documentador agrega un rol únicamente por petición expresa, después del cierre técnico y sus correcciones, siempre como último subagente.
 
-El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Especificador, Planificador, Evaluador y Arquitecto solo leen producción y evidencia y no la modifican. El Documentador modifica únicamente documentación.
+El Implementador usa `agentic-tdd` cuando cambia comportamiento y modifica únicamente producción y tests dentro del alcance. Tester usa `agentic-tests`, solo lee producción y puede corregir únicamente tests dentro del alcance; Planificador y Evaluador solo leen producción y evidencia y no la modifican. El Documentador modifica únicamente documentación.
 
 Estas restricciones son políticas semánticas para agentes cooperativos, no ACLs, sandboxes ni aislamiento técnico demostrado. Esta entrega instala únicamente Codex y Python/pytest; otros proveedores, lenguajes y runners están fuera de alcance. La aceptación nativa requiere observaciones del host, registradas por separado en `acceptance/windows-codex.md`.
 
@@ -331,7 +330,7 @@ La máquina semántica de Light tiene una ronda inicial `Implementador → Teste
 
 Las esperas atienden resultados, intervenciones del usuario y vencimientos mediante eventos disponibles en Codex, renovables hasta 60 segundos. Tras 5 minutos sin novedades se comprueba activamente el estado; la lentitud o el silencio por sí solos no reinician trabajo. No se dejan daemon, hooks nuevos ni promesas posteriores a la sesión, y el presupuesto acumulado cuenta comprobaciones, no tiempo de agentes.
 
-El mapping rol → perfil vive en la skill canónica instalada `.agents/skills/orquestar/SKILL.md`; las instalaciones nuevas distribuyen `agentic-read`, `agentic-production`, `agentic-tests`, `agentic-docs` y la dependencia directa `agentic-tdd`. Especificador, Planificador, Evaluador y Arquitecto usan instrucciones estables del perfil de lectura. Si alguno diverge, `doctor` informa la divergencia y `agentic-core update` puede restaurarlo transaccionalmente con ownership demostrado.
+El mapping rol → perfil vive en la skill canónica instalada `.agents/skills/orquestar/SKILL.md`; las instalaciones nuevas distribuyen `agentic-read`, `agentic-production`, `agentic-tests`, `agentic-docs` y la dependencia directa `agentic-tdd`. Planificador y Evaluador usan instrucciones estables del perfil de lectura. Si alguno diverge, `doctor` informa la divergencia y `agentic-core update` puede restaurarlo transaccionalmente con ownership demostrado.
 
 ### Límites de permisos
 
@@ -369,10 +368,10 @@ QUALITY_SESSION id=q_<id> mode=normal baseline=<sha256>
 
 | Opción | Valor | Requerida | Repetible |
 | --- | --- | --- | --- |
-| `--mode` | `<light\|normal\|full>` | Sí | No |
+| `--mode` | `<light\|normal>` | Sí | No |
 | `--scope` | `<path>` | Sí | Sí |
 
-`prepare` exige un modo `light`, `normal` o `full` y al menos un scope relativo al proyecto. Los scopes pueden repetirse, ser directorios o señalar archivos todavía inexistentes. El comando:
+`prepare` exige un modo `light` o `normal` y al menos un scope relativo al proyecto. Los scopes pueden repetirse, ser directorios o señalar archivos todavía inexistentes. El comando:
 
 1. Descubre el runner y ejecuta los tests reales.
 2. Calcula un baseline C.R.A.P. atribuible cuando el entorno lo permite.
@@ -410,7 +409,7 @@ QUALITY_OK session=q_<id> tests=approved crap_max=5.82 mutation=not_applicable r
 - una deuda heredada `> 7` no puede empeorar;
 - un baseline no atribuible nunca se sustituye por cero.
 
-En `full`, `verify` ejecuta Mutation Testing en snapshots aislados y comprueba que el worktree relevante no cambió y que los snapshots fueron restaurados. En `light` y `normal`, registra Mutation Testing como `not_applicable` sin ejecutarlo.
+La ruta histórica `QualitySession` rechaza `full` con un mensaje de deprecación. Las tareas Full existentes se conservan sin ejecución ni conversión; consulta [el archivo histórico](docs/full-archive.md).
 
 El reporte y su SHA-256 son la evidencia verificable. `reports/latest.json` identifica el único recibo vigente para el inventario actual; cualquier cambio posterior en código, tests, configuración, manifests, lockfiles o comandos del runner vuelve obsoleto el recibo anterior. `QUALITY_OK` nunca se emite si fallan tests, C.R.A.P., Mutation Testing, baseline, entorno o restauración. Ningún cambio ejecutable orquestado puede declararse completo sin un `QUALITY_OK` vigente.
 

@@ -22,10 +22,10 @@ async function run(root, args, fault = null) {
   }
 }
 
-test("Full binds mutation to preceding controls and rechecks freshness even on reuse", async (t) => {
+test("Explicit controls bind mutation to preceding evidence and rechecks freshness even on reuse", async (t) => {
   const { root } = await pythonProject(t);
   await configurePythonProject(root, (config) => { config.limits.crap = 100; config.limits.mutationScore = 40; });
-  const prepared = await run(root, ["prepare", "--task", "full-freshness", "--mode", "full", "--objective", "PR 71"]);
+  const prepared = await run(root, ["prepare", "--task", "control-freshness", "--mode", "normal", "--control", "dry", "--control", "crap", "--control", "mutation", "--objective", "PR 71"]);
   assert.equal(prepared.exitCode, 0, JSON.stringify(prepared));
   const subject = path.join(root, "work dir/src/subject.py");
   const source = await readFile(subject, "utf8") + "\ndef detected(value):\n    return value > 2\n\ndef survivor(value):\n    return value > 5\n";

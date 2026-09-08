@@ -248,7 +248,7 @@ test("every option documented for a command is accepted by that command parser",
     ]);
     assert.equal(result.code, 4, `${publicCommand}: ${result.stderr || result.stdout}`);
     const downstreamErrors = {
-      prepare: "Quality mode must be light, normal, or full",
+      prepare: "Quality mode must be light or normal",
       verify: "Quality session id is invalid",
     };
     assert.equal(
@@ -319,17 +319,15 @@ test("the README keeps coordination and QualitySession contracts as identifiers 
 
   const modes = headingSection(readme, "Modos y roles");
   const modeRows = markdownTable(modes, ["Modo", "Coordinación semántica", "Gate determinista"]);
-  assert.deepEqual(modeRows.map(([mode]) => mode), ["light", "normal", "full"]);
+  assert.deepEqual(modeRows.map(([mode]) => mode), ["light", "normal"]);
   assertContainsEach(modeRows.flat().join("\n"), [
     "Implementador",
     "Tester",
     "Planificador",
-    "Arquitecto",
     "Evaluador",
     "Documentador",
     "prepare",
     "verify",
-    "not_applicable",
   ], "mode contract");
   assert.match(modes.body, /Documentador.*petición expresa.*último subagente/u);
 
@@ -471,7 +469,6 @@ test("manual validation covers native Codex without claiming security enforcemen
   assert.deepEqual(matrix.map(([host, mode]) => `${host}\0${mode}`), [
     "Codex\0light",
     "Codex\0normal",
-    "Codex\0full",
   ]);
 
   const evidenceLimits = markdownTable(
@@ -506,22 +503,7 @@ test("manual validation covers native Codex without claiming security enforcemen
     "evidencia nativa",
     "simulación controlada",
   ], "native Light evidence limits");
-  const fullValidation = headingSection(checklist, "Full real en Codex");
-  assertIncludesEach(inlineCode(fullValidation.body), [
-    "Orquesta Full",
-    "/orquestar full",
-    "agentic-read",
-    "QUALITY_OK",
-  ], "native Full identifiers");
-  assertContainsEach(fullValidation.body, [
-    "Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto",
-    "nueva instancia de Especificador",
-    "tests o mutación",
-    "diseño o plan",
-    "alcance o especificación",
-    "resultado completo de Mutation Testing de #50",
-    "evidencia nativa",
-  ], "native Full evidence limits");
+  assert.match(headingSection(checklist, "Full deprecado").body, /archive\/full/u);
   assert.doesNotMatch(checklist, /agentic-core (?:start|resume|approve-mode-change|submit-handoff)/);
 });
 
@@ -560,7 +542,6 @@ test("the architecture spec and skills agree on semantic coordination", async ()
   assertContainsEach(inlineCode(orchestrationSkill).join("\n"), [
     "light",
     "normal",
-    "full",
     "agentic-read",
     "agentic-production",
     "agentic-tests",

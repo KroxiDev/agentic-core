@@ -3,7 +3,7 @@
 Esta lista complementa las suites automatizadas. No convierte instrucciones de agentes en enforcement de seguridad ni exige demostrar un sandbox del host.
 
 Para el cierre de #58 como entrega lista para usar y testear resultados reales,
-el usuario difiere todos los recorridos nativos de Directo, Light, Normal y Full,
+el usuario difiere todos los recorridos nativos de Directo, Light y Normal,
 incluidos perfiles, secuencias, correcciones, espera y Documentador final. Este
 procedimiento se conserva para su ejecución posterior; no es evidencia aprobada
 ni un bloqueo de ese cierre. La especificación padre #38 permanece sin cambios.
@@ -41,7 +41,6 @@ En Codex:
 | --- | --- | --- | --- |
 | Codex | `light` | Implementador → Tester; dos roles base y hasta dos rondas adicionales compartidas | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `not_applicable`. |
 | Codex | `normal` | Planificador → Implementador → Tester → Evaluador; cuatro roles base y hasta dos rondas adicionales compartidas; Documentador solo por petición y al final | `prepare` + tests/DRY/C.R.A.P. en `verify`; Mutation `NO_APLICA`. |
-| Codex | `full` | Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto; seis roles base y hasta dos rondas adicionales compartidas; Documentador solo por petición y al final | `prepare` + tests/DRY/C.R.A.P./Mutation completos en `verify`; `QUALITY_OK` vigente. |
 
 Las frases de permisos son contratos semánticos:
 
@@ -66,31 +65,27 @@ La evidencia nativa debe demostrar el comportamiento del host, no solo la presen
 5. Observar una espera por resultado, intervención o vencimiento. Renovar como máximo 60 segundos por espera, comprobar activamente tras 5 minutos sin novedades y confirmar que la lentitud o el silencio no reinician trabajo.
 6. Etiquetar cada artefacto como evidencia nativa, simulación controlada o restricción semántica no demostrada técnicamente. La interpretación del agente no reemplaza el recibo de calidad.
 
-## Full real en Codex
+## Full deprecado
 
-La evidencia nativa debe cubrir una tarea aprobada y devoluciones reproducibles:
-
-1. Ejecutar `Orquesta Full` o `/orquestar full` y observar Especificador → Planificador → Implementador → Tester → Evaluador → Arquitecto, con `agentic-read` asignado explícitamente a Especificador, Planificador, Evaluador y Arquitecto.
-2. Registrar capacidades efectivas, handoffs breves, objetivo, alcance, aceptación, baseline, presupuesto y contador compartido, sin registrar secretos ni conversaciones completas.
-3. Provocar un rechazo del Evaluador y confirmar una nueva instancia de Especificador con requisitos pendientes; después, comprobar que recorre la secuencia pertinente y conserva el contexto original.
-4. Provocar por separado rechazos del Arquitecto por tests o mutación, por diseño o plan, y por alcance o especificación. Confirmar el retorno a Implementador, Planificador o Especificador, respectivamente, y que todos consumen el mismo máximo de dos rondas adicionales.
-5. Confirmar que el cierre exige el resultado completo de Mutation Testing de #50, tests/DRY/C.R.A.P., evaluación satisfactoria, revisión arquitectónica sin pendientes y `QUALITY_OK` vigente. La evidencia de los archivos instalados no sustituye esta ejecución real.
+Confirmar que una solicitud Full informa la deprecación y remite a
+`KroxiDev/agentic-core:archive/full`, sin despachar roles ni convertir evidencia.
+No ejecutar la suite archivada.
 
 ## Documentador explícito y final (#54)
 
 Ejecutar en Codex real con una instalación del paquete actual y proyectos temporales
 independientes. Estas instrucciones son un procedimiento, no evidencia de ejecución.
 
-1. Repetir un cambio acotado en Light, Normal y Full con “y documéntalo” o “usa un
+1. Repetir un cambio acotado en Light y Normal con “y documéntalo” o “usa un
    documentador”. Registrar petición, identificadores y orden de instancias, perfil
    efectivo `agentic-docs`, handoff y archivos modificados. Distinguir carga nativa
    del TOML de la entrega semántica íntegra de `developer_instructions`.
 2. Provocar una corrección que cambie la solución inicial: comprobar que no hay
    Documentador mientras quedan defectos y que describe solo la solución final.
    Vincular el recibo vigente al estado recibido por el Documentador.
-3. Comprobar Tester → Documentador en Light, Evaluador → Documentador en Normal y
-   Arquitecto → Documentador en Full, después de completar todas las correcciones.
-   En Normal y Full, comprobar que la entrega documental diferida no rechaza el
+3. Comprobar Tester → Documentador en Light, Evaluador → Documentador en Normal,
+   después de completar todas las correcciones.
+   En Normal, comprobar que la entrega documental diferida no rechaza el
    cierre técnico ni consume rondas: queda pendiente para Documentador y para la
    comprobación final del coordinador; un defecto técnico sí impide el despacho.
    Confirmar que solo cambió documentación autorizada y que el coordinador comprueba
@@ -122,7 +117,7 @@ Usar un proyecto de prueba con código, tests, configuración del runner, manife
 
 5. Confirmar tests reales, C.R.A.P. diferencial, reporte hasheado y `QUALITY_OK` solo cuando todos los gates estén aprobados.
 6. Modificar luego código, tests, configuración, manifest, lockfile o comando del runner y confirmar que el recibo anterior ya no es vigente.
-7. En `light` y `normal`, confirmar `mutation=not_applicable` sin ejecución. En `full`, confirmar que Mutation Testing se ejecuta, restaura snapshots y no cambia el worktree relevante.
+7. En `light` y `normal`, confirmar `mutation=not_applicable` sin ejecución. En `full`, confirmar el rechazo por deprecación sin ejecutar ni modificar evidencia.
 8. Corromper una copia de la evidencia de tarea y confirmar `NO_VERIFICADO`, sin `QUALITY_OK`; `explain` informa la causa sin ejecutar tests ni reparar evidencia.
 
 ## Interfaces públicas
@@ -152,5 +147,5 @@ Confirmar que no se acepta input JSON redactado por el modelo y que los comandos
 1. Construir con el lockfile (`npm.cmd ci`) y seleccionar las suites pertinentes de la matriz en `acceptance/windows-codex.md`; no repetir suites costosas con evidencia vigente.
 2. Ejecutar `node --test test/windows-acceptance.test.js` en Windows y conservar resultado, plataforma y hash del paquete. Un skip no valida otra plataforma.
 3. Ejecutar `npm.cmd run check` y `git diff --check`.
-4. Completar solo los recorridos nativos autorizados y registrar perfiles efectivos, secuencias y límites. El cierre de #58 difiere Directo, Light, Normal y Full al usuario, sin ejecutarlos ni aprobarlos; Linux conserva su aceptación independiente en #59.
+4. Completar solo los recorridos nativos autorizados y registrar perfiles efectivos, secuencias y límites. El cierre de #58 difiere Directo, Light y Normal al usuario, sin ejecutarlos ni aprobarlos; Linux conserva su aceptación independiente en #59.
 5. Verificar el inventario del paquete y comunicar los escenarios pendientes sin emitir una aceptación global falsa ni exigir KPIs o benchmarks.

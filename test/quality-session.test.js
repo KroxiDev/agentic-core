@@ -295,23 +295,7 @@ test("prepare and verify generate JSON only when explicitly requested", async (t
   assert.match(body.sha256, /^[a-f0-9]{64}$/);
 });
 
-test("full verify executes mutation testing and restores the worktree", async (t) => {
-  const root = await fixture(t);
-  const original = await readFile(path.join(root, "src", "subject.js"), "utf8");
-  const prepared = await prepare(root, "full");
-  assert.equal(prepared.result.code, 0, prepared.result.stderr || prepared.result.stdout);
 
-  const verified = await run(["verify", "--session", prepared.id], root);
-  assert.equal(verified.code, 0, verified.stderr || verified.stdout);
-  assert.match(verified.stdout, / mutation=approved /);
-  assert.equal(await readFile(path.join(root, "src", "subject.js"), "utf8"), original);
-
-  const [, reportPath] = verified.stdout.match(/report=([^ ]+)/);
-  const report = JSON.parse(await readFile(path.join(root, ...reportPath.split("/")), "utf8"));
-  assert.equal(report.mutation.executed, true);
-  assert.equal(report.mutation.restoration.workingTreeUntouched, true);
-  assert.equal(report.restoration.status, "approved");
-});
 
 test("prepare captures the existing safe worktree while excluding secrets, caches, and binary data", async (t) => {
   const root = await fixture(t);
@@ -521,42 +505,7 @@ test("verify rejects a reports junction instead of writing evidence outside the 
   assert.deepEqual(await readdir(outside), []);
 });
 
-test("full mutation failure preserves only a safe isolated snapshot and leaves the worktree unchanged", async (t) => {
-  const root = await fixture(t);
-  await mkdir(path.join(root, "Personal"));
-  await mkdir(path.join(root, ".cache"));
-  await writeFile(path.join(root, ".env"), "TOKEN=do-not-copy\n");
-  await writeFile(path.join(root, "Personal", "profile.js"), "export const privateValue = true;\n");
-  await writeFile(path.join(root, ".cache", "cached.js"), "export const cachedValue = true;\n");
-  await writeFile(path.join(root, "private.db"), Buffer.from([1, 2, 3]));
-  const original = await readFile(path.join(root, "src", "subject.js"));
-  const prepared = await prepare(root, "full");
 
-  const verified = await run(["verify", "--session", prepared.id], root, "human", {
-    NODE_ENV: "test",
-    AGENTIC_CORE_TEST_FAIL_MUTANT_RESTORE: "1",
-  });
-  assert.equal(verified.code, 5, verified.stderr || verified.stdout);
-  assert.doesNotMatch(verified.stdout, /QUALITY_OK/);
-  assert.deepEqual(await readFile(path.join(root, "src", "subject.js")), original);
-  const [, reportPath] = verified.stdout.match(/report=([^ ]+)/);
-  const report = JSON.parse(await readFile(path.join(root, ...reportPath.split("/")), "utf8"));
-  assert.equal(report.status, "restoration_failure");
-  assert.equal(report.mutation.restoration.workingTreeUntouched, true);
-  assert.equal(report.mutation.restoration.evidencePreserved, true);
-  const evidencePath = report.mutation.restoration.evidencePath;
-  const relativeEvidence = path.relative(
-    path.join(root, ".agentic-core", "quality", prepared.id),
-    evidencePath,
-  );
-  assert.equal(relativeEvidence.startsWith("..") || path.isAbsolute(relativeEvidence), false);
-  assert.equal((await recursiveFiles(evidencePath))
-    .some((file) => /(?:\.env|Personal|\.cache|private\.db)/i.test(file)), false);
-
-  const recovered = await run(["verify", "--session", prepared.id], root);
-  assert.equal(recovered.code, 0, recovered.stderr || recovered.stdout);
-  assert.equal((await stat(evidencePath)).isDirectory(), true);
-});
 
 test("a verification cleanup failure persists restoration_failure and never emits QUALITY_OK", async (t) => {
   const root = await fixture(t);

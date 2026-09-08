@@ -14,7 +14,7 @@ const HELP = `Usage:
   agentic-quality crap --target <path>
   agentic-quality mutate --target <path>
   agentic-quality mutation --target <path>  alias for mutate
-  agentic-quality prepare --mode <light|normal|full> --scope <path> [--scope <path>...]
+  agentic-quality prepare --mode <light|normal> --scope <path> [--scope <path>...]
   agentic-quality verify --session <id>
   agentic-quality --version
   agentic-quality --help
@@ -66,7 +66,7 @@ function parsePrepare(args) {
     else if (flag === "--scope") scopes.push(value);
     else throw new QualitySessionError("prepare accepts only one --mode and repeated --scope values", 4);
   }
-  if (mode === undefined) throw new QualitySessionError("prepare requires --mode <light|normal|full>", 4);
+  if (mode === undefined) throw new QualitySessionError("prepare requires --mode <light|normal>", 4);
   if (scopes.length === 0) throw new QualitySessionError("prepare requires at least one --scope <path>", 4);
   return { mode, scopes };
 }

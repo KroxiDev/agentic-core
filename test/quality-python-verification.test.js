@@ -134,7 +134,7 @@ test("incremental C.R.A.P. rejects new code and degradation of existing code", a
   const { root } = await pythonProject(t);
   const subject = path.join(root, "work dir/src/subject.py");
   const original = await readFile(subject, "utf8");
-  const prepared = await runPythonProject(root, prepare("full"));
+  const prepared = await runPythonProject(root, [...prepare(), "--control", "crap"]);
   assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
 
   await writeFile(subject, original.replace(
@@ -153,7 +153,7 @@ test("incremental C.R.A.P. rejects new code and degradation of existing code", a
 
   const { root: newCodeRoot } = await pythonProject(t);
   const newSubject = path.join(newCodeRoot, "work dir/src/subject.py");
-  const newPrepared = await runPythonProject(newCodeRoot, prepare("full"));
+  const newPrepared = await runPythonProject(newCodeRoot, [...prepare(), "--control", "crap"]);
   assert.equal(newPrepared.code, 0, newPrepared.stdout + newPrepared.stderr);
   const newSource = await readFile(newSubject, "utf8");
   await writeFile(newSubject, [
@@ -189,7 +189,7 @@ test("incremental DRY requires a concrete resolution and then permits the aggreg
   const { root } = await pythonProject(t);
   const subject = path.join(root, "work dir/src/subject.py");
   const checks = path.join(root, "work dir/python checks/check_subject.py");
-  const prepared = await runPythonProject(root, prepare("full"));
+  const prepared = await runPythonProject(root, [...prepare(), "--control", "dry"]);
   assert.equal(prepared.code, 0, prepared.stdout + prepared.stderr);
   const subjectSource = await readFile(subject, "utf8");
   await writeFile(subject, subjectSource + duplicateSource);

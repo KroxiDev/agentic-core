@@ -110,7 +110,7 @@ test("same task rejects incompatible metadata without recapturing its baseline",
   const baseline = await readFile(activePath, "utf8");
   for (const metadata of [
     ["--objective", "issue:47 changed wording"],
-    ["--mode", "full"],
+    ["--mode", "light"],
     ["--repair-test", "work dir/python checks/check_subject.py"],
   ]) {
     const args = prepare();
@@ -125,14 +125,14 @@ test("same task rejects incompatible metadata without recapturing its baseline",
   assert.equal(parse(await project.run(["prepare"])).reused, true);
 });
 
-for (const mode of ["normal", "full"]) {
+for (const mode of ["normal"]) {
   test(`${mode} reuses independent controls when only DRY resolutions change`, async (t) => {
     const project = await countedProject(t);
-    assert.equal((await project.run(prepare("first", mode))).code, 0);
+    assert.equal((await project.run([...prepare("first", mode), "--control", "dry", "--control", "crap"])).code, 0);
     const initial = parse(await project.run(["verify"]));
     assert.equal(initial.verification.tests.status, "approved");
-    // Full now executes a real mutation reference, even for an empty delta.
-    const initialCalls = mode === "full" ? 3 : 2;
+    // Functional execution is independent from the optional controls.
+    const initialCalls = 3;
     assert.equal(await project.count(), initialCalls);
     const repeated = parse(await project.run(["verify"]));
     assert.equal(await project.count(), initialCalls);
@@ -145,12 +145,7 @@ for (const mode of ["normal", "full"]) {
     assert.equal(changed.verification.reuse.tests.reused, true);
     assert.equal(changed.verification.reuse.crap.reused, true);
     assert.deepEqual(changed.verification.reuse.dry, { reused: false, reason: "dry_resolutions_changed" });
-    if (mode === "full") {
-      assert.equal(changed.status, "approved");
-      assert.equal(changed.verification.mutation.status, "NO_APLICA");
-      assert.equal(changed.verification.mutation.selection.required.length, 0);
-      assert.match(changed.receipt, /^QUALITY_OK/u);
-    }
+
     await writeFile(project.resolutions, "invalid JSON");
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const partial = parse(await project.run(["verify"]));
@@ -169,7 +164,7 @@ for (const mode of ["normal", "full"]) {
     const subject = path.join(project.root, "work dir/src/subject.py");
     await writeFile(subject, `${await readFile(subject, "utf8")}\n# changed input\n`);
     const sourceChanged = parse(await project.run(["verify"]));
-    assert.equal(await project.count(), initialCalls + (mode === "full" ? 2 : 1));
+    assert.equal(await project.count(), initialCalls + 2);
     for (const control of ["tests", "dry", "crap"]) {
       assert.deepEqual(sourceChanged.verification.reuse[control], { reused: false, reason: "quality_inputs_changed" });
     }

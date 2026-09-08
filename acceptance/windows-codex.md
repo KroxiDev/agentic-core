@@ -3,7 +3,7 @@
 Estado de entrega: **lista para usar y testear resultados reales**, con el alcance
 de cierre de #58 autorizado por el usuario el 2026-09-08. El recorrido instalado
 de Windows tiene comprobaciones automatizadas. La aceptación nativa completa de
-Codex permanece **PARCIAL / NO_VERIFICADO**: Directo, Light, Normal y Full quedan
+Codex permanece **PARCIAL / NO_VERIFICADO**: Directo, Light y Normal quedan
 para pruebas manuales posteriores del usuario y no bloquean esta entrega.
 Esta decisión se limita a #58; no modifica la especificación padre #38 ni declara
 aprobados sus 26 escenarios. Linux pertenece a #59.
@@ -162,9 +162,9 @@ Checklist manual diferido al usuario, sin ejecutar ni aprobar en este cierre:
 - [ ] Continuar Light y Normal con el procedimiento de `adapters/manual-validation.md`:
    perfiles efectivos, secuencias exactas, retornos, contador compartido, espera y
    Documentador explícito final; añadir Normal por defecto sin modo explícito.
-- [ ] Ejecutar Full manualmente, incluidas devoluciones de Evaluador y
-   Arquitecto y el máximo de dos rondas adicionales. Registrar también la tarea
-   corregida antes de Documentador y el caso sin activación documental.
+Full está deprecado por #94; su evidencia anterior permanece como historia y
+no requiere nuevos recorridos. Consulte [archive/full](../docs/full-archive.md).
+
 - [ ] Vincular evidencia nueva al paquete/runtime y estado probados. Si cambian
    inputs o implementación pertinente, renovar solo lo afectado. El cierre de #58
    acredita preparación para uso; no anuncia aceptación nativa ni los 26 escenarios
@@ -216,4 +216,4 @@ como una nueva ejecución. El ajuste de alcance posterior modifica solo document
 el hash anterior identifica el paquete probado, no un tarball con la guía actualizada.
 Las comprobaciones mínimas del ajuste y la revisión independiente del SHA final se
 registran en #79. No se repiten suites completas, benchmarks ni recorridos nativos.
-Directo, Light, Normal y Full nativos quedan pendientes para el usuario.
+Directo, Light y Normal nativos quedan pendientes para el usuario.

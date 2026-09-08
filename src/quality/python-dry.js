@@ -540,7 +540,7 @@ export async function runPythonDryCli(args, io = process) {
     result = { ...partial, budget: error.budget, command: "dry", status: "NO_VERIFICADO", code: typed ? error.code : "dry_internal_error",
       message: typed ? error.message : "No se pudo completar o conservar la detección DRY", exitCode: typed ? error.exitCode : 5 };
     // Replace a previous owned success with the current failure; preserve foreign reports.
-    if (!_unsaved) {
+    if (!_unsaved && error.code !== "full_deprecated") {
       try { result.reference = reportReference; await saveReport(process.cwd(), result); }
       catch { delete result.reference; }
     }

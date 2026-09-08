@@ -128,6 +128,8 @@ export async function explainQuality(root) {
   const result = { schemaVersion: 1, command: "explain", status: "NO_VERIFICADO", code: "evidence_missing",
     exitCode: 2, version: await getVersion(), requiredToolVersions: PYTHON_TOOLS, testsExecuted: false, causes: [], fullReport };
   try {
+    const { rejectFull } = await import("./full-deprecation.js");
+    rejectFull((await readActiveTask(root))?.task.mode);
     const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
     result.limits = config.limits;
     const checkpoint = await captureProjectInputs(root, config.integration.python);

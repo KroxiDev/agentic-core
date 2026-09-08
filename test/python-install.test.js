@@ -91,8 +91,8 @@ test("private tools and installed runtime survive the bootstrap and remain indep
     assert.equal(block?.length, 1);
     assert.match(block[0], /Light esta habilitado/u);
     assert.match(block[0], /Normal esta habilitado/u);
-    assert.match(block[0], /Full esta habilitado/u);
-    assert.match(block[0], /Especificador -> Planificador -> Implementador -> Tester -> Evaluador -> Arquitecto/u);
+    assert.match(block[0], /Full devuelve su deprecacion/u);
+    assert.doesNotMatch(block[0], /Especificador|Arquitecto/u);
     assert.match(block[0], /agentic-read/u);
     const owner = JSON.parse(await readFile(path.join(project, ".agentic-core/ownership.json"), "utf8"));
     assert.equal(owner.managedBlocks[0].sha256, createHash("sha256").update(block[0]).digest("hex"));

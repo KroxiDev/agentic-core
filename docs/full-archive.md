@@ -60,6 +60,8 @@ No se ejecutaron la suite Full, sus roles ni una orquestación nativa. Esta
 validación demuestra recuperabilidad del contenido versionado, no funcionamiento
 actual de Full ni preservación de archivos locales ignorados o no versionados.
 
-Este ticket no cambia los modos activos ni retira código compartido. El retiro
-de Full pertenece a T11 de la especificación #83. La rama histórica queda
-congelada, sin obligación de mantenimiento o validación continua.
+Full está retirado de los modos activos por #94. CLI, instrucciones instaladas y
+diagnósticos reconocen su deprecación. Una tarea Full antigua conserva su evidencia
+sin ejecutarse, convertirse ni reemplazarse. Para continuar, el usuario elige
+Directo, Light o Normal y una nueva tarea en una instalación sin tarea Full activa.
+La rama histórica queda congelada, sin mantenimiento ni validación continua.

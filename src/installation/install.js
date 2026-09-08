@@ -25,7 +25,9 @@ Esta instalacion integra Codex y una unidad Python 3.11+; consulta su configurac
 - Sin \`Orquesta\`, \`/orquestar\` o \`$orquestar\` al comienzo de la solicitud, usa Directo.
   Una mencion posterior o un ejemplo citado no activa la orquestacion.
 - Con cualquiera de esos tres activadores al comienzo, reconoce el modo explicito que le sigue:
-  Directo, Light, Normal o Full (sin distinguir mayusculas); si se omite el modo, usa Normal.
+  Directo, Light o Normal (sin distinguir mayusculas); si se omite el modo, usa Normal.
+- Una solicitud Full devuelve su deprecacion y la referencia a la rama congelada
+  \`KroxiDev/agentic-core:archive/full\`. Conserva su evidencia; no inicia roles ni cambia de modo.
 - Respeta el modo elegido por el usuario durante toda la tarea: no lo cuestiones,
   no recomiendes sustituirlo ni lo cambies ante dificultades.
 
@@ -63,7 +65,7 @@ Nunca declares un cambio ejecutable orquestado completo sin un \`QUALITY_OK\` vi
    la aprobacion; deuda previa sin empeoramiento es contexto. Conserva evidencia compatible
    y renueva la afectada por cambios de codigo, tests o condiciones. Reporta el recibo y
    el alcance efectivo; NO_SOLICITADO no significa aprobado. Rechazos o evidencia insuficiente
-   de un control pedido mantienen el cierre pendiente. Full conserva sus controles historicos.
+   de un control pedido mantienen el cierre pendiente.
 
 ### Light
 
@@ -83,26 +85,11 @@ El Evaluador contrasta la solicitud completa. Su rechazo devuelve a un nuevo Pla
 solo los requisitos pendientes y comparte las dos rondas adicionales con el Tester.
 El cierre requiere evaluacion satisfactoria y calidad vigente de la misma tarea.
 
-### Full
-
-Full esta habilitado para Codex con seis roles base:
-Especificador -> Planificador -> Implementador -> Tester -> Evaluador -> Arquitecto.
-Full lee y sigue \`.agents/skills/orquestar/SKILL.md\` antes de despachar.
-Especificador y Arquitecto usan el perfil estable \`agentic-read\` con instrucciones
-especificas para sus responsabilidades.
-Especificador delimita el alcance y la aceptacion; Arquitecto revisa arquitectura,
-Golden Rules y Mutation Testing con evidencia concreta. Un rechazo del Evaluador vuelve
-a un nuevo Especificador con requisitos pendientes. Un rechazo del Arquitecto por tests
-o mutacion vuelve a Implementador; por diseno o plan, a Planificador; por alcance o
-especificacion, a Especificador. Todos los rechazos comparten como maximo dos rondas
-adicionales y el cierre exige \`agentic-quality verify\` completo y vigente, incluido
-Mutation Testing de #50.
-
 ### Documentación solicitada
 
 Ante una petición explícita como “y documéntalo” o “usa un documentador”, aplica el
 cierre documental de \`.agents/skills/orquestar/SKILL.md\` con el perfil \`agentic-docs\`.
-En Light, Normal y Full agrega un rol después de completar el flujo técnico y sus
+En Light y Normal agrega un rol después de completar el flujo técnico y sus
 correcciones: Documentador es siempre el último subagente. El coordinador comprueba
 su entrega y comunica el resultado sin otro Evaluador.
 El tamaño del cambio, las sugerencias de roles, las reglas generales de documentación
@@ -1345,6 +1332,13 @@ export async function diagnosePythonProject(projectDirectory, options = {}) {
     }
   }
   const legacy = await retireState(project);
+  const { readActiveTask } = await import("../quality/task-baseline.js");
+  try {
+    if ((await readActiveTask(project))?.task.mode === "full") {
+      const { fullDeprecationMessage } = await import("../quality/full-deprecation.js");
+      checks.push(diagnosticCheck("full.deprecated", "info", fullDeprecationMessage));
+    }
+  } catch (error) { checks.push(diagnosticCheck("task.evidence", "error", error.message)); }
   for (const state of legacy) checks.push(diagnosticCheck(`legacy.${state.path}`, "info", "Estado legacy preservado y no interpretado"));
 
   const problems = checks.filter(({ status }) => ["error", "blocked"].includes(status));

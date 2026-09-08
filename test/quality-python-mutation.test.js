@@ -123,7 +123,7 @@ test("installed mutate4py executes the authoritative corpus and distinguishes fi
 
 test("installed mutation reuses only current task evidence and cleans it on replacement", async (t) => {
   const { root } = await corpus(t, false);
-  await runPythonProject(root, ["prepare", "--task", "mutation-task", "--mode", "full", "--objective", "issue:49"]);
+  await runPythonProject(root, ["prepare", "--task", "mutation-task", "--mode", "normal", "--control", "mutation", "--objective", "issue:49"]);
   const first = parse(await runPythonProject(root, ["mutation"]));
   assert.equal(first.complete, true, JSON.stringify(first));
   const again = parse(await runPythonProject(root, ["mutate"]));

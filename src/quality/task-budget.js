@@ -71,6 +71,8 @@ export async function withCurrentTaskBudget(root, operation) {
     return operation();
   }
   const loaded = await readActiveTask(root);
+  const { rejectFull } = await import("./full-deprecation.js");
+  rejectFull(loaded?.task.mode);
   return withTaskBudget(root, loaded?.task.id ?? null, async () => {
     const result = await operation();
     return { ...result, budget: budgetSummary() };

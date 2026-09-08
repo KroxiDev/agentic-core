@@ -16,6 +16,7 @@ export { aggregateMutation } from "./mutation-aggregation.js";
 
 import { taskControl } from "./task-controls.js";
 import { resolveTaskSelection } from "./selection.js";
+import { rejectFull } from "./full-deprecation.js";
 
 const reference = ".agentic-core/quality/verification.json";
 export const verificationReference = reference;
@@ -559,6 +560,7 @@ export async function inspectVerificationEvidence(root, task, checkpoint, enviro
 }
 
 export async function verifyPythonTask(root, task, { previous, requiredControls, selection: requestedSelection } = {}) {
+  rejectFull(task.mode);
   const historical = task.mode === "full";
   requiredControls = historical ? ["dry", "crap", "mutation"] : requiredControls ?? task.requiredControls ?? [];
   const { selection, delta } = await resolveTaskSelection(root, requestedSelection, task);
@@ -707,7 +709,7 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
         || ["node", "platform", "arch", "qualityTools"].some((key) => finalEnvironment[key] !== currentEnvironmentValue[key])) {
         evidence = { status: noVerification, code: "quality_conditions_changed" };
       }
-      if (historical && dry.status !== noVerification && dry.hashes?.resolutions !== await resolutionHash(root)) {
+      if (requiredControls.includes("dry") && dry.status !== noVerification && dry.hashes?.resolutions !== await resolutionHash(root)) {
         evidence = { status: noVerification, code: "dry_resolutions_changed" };
       }
     } catch (error) {

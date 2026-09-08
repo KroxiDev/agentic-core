@@ -18,6 +18,7 @@ import {
 
 import { parseControls, taskControl } from "./task-controls.js";
 import { parseTestSelection } from "./selection.js";
+import { rejectFull } from "./full-deprecation.js";
 
 const reference = ".agentic-core/quality/active-task.json";
 const qualityDirectory = ".agentic-core/quality";
@@ -152,9 +153,10 @@ function options(args) {
     const option = args[index];
     const value = args[index + 1];
     if (!["--task", "--mode", "--objective", "--repair-test", "--control"].includes(option) || !value || value.startsWith("--")) {
-      throw new IntegrationError("invalid_usage", "Use prepare --task <id> --mode <direct|light|normal|full> --objective <referencia breve> [--repair-test <ruta relativa>] [--control <dry|crap|mutation|none>]", 4);
+      throw new IntegrationError("invalid_usage", "Use prepare --task <id> --mode <direct|light|normal> --objective <referencia breve> [--repair-test <ruta relativa>] [--control <dry|crap|mutation|none>]", 4);
     }
     const key = { "--task": "id", "--mode": "mode", "--objective": "objective" }[option];
+    if (option === "--mode") rejectFull(value);
     if (key && result[key] !== undefined) throw new IntegrationError("invalid_usage", "No repita opciones únicas de preparación", 4);
     if (key) result[key] = value;
     else if (option === "--control") controls.push(value);
@@ -216,6 +218,7 @@ export async function taskFreshness(root, task) {
 async function prepare(root, args) {
   const requested = options(args);
   const loaded = await readActiveTask(root);
+  rejectFull(loaded?.task.mode);
   if (loaded && (!requested.id || requested.id === loaded.task.id)) {
     const continues = (!requested.mode || requested.mode === loaded.task.mode)
       && (!requested.objective || requested.objective === loaded.task.objective)
@@ -326,6 +329,7 @@ async function inspect(root, args, verify) {
   const selection = parseTestSelection(selectionArgs, { allowChanges: true });
   const loaded = await readActiveTask(root);
   if (!loaded) throw new IntegrationError("task_missing", "Prepare la tarea antes de verificar; Directo puede ejecutar test sin preparar", 4);
+  rejectFull(loaded.task.mode);
   if (!verify) {
     const freshness = await taskFreshness(root, loaded.task);
     return { command: "baseline", status: "reported", code: "baseline_preserved", exitCode: 0,

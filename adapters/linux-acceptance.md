@@ -3,7 +3,7 @@
 El recorrido automático se ejecuta en Linux real mediante GitHub Actions.
 La aceptación integral de [#59](https://github.com/KroxiDev/agentic-core/issues/59)
 permanece pendiente de los perfiles efectivos en Codex: **NO_VERIFICADO**.
-La orquestación Full queda reservada para la prueba manual del usuario.
+Full está deprecado; no se ejecuta su suite archivada. Véase [archive/full](../docs/full-archive.md).
 
 La primera ejecución automática completa fue
 [Actions 34223378372](https://github.com/KroxiDev/agentic-core/actions/runs/34223378372),

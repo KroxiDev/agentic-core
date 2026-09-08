@@ -181,7 +181,7 @@ test("installed new task preserves active evidence when the previous verdict is 
   assert.equal(await readFile(verdictPath, "utf8"), corrupt);
 });
 
-for (const mode of ["light", "full"]) {
+for (const mode of ["light", "normal"]) {
   test(`installed ${mode} captures a passing baseline while Directo requires no preparation`, async (t) => {
     const { root } = await pythonProject(t);
     assert.equal((await runPythonProject(root)).code, 0);

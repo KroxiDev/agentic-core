@@ -298,8 +298,12 @@ function preparedResult(loaded, reused) {
 }
 
 export async function prepareQualitySession({ projectRoot: projectDirectory, mode, scopes }) {
+  if (mode?.toLowerCase() === "full") {
+    const { fullDeprecationMessage } = await import("./full-deprecation.js");
+    throw new QualitySessionError(fullDeprecationMessage, 4);
+  }
   const projectRoot = path.resolve(projectDirectory);
-  if (!MODES.has(mode)) throw new QualitySessionError("Quality mode must be light, normal, or full", 4);
+  if (!MODES.has(mode)) throw new QualitySessionError("Quality mode must be light or normal", 4);
   let before;
   try {
     before = await captureQualityCheckpoint(projectRoot, scopes);
@@ -487,6 +491,10 @@ async function persistVerification(loaded, document) {
 
 export async function verifyQualitySession({ projectRoot: projectDirectory, id }) {
   const loaded = await loadQualitySession(projectDirectory, id);
+  if (loaded.session.mode === "full") {
+    const { fullDeprecationMessage } = await import("./full-deprecation.js");
+    throw new QualitySessionError(fullDeprecationMessage, 4);
+  }
   await inspectLatestQualityReceipt(loaded);
   const currentEnvironment = environmentIdentity();
   const environment = {
