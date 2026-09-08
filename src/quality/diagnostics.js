@@ -154,7 +154,7 @@ export async function explainQuality(root) {
     const stored = await readVerificationReport(root, loaded.task);
     if (!stored) throw new IntegrationError("evidence_missing", "No existe un veredicto de la tarea activa", 2);
     const report = stored.report;
-    if (report.request?.requiredControls.some((name) => ["dry", "crap"].includes(name))) {
+    if (report.request?.requiredControls.length) {
       environment.qualityTools = await dependencyFingerprint([path.join(root, ".agentic-core/tools")]);
     }
     result.evidence = { reference: verificationReference, sha256: stored.sha256, status: report.status, current: false };
@@ -164,7 +164,7 @@ export async function explainQuality(root) {
     if (report.evidence?.inputs?.current !== checkpoint.digest) changes.add("quality_inputs_changed");
     if (["configurationHash", "executionIdentity", "node", "platform", "arch"]
       .some((key) => (key === "executionIdentity" ? report.environment?.current?.referenceExecutionIdentity ?? report.environment?.current?.executionIdentity : report.environment?.current?.[key]) !== environment[key])) changes.add("quality_conditions_changed");
-    if ((loaded.task.mode === "full" || report.request?.requiredControls.some((name) => ["dry", "crap"].includes(name)))
+    if ((loaded.task.mode === "full" || report.request?.requiredControls.length)
       && report.environment?.current?.qualityTools !== environment.qualityTools) changes.add("quality_tools_changed");
     if (changes.size) {
       result.code = [...changes][0];

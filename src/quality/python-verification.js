@@ -669,13 +669,13 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     },
   };
   let mutation;
-  if (task.mode !== "full") {
-    mutation = taskControl("mutation", requiredControls.includes("mutation"));
-  } else if (tests.status === "approved" && dry.status !== noVerification
-    && crap.status !== noVerification && evidence.status === "approved") {
+  if (!requiredControls.includes("mutation")) {
+    mutation = taskControl("mutation", false);
+  } else if (tests.status === "approved" && evidence.status === "approved"
+    && (!historical || dry.status !== noVerification && crap.status !== noVerification)) {
     try {
       const { runPythonMutation } = await import("./python-mutation.js");
-      const rawMutation = await runPythonMutation(root, { incremental: true });
+      const rawMutation = await runPythonMutation(root, { incremental: true, selection });
       mutation = aggregateMutation(rawMutation, config.limits.mutationScore);
     } catch (error) {
       mutation = { ...controlFailure("mutation", error), required: true, executed: true };
@@ -684,18 +684,18 @@ export async function verifyPythonTask(root, task, { previous, requiredControls,
     mutation = {
       ...mutationFor("full"),
       code: "mutation_prerequisites_failed",
-      message: "Full no puede ejecutar Mutation Testing porque falta evidencia previa aprobada",
+      message: "No se ejecutó mutación porque falta evidencia funcional o de integridad aprobada",
     };
   }
-  if (task.mode === "full" && mutation.executed) {
+  if (requiredControls.includes("mutation") && mutation.executed) {
     // Mutation captures its own checkpoint, including on reuse. Join it with
     // the preceding controls and observe the final state before issuing a receipt.
     try {
       const finalConfig = await readConfiguration(path.join(root, ".agentic-core/config.json"));
-      const finalInputs = await captureProjectInputs(root, finalConfig.integration.python);
-      const finalEnvironment = await currentEnvironment(root, tests);
+      const finalInputs = await captureProjectInputs(root, finalConfig.integration.python, selection);
+      const finalEnvironment = await currentEnvironment(root, tests, selection);
       const consistency = verificationConsistency({
-        inputs: [after.digest, mutation.inputs?.digest, finalInputs.digest],
+        inputs: [testCheckpoint.digest, mutation.inputs?.digest, finalInputs.digest],
         configurations: [configHash, mutation.execution?.configurationHash, hash(finalConfig), finalEnvironment.configurationHash],
         identities: [currentEnvironmentValue.executionIdentity, mutation.execution?.executionIdentity, finalEnvironment.executionIdentity],
       });

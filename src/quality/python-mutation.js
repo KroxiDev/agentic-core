@@ -7,6 +7,7 @@ import { writeTransaction } from "../transaction.js";
 import { executeCommand, IntegrationError } from "./command.js";
 import { budgetSummary, formatBudget, withCurrentTaskBudget } from "./task-budget.js";
 import { readActiveTask } from "./task-baseline.js";
+import { taskReferenceCheckpoint } from "./task-reference.js";
 import { captureProjectInputs, inputHash, publicCheckpoint } from "./project-inputs.js";
 import { createProjectCopy, dependencyFingerprint, isolatedCommand, verifyProjectIntegrity } from "./project-copy.js";
 import { observeProjectTests, projectTestIdentity } from "./python-project.js";
@@ -423,8 +424,8 @@ async function executeMutants(root, config, checkpoint, identity, report, select
 export async function runPythonMutation(root, { incremental = false, selection, standalone = false } = {}) {
   try {
     selection = normalizeSelection(selection);
-    if (incremental && (standalone || selection)) throw new IntegrationError("invalid_selection", "La selección transitoria no admite comparación incremental en esta interfaz", 4);
-    standalone ||= Boolean(selection);
+    if (incremental && standalone) throw new IntegrationError("invalid_selection", "El análisis autónomo no compara una implementación", 4);
+    standalone ||= !incremental && Boolean(selection);
     return await withCurrentTaskBudget(root, async () => {
       const stored = await storedReport(root);
       const config = await readConfiguration(path.join(root, ".agentic-core/config.json"));
@@ -436,7 +437,14 @@ export async function runPythonMutation(root, { incremental = false, selection, 
       const identity = await projectTestIdentity(root, config, selection);
       identity.protectedPaths.push(path.join(root, ".agentic-core/tools"));
       identity.dependencies = await dependencyFingerprint(identity.protectedPaths);
-      const selectionTask = incremental && task ? task : null;
+      let selectionTask = null;
+      if (incremental) {
+        if (!task) throw fail("baseline_invalid", "La mutación incremental requiere una referencia inicial válida");
+        const initial = taskReferenceCheckpoint(root, task, config.integration.python,
+          selection?.code ? { code: selection.code } : undefined);
+        selectionTask = { ...task, scope: selection?.code ?? task.scope, initial: { ...task.initial,
+          sources: initial.entries.map(({ content, ...entry }) => ({ ...entry, content: content.toString("base64") })) } };
+      }
       const execution = { configurationHash: hash(config), executionIdentity: identity.identity,
         qualityTools: await dependencyFingerprint([path.join(root, ".agentic-core/tools")]) };
       const evidenceIdentity = hash({ task, inputs: publicCheckpoint(checkpoint), execution: identity.identity,
@@ -455,7 +463,7 @@ export async function runPythonMutation(root, { incremental = false, selection, 
       }
       const report = { command: "mutation", schemaVersion: 1, reference, status: "NO_VERIFICADO", exitCode: 2,
         code: "mutation_execution_incomplete", message: selectionTask
-          ? "Ejecución incremental de mutantes para el veredicto Full"
+          ? "Ejecución incremental de los mutantes exigibles de la tarea"
           : standalone ? "Análisis de mutación del estado actual, sin comparación incremental"
             : "Ejecución individual de mutantes; el comando no emite un score de aprobación",
         engine: { name: "mutate4py", version: PYTHON_TOOLS.mutate4py }, taskId: task?.id ?? null, evidenceIdentity,
